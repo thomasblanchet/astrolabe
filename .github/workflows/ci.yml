@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2
       - run: uv sync --frozen
       - run: uv run --no-sync mypy src/astrolabe
       - run: uv run --no-sync mypy tests
@@ -51,7 +51,7 @@ jobs:
         world: [without numpy, with numpy]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2
       - if: matrix.world == 'without numpy'
         run: uv sync --frozen
       - if: matrix.world == 'with numpy'
@@ -102,7 +102,7 @@ jobs:
           - { python: "3.14", mypy: "2.3.1", polars: "1.43.2" }
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.2
       - run: uv sync --frozen --python ${{ matrix.python }}
       - name: Install mypy ${{ matrix.mypy }} and Polars ${{ matrix.polars }}
         run: uv pip install "mypy==${{ matrix.mypy }}" "polars==${{ matrix.polars }}"
