@@ -1,59 +1,61 @@
 ---
 title: Open frames
-description: Write a function that takes any frame with some columns, and give the caller back the other columns.
+description: Type a function that reads a few columns of a frame, and give the caller back every other column unchanged.
 sidebar:
   order: 6
 ---
 
 import Example from '../../../../components/docs/Example.astro';
 
-A function can take any frame that has some columns. The caller gets the other columns back, with their names and their data types.
+Most functions in a pipeline read only a few columns of the frame that they receive. A function that computes the total cost of each row, for example, needs `price` and `quantity`, and nothing else. If you type its parameter as a closed frame, such as `TypedDataFrame[Trades]`, the function accepts only frames with exactly the columns of `Trades`. A caller whose frame has one more column, such as `venue`, then gets an error.
+
+An open frame type solves this. It lists the columns that the function needs, and it adds a remainder, which stands for all the other columns of the caller's frame. The function then accepts any frame that has the listed columns. Its result keeps the other columns, with their names and data types, so the caller does not lose them.
 
 ## Declare a remainder
 
-An open frame has declared columns and a remainder. The remainder stands for the columns that the type does not name. Declare it with `other_columns()`, and write it as the second argument of `TypedDataFrame`.
+You declare a remainder with `other_columns()`, and you pass it as the second argument of `TypedDataFrame`. In the example below, `Rest` is a remainder, and `TypedDataFrame[Trades, Rest]` means "a frame with the columns of `Trades`, plus any other columns".
 
-Below, `add_notional` accepts any frame with the columns of `Trades`, and `Rest` stands for the other columns. At each call, the checker puts the columns of the caller in place of `Rest`. A `Blotter` frame has one more column, `venue`, and the result keeps it:
+At each call, the checker replaces `Rest` with the columns that the caller's frame has beyond those of `Trades`. A `Blotter` frame has one extra column, `venue`. So when `add_notional` receives a `Blotter`, its result has the columns of `Trades`, the new `notional` column, and `venue`:
 
 <Example name="open_frames_call" />
 
-The return type writes `InferredRemainder` for the remainder of the result, and the body wraps the returned value in `infer(...)`. The checker then computes the remainder from the body. If a caller passes a `notional` column, `with_columns` replaces it, so the remainder of the result never holds `notional`. In a revealed type inside the function, the checker writes that remainder as `Minus[Rest, Literal["notional"]]`. See [Inferred return types](../inferred/) and [Remainders](../../reference/remainders/).
+The return type does not spell out the remainder of the result. It uses `InferredRemainder`, and the body wraps the value that it returns in `infer(...)`. The checker then works out the remainder from what the body does. Here, the body adds `notional` with `with_columns`. If the caller's frame already has a `notional` column, `with_columns` replaces it, so the remainder of the result never contains `notional`. Inside the function, a revealed type shows this remainder as `Minus[Rest, Literal["notional"]]`. See [Inferred return types](../inferred/) and [Remainders](../../reference/remainders/).
 
 ## Use only the declared columns
 
-In the body, the checker knows only the declared columns. A caller can pass a frame without `venue`, so a read of `venue` is an error:
+Inside the function, the checker knows only the columns that the type declares. It does not know whether `Rest` contains `venue`, because that depends on the caller: a `Blotter` frame has `venue`, and a `Trades` frame does not. So reading `venue` in the body is an error:
 
 <Example name="open_frames_undeclared" />
 
 :::tip
-If the function needs `venue`, add it to the schema of `df`. Then every caller must pass a frame with `venue`.
+If the function needs `venue`, declare it in the schema of the parameter. The function can then read it, and every caller has to pass a frame that has it.
 :::
 
 ## Ask the caller for a promise
 
-A keyword of `other_columns(...)` states a promise that each caller must keep. The body can rely on it, and the checker reports a call that breaks it:
+Sometimes the body needs to know something about the columns that it does not declare. A function that adds a `notional` column, for example, needs to be sure that the caller's frame does not already have one. A keyword of `other_columns(...)` states such a promise about the remainder. The body can rely on the promise, and the checker reports each call whose frame breaks it:
 
 <Example name="open_frames_without" />
 
 | Keyword | The promise |
 | -- | -- |
-| `without=[...]` | The remainder holds none of these names. |
-| `only=[...]` | The remainder holds only these names. |
-| `without_prefix=`, `only_prefix=` | No name starts with the prefix, or every name does. |
-| `without_suffix=`, `only_suffix=` | No name ends with the suffix, or every name does. |
-| `all_of=` | Every column has one of these data types. |
-| `none_of=` | No column has one of these data types. |
+| `without=[...]` | The remainder contains none of these names. |
+| `only=[...]` | The remainder contains only these names. |
+| `without_prefix=`, `only_prefix=` | No name in the remainder starts with the prefix, or every name does. |
+| `without_suffix=`, `only_suffix=` | No name in the remainder ends with the suffix, or every name does. |
+| `all_of=` | Every column of the remainder has one of these data types. |
+| `none_of=` | No column of the remainder has one of these data types. |
 | `disjoint_from=` | This remainder shares no name with the other remainders. |
-| `within=` | The other remainders hold every name of this one. |
+| `within=` | Every name in this remainder is also in the other remainders. |
 
-`all_of=` and `none_of=` take a Polars class such as `NumericType` or `pl.String`, a data type with parameters such as `pl.Datetime("us")`, or a set of them. `AnyZone` fills the zone of a `Datetime` with every zone of its time unit: `Datetime[Literal["us"], AnyZone]` is the data types that `cs.datetime("us")` picks.
+`all_of=` and `none_of=` take a Polars class such as `NumericType` or `pl.String`, a data type with parameters such as `pl.Datetime("us")`, or a set of them. To cover every time zone of a `Datetime`, use `AnyZone`: `Datetime[Literal["us"], AnyZone]` covers the same data types as `cs.datetime("us")`.
 
 ## Join two open frames
 
-A join keeps the columns of both frames. If both remainders can hold one name, Polars renames the right column for some callers and not for others. The checker cannot name the columns of such a result:
+A join keeps the columns of both frames. When a column name appears on both sides, Polars adds the suffix `_right` to the right-hand column. With two open frames, the checker cannot know whether the two remainders share a name, because that depends on the frames that each caller passes. For some callers Polars renames a column, and for other callers it does not. The checker cannot name the columns of such a result, so it reports an error:
 
 <Example name="open_frames_join_error" />
 
-`disjoint_from=` states that the two remainders share no name. The result then holds the columns of both remainders. At the call below, `bid` comes from the left frame and `venue` from the right:
+`disjoint_from=` promises that the two remainders never share a name. With that promise, no right-hand column is renamed, and the result holds the columns of both remainders. In the call below, `bid` comes from the left frame and `venue` from the right one:
 
 <Example name="open_frames_join" />

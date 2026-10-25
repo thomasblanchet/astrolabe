@@ -8,32 +8,34 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
+A pipeline starts by reading data. When the reader knows the schema of the data, the checker knows it too, and it can check every step that follows.
+
 ## Read a file with a schema
 
-Polars reads a CSV file with `pl.read_csv`. Give it the schema of the file, as you do for any Polars program. The checker reads that schema, so `trades` is a typed frame from the start:
+`pl.read_csv` takes a `schema=` argument, a dict that maps each column name to its data type. It is the usual way to tell Polars what a CSV file contains. The checker reads that dict as well, so the frame that `pl.read_csv` returns is typed from the first line:
 
 <Example name="tut_load_schema" />
 
-Nothing in this code comes from Astrolabe. The type of `trades` is `TypedDataFrame`, with three columns. Each later step is checked against them.
+Nothing in this code comes from Astrolabe: it is plain Polars. Still, `reveal_type` shows that `trades` is a `TypedDataFrame` with three columns, and every later step on `trades` is checked against those columns.
 
 ## A wrong name is an error
 
-The next line reads a column with a typo:
+The next line selects a column, but misspells its name:
 
 <Example name="tut_load_typo" />
 
-Polars raises `ColumnNotFoundError` when this line runs. The checker reports it before the code runs, at the line of the typo.
+When this line runs, Polars raises `ColumnNotFoundError`. The checker reports the same mistake earlier, when mypy runs, at the line of the typo.
 
 ## Without a schema, the frame is plain
 
-If the reader gets no schema, Polars finds the data types from the data when the code runs. The checker cannot know them, so the result is the plain frame `pl.DataFrame`, which it does not track:
+When a reader gets no schema, Polars infers the data types from the file at run time. The checker runs before that, so it cannot know the columns. The result is a plain `pl.DataFrame`, which the checker does not track:
 
 <Example name="tut_load_plain" />
 
-The typo on `prcie` passes, because the checker does not know the columns of `raw`. Give each reader a schema with `schema={...}`. For a frame that comes without a schema, check it at run time with `check_schema`: see [Check the data at run time](../runtime/).
+Here the typo `prcie` goes unnoticed, because the checker does not know which columns `raw` has. So pass a schema to each reader. If a frame comes from a source that gives no schema, check it at run time with `check_schema`, as the chapter [Check the data at run time](../runtime/) shows.
 
 :::note
-Write the schema as a dict in the call. The checker reads a dict literal. It does not follow a dict that a variable holds.
+Write the schema as a dict literal inside the call. The checker reads a dict that is written in the call, but it does not follow a dict that is stored in a variable.
 :::
 
 Next: [2. Transform the frame](../transform/).

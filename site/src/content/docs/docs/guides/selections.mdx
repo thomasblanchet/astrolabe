@@ -7,26 +7,28 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A selector picks columns by name or by data type, for example `cs.numeric()`. A selection is a selector with operations after it, for example `cs.numeric().round(2)`. The type of a selection carries the selector, one result for each data type that it picks, and a rename. So an operation applies it to the declared columns and to the remainder alike.
+A selector picks columns by name or by data type, such as `cs.numeric()`, which picks every numeric column. A selection is a selector followed by operations, such as `cs.numeric().round(2)`, which rounds every numeric column. Unlike `pl.col("price")`, a selection does not name its columns in advance. It applies to whatever columns the selector picks in each frame, including the columns of a remainder.
+
+The type of a selection carries the selector, the data type that the operations give for each data type that the selector picks, and any rename. So an operation can apply a selection to the declared columns and to the remainder alike.
 
 ## Declare the type of a selection
 
-`typed_selection(selector, gives=)` declares a selection. `gives=same` keeps the data type of each column:
+`typed_selection(selector, gives=)` declares the type of a selection, for the parameter or the result of a function. `gives=same` means that each picked column keeps its data type:
 
 <Example name="sel_typed" />
 
-`typed_agg_selection(...)` declares a selection that gives one value for each group, for example `cs.numeric().sum()`. Where the result depends on the data type of a column, give `row(...)` parts in place of `gives=`.
+`typed_agg_selection(...)` declares a selection that gives one value for each group, such as `cs.numeric().sum()`. When the result depends on the data type of each picked column, pass `row(...)` parts instead of `gives=`, one for each group of data types.
 
 ## Rename the columns of a selection
 
-A selection gives one column for each column that it picks. `.name.suffix()` and `.name.prefix()` keep different names different:
+A selection produces one column for each column that it picks. To keep the new columns apart from the old ones, add a suffix or a prefix to their names, with `.name.suffix()` or `.name.prefix()`:
 
 <Example name="sel_names" />
 
-`.alias()` cannot name several columns, so it is an error on a selection that picks several columns. A rewrite of each whole name, for example `.name.to_lowercase()`, applies to each picked column. If it turns two names into one, the checker reports `[duplicate-column]`, because Polars refuses two columns with one name.
+`.alias()` gives one name, so it cannot name several columns. On a selection that can pick more than one column, it is an error. A rename that rewrites each whole name, such as `.name.to_lowercase()`, applies to each picked column. If it turns two names into the same name, the checker reports `[duplicate-column]`, because Polars refuses a frame with two columns of the same name.
 
 ## Read other columns
 
-A selection can read other columns: `cs.numeric() + pl.col("fee")` adds `fee` to each picked column, and `cs.numeric().sum().over("desk")` sums each one by desk. The frame must declare `fee` and `desk`.
+A selection can also read other columns. `cs.numeric() + pl.col("fee")` adds `fee` to each picked column, and `cs.numeric().sum().over("desk")` sums each picked column by desk. The frame has to declare the columns that the selection reads, here `fee` and `desk`.
 
-`.struct.unnest()` spreads the fields of a struct expression, and `.name.keep()` gives an expression back the name of its first column.
+`.struct.unnest()` turns the fields of a struct expression into separate columns, and `.name.keep()` gives an expression back the name of the column that it reads first.

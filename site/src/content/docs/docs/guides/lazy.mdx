@@ -7,22 +7,22 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A lazy frame runs nothing until `collect()`. `TypedLazyFrame` is the lazy form of `TypedDataFrame`, and every operation has the same checks.
+A lazy frame records a query, and runs nothing until you call `collect()`. `TypedLazyFrame` is the typed form of `pl.LazyFrame`, in the same way as `TypedDataFrame` is the typed form of `pl.DataFrame`. Every operation on a lazy frame is checked in the same way as on an eager frame.
 
 ## Scan, transform, collect
 
-A `scan_*` reader with a schema gives a typed lazy frame. `collect()` gives the typed frame:
+A `scan_*` reader with a schema returns a typed lazy frame. You transform it with the usual operations, and `collect()` runs the query and returns a typed frame with the final schema:
 
 <Example name="lazy_scan" />
 
-`lazy()` turns a `TypedDataFrame` into a `TypedLazyFrame`, and keeps the schema.
+`lazy()` turns a `TypedDataFrame` into a `TypedLazyFrame` with the same schema.
 
 ## Two data types for one column
 
-Polars plans each later step at the data type that `collect_schema()` shows. For a few expressions, that data type differs from the data type of the data. Such a column holds both, as `Planned[run, planner]`, and `collect()` gives the run type:
+A lazy frame plans its query before it runs it. To plan each step, Polars uses the data type that `collect_schema()` reports for each column. For a few expressions, that planned data type differs from the data type that the column has once the query runs. The checker tracks both: such a column has the type `Planned[run, planner]`, where `run` is the data type of the data and `planner` is the data type that Polars plans with. `collect()` gives the column its run data type:
 
 <Example name="lazy_planned" />
 
-The cumulative sum gives a `Decimal(38, 2)`, and Polars plans it as a `Decimal(10, 2)`. A later step of the lazy frame works at the planned type.
+Here, the cumulative sum of a `Decimal(10, 2)` column produces a `Decimal(38, 2)` when the query runs, but Polars plans it as a `Decimal(10, 2)`. The later steps of the lazy query see the planned data type.
 
-To give the column one data type, cast it: `pl.col("price").cum_sum().cast(pl.Decimal(38, 2))`.
+To give the column a single data type, cast it: `pl.col("price").cum_sum().cast(pl.Decimal(38, 2))`.

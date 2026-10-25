@@ -7,22 +7,24 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A function can let the checker compute its return type from its body. Write an inferred type as the return type, and wrap each returned value in `infer(...)`. At each call, the result is the union of the types of those values. This is the intended way to type the result of a function that changes an open frame: a remainder marker written by hand repeats what the body does.
+Writing out the return type of a function is not always practical. The type of an expression is long, because it holds the code of the expression. And a function that changes an open frame returns the columns of its caller, which only the body determines. Such a function can let the checker work out its return type from its body. You write an inferred type as the return type, and you wrap each value that the function returns in `infer(...)`. At each call, the result is the union of the types of those values.
+
+This is the intended way to type a function that changes an open frame. A remainder marker written by hand only repeats what the body does, and it has to change each time that the body changes.
 
 | Return type | The function returns |
 | -- | -- |
 | `InferredExpr` | Expressions. |
-| `InferredDataFrame` | Frames of the class `DataFrame`. |
-| `InferredLazyFrame` | Frames of the class `LazyFrame`. |
-| `TypedDataFrame[Schema, InferredRemainder]` | A frame with the columns of `Schema`. The checker computes the remainder. |
+| `InferredDataFrame` | Eager frames (`DataFrame`). |
+| `InferredLazyFrame` | Lazy frames (`LazyFrame`). |
+| `TypedDataFrame[Schema, InferredRemainder]` | A frame with the columns of `Schema`, plus a remainder that the checker works out. |
 
 ## Return an expression
 
-The type of an expression is long, and a function with several `return` statements can give several types. `InferredExpr` gives their union, with no union written by hand:
+A function with several `return` statements can return several different expressions. `InferredExpr` gives the union of their types, so you never write the types out:
 
 <Example name="inferred_expr" />
 
-The checker does not know which branch runs, so the result is either frame.
+The checker does not know which branch runs, so `in_euros` has the type of either frame: one with `price_usd`, or one with `price_eur` cast to `Float64`.
 
 ## Return a frame
 
@@ -32,18 +34,18 @@ The checker does not know which branch runs, so the result is either frame.
 
 ## Return the declared columns and an inferred remainder
 
-`TypedDataFrame[Schema, InferredRemainder]` declares the columns of the result, and lets the checker compute the remainder from the body. Below, `add_notional` accepts any frame with `price` and `quantity`, and `Rest` stands for the other columns of the caller. At the call, the remainder of the result is `symbol`:
+Sometimes you want to declare the columns of the result, and let the checker work out only the remainder. `TypedDataFrame[Schema, InferredRemainder]` does that. Below, `add_notional` accepts any frame that has `price` and `quantity`, and `Rest` stands for the other columns of the caller. The declared columns of the result are those of `WithNotional`, and the checker works out the remainder. At this call, the remainder is `symbol`:
 
 <Example name="tut_inference_remainder" />
 
-Each returned value must hold each column of the declared schema, with a data type that agrees. The checker reports a value that does not, at its `infer(...)`.
+Each returned value has to contain every column of the declared schema, with a data type that matches. The checker reports a value that does not, at its `infer(...)`.
 
 ## Rules of use
 
-- Write `infer(...)` around the whole value of a `return`.
-- Use an inferred type only as the return type of a function. Anywhere else, for example on a parameter, it is an error.
+- Write `infer(...)` around the whole value of a `return` statement.
+- Use an inferred type only as the return type of a function. Anywhere else, such as on a parameter, it is an error.
 - A function with `InferredDataFrame` must return a `DataFrame`, and a function with `InferredExpr` must return expressions.
 
 <Example name="inferred_misuse" />
 
-If one returned value is a plain type that the checker does not track, the whole return type is the plain type. The setting `disallow_implicit_inferred_fallback` makes that an error. See [Configuration](../../reference/configuration/).
+If one returned value has a plain type, which the checker does not track, the whole return type falls back to that plain type. By default this happens without an error. The setting `disallow_implicit_inferred_fallback` makes it an error. See [Configuration](../../reference/configuration/).

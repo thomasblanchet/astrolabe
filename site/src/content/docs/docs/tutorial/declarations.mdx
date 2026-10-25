@@ -8,18 +8,18 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A function can take expressions and return an expression. A declaration states which columns such an expression reads, and which data type it gives.
+Functions that take and return Polars expressions are a common way to reuse code. To check such a function, the checker needs to know what kind of expression it takes and returns: which columns the expression reads, and which data type it produces. A declaration states exactly that.
 
 ## Declare the column that an expression reads
 
-`column("price", pl.Float64)` declares an expression that reads the column `price` as a `Float64`, and gives it back:
+`column("price", pl.Float64)` declares an expression that reads the column `price` as a `Float64`, and returns it under the same name. Below, `Price` is that declaration, and `discounted` uses it as the type of its parameter and of its result:
 
 <Example name="tut_declarations" />
 
-- The first call passes: `pl.col("price")` fits the declaration.
-- `pl.col("quantity")` reads another column.
-- `pl.col("price").sum()` combines the rows into one value, and the declaration works row by row.
+- The first call passes `pl.col("price")`, which reads `price` and returns it, so it fits the declaration.
+- `pl.col("quantity")` reads a different column, so it does not fit.
+- `pl.col("price").sum()` combines all the rows into one value, but the declaration describes an expression that works row by row, so it does not fit either.
 
-The checker checks the declaration where you write it, and the fit of each argument at each call. See [Declare expression types](../../guides/expression-types/) for expressions that read several columns, aggregations and literals.
+The checker checks a declaration where you write it, and it checks each argument against the declaration at every call. [Declare expression types](../../guides/expression-types/) covers expressions that read several columns, aggregations, and fixed values.
 
 Next: [6. Check the data at run time](../runtime/).

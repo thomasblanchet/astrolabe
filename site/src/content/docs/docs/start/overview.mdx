@@ -7,38 +7,40 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-Astrolabe is a plugin for mypy. It checks the column names and the data types of Polars frames and expressions before the code runs. A missing column or a wrong data type is a type error in your editor, not an exception at run time.
+Polars code refers to columns by their names, as strings. A type checker such as mypy cannot see those names: to mypy, every frame has the same type, `pl.DataFrame`, whatever columns it holds. So a misspelled column name, or a column of the wrong data type, goes unnoticed until the code runs and Polars raises an exception.
+
+Astrolabe is a plugin for mypy that closes this gap. It gives each frame a type that lists its columns and their data types, and it checks every operation against that type. A missing column or a wrong data type then shows up as a type error in your editor, before the code runs.
 
 ## What it checks
 
-Declare the columns of a frame once. The checker then knows the schema of the frame at each step of the code, and it reports each step that Polars refuses:
+You declare the columns of a frame once, in a schema class. From there, the checker follows the schema through your code: it knows which columns each frame has after each operation, and it reports each operation that Polars refuses at run time.
+
+In the example below, `trades` has three declared columns, and the checker reports three different mistakes:
 
 <Example name="start_overview" />
 
-The three errors are three different faults:
-
-- `select` reads a column that the frame does not have.
-- The subtraction mixes a `String` and a `Float64`, which Polars does not allow.
+- `select("venue")` reads a column that the frame does not have.
+- `pl.col("symbol") - pl.col("price")` subtracts a `Float64` from a `String`, which Polars does not allow.
 - `filter` needs a `Boolean` condition, and `price` is a `Float64`.
 
-Each operation gives a frame with a new schema. The checker computes that schema, so each later step is checked against it:
+Each operation produces a frame with a new schema. The checker works out that new schema with the typing rules of Polars, and checks the next operations against it. Here, `with_columns` adds a column computed from `price` and `quantity`, and `reveal_type` shows the schema of the result: the three original columns, plus the new one as a `Float64`:
 
 <Example name="start_overview_result" />
 
-The checker covers the operations that change a schema, for example `select`, `with_columns`, `join`, `group_by`, `pivot` and `concat`. It covers the expressions inside them, at the data types of the frame. A function can declare the columns that it needs, and accept a frame with other columns too. See [Frame operations](../../guides/operations/) and [Open frames](../../guides/open-frames/).
+The checker covers the operations that change a schema, such as `select`, `with_columns`, `join`, `group_by`, `pivot` and `concat`. It also types the expressions inside them, at the data types of the frame that they run on. A function can declare only the columns that it needs, and accept frames that have more columns than those. See [Frame operations](../../guides/operations/) and [Open frames](../../guides/open-frames/).
 
 ## What it does not check
 
-A type describes the schema of a frame, not its data. The checker does not know:
+A type describes the schema of a frame: the names and the data types of its columns. It does not describe the data itself. So the checker knows nothing about:
 
-- the values in a column, for example nulls, ranges or duplicates,
+- the values in a column, such as nulls, ranges or duplicates,
 - the number of rows,
 - the order of the columns.
 
-For data that comes from outside the program, check the schema at run time with `check_schema`. A validation library can check the values. See [What a type guarantees](../../concepts/guarantees/).
+The checker also cannot know the schema of data that comes from outside your program, such as a file. For that data, check the schema once at run time with `check_schema`, where the data enters the program. To check the values, use a validation library. See [What a type guarantees](../../concepts/guarantees/).
 
 ## How it works
 
-The plugin runs inside mypy. It reads the code of each expression, and it computes the result of each operation with the typing rules of Polars. mypy keeps the types and reports the errors, so the checks show wherever mypy runs: in your editor, in pre-commit hooks and in CI.
+The plugin runs inside mypy. For each operation, it reads the code of the expressions, and it works out the schema of the result with the typing rules of Polars. mypy holds the types and reports the errors, so the checks appear wherever mypy runs: in your editor, in pre-commit hooks and in CI.
 
-At run time, Astrolabe adds nothing. A typed frame is an ordinary `pl.DataFrame`, and the code calls Polars as before. See [How the checker works](../../concepts/how-it-works/).
+At run time, Astrolabe adds nothing. A typed frame is an ordinary `pl.DataFrame`, and your code calls Polars exactly as before. See [How the checker works](../../concepts/how-it-works/).
