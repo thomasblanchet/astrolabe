@@ -646,6 +646,9 @@ class CastNodeVisit:
             >>> with PolarsRelease.pretend("1.44.1"):
             ...     CastNodeVisit().visit(int8, DType.unknown("any"), CastOption.STRICT) is None
             True
+            >>> with PolarsRelease.pretend("1.44.1"):
+            ...     CastNodeVisit().visit(int8, DType("Int16"), CastOption.STRICT)
+            cast(Int16, overflowing)
         """
         if Is.unknown_any(target):
             return None
@@ -1707,6 +1710,9 @@ class EwmCasts:
             ((),)
             >>> from astrolabe._rules.releases import PolarsRelease
             >>> nested = Operand.column(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     EwmCasts().visit([Operand.column(DType("Int8"))]).steps
+            ((cast(Float64, non_strict),),)
             >>> with PolarsRelease.pretend("1.44.0"):
             ...     EwmCasts().visit([nested])  # doctest: +ELLIPSIS
             Traceback (most recent call last):

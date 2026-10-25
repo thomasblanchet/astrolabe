@@ -294,8 +294,8 @@ class CensusSurface:
 
     Example:
         >>> surface = CensusSurface()
-        >>> len(surface.templates()) + len(surface.skipped())
-        473
+        >>> len(surface.templates()) + len(surface.skipped()) == len(surface._calls())
+        True
     """
 
     EXTRA_CALLS: ClassVar[dict[str, str]] = {
@@ -333,7 +333,7 @@ class CensusSurface:
             "pl.coalesce('x', 'y')"
         """
         calls = {f"root.{name}": code for name, code in CensusCalls.ROOT_CALLS.items()}
-        calls |= CensusCalls.MEMBERS
+        calls |= CensusCalls().members()
         for name, code in CensusCalls.CONSTRUCTORS.items():
             calls[f"pl.{name}"] = code
         return calls | self.EXTRA_CALLS

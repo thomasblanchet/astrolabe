@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from astrolabe._rules.releases import PolarsRelease
+
 
 class CensusCalls:
     """Hold the call of each operation of the expression API in the census.
@@ -443,6 +445,12 @@ class CensusCalls:
         "struct.with_fields": "pl.col('x').struct.with_fields()",
     }
 
+    # The members that a release of polars adds, each with that release and one call.
+    ADDED: ClassVar[dict[str, tuple[str, str]]] = {
+        "arr.dot": ("1.44.0", "pl.col('x').arr.dot(pl.col('x'))"),
+        "struct.drop": ("1.44.0", "pl.col('x').struct.drop(['a'])"),
+    }
+
     # The functions of `pl` that build an expression, each with one call.
     CONSTRUCTORS: ClassVar[dict[str, str]] = {
         "all": "pl.all()",
@@ -551,6 +559,24 @@ class CensusCalls:
         "self_dtype",
         "struct_with_fields",
     )
+
+    def members(self) -> dict[str, str]:
+        """Give the call of each member of a namespace that the installed release of polars has.
+
+        Returns:
+            The calls of `MEMBERS`, and of each member of `ADDED` whose
+            release is the installed one or an older one.
+
+        Example:
+            >>> CensusCalls().members()["str.len_chars"]
+            "pl.col('x').str.len_chars()"
+        """
+        installed = PolarsRelease.installed()
+        added = {}
+        for name, (first, call) in self.ADDED.items():
+            if installed >= PolarsRelease.parse(first):
+                added[name] = call
+        return {**self.MEMBERS, **added}
 
     def method_keys(self) -> set[str]:
         """Give the key of every method of `pl.Expr` that this class accounts for.

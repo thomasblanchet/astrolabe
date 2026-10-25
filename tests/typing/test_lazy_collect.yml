@@ -131,7 +131,7 @@
 
     lf: LzFrame
     flag: bool
-    lf.collect(background=flag)  # E: No overload variant of "collect" of "LazyFrame" matches argument type "bool"  [call-overload] # N: Possible overload variants: # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[True], optimizations: QueryOptFlags = ...) -> InProcessQuery # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[False] = ..., optimizations: QueryOptFlags = ...) -> DataFrame
+    lf.collect(background=flag)  # E: No overload variant of "collect" of "LazyFrame" matches argument type "bool"  [call-overload] # N: Possible overload variants: # NR:     def collect\(self, \*, .*, background: Literal\[True\], .*\) -> InProcessQuery$ # NR:     def collect\(self, \*, .*, background: Literal\[False\] = \.\.\., .*\) -> DataFrame$
 
 - case: collect_narrows_to_typed_dataframe_on_open_receiver
   main: |

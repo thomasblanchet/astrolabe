@@ -506,9 +506,46 @@ class Rules:
             >>> Rules(Frames()).select(Cases().nodes()["head 2"], ("per row",))
             2
         """
+        inputs = self._selected(node, forms)
+        return RuleAnswer().result(lambda: node.run().select(inputs).length)
+
+    def decided(self, node: Node, forms: tuple[str, ...]) -> bool:
+        """Say whether the rules let the values decide the number of rows of the node in a `select`.
+
+        Such a number is the most rows that polars gives, and the data can give fewer.
+
+        Args:
+            node: The node.
+            forms: The form of each input.
+
+        Returns:
+            Whether they do. A node that the rules refuse gives no number of rows.
+
+        Example:
+            >>> Rules(Frames()).decided(Cases().nodes()["head 2"], ("per row",))
+            False
+        """
+        inputs = self._selected(node, forms)
+        answer = RuleAnswer().result(lambda: node.run().select(inputs).decided)
+        return answer is True
+
+    def _selected(self, node: Node, forms: tuple[str, ...]) -> list[InSelect]:
+        """Give the inputs of the node in a `select`, from the rules.
+
+        Args:
+            node: The node.
+            forms: The form of each input.
+
+        Returns:
+            The inputs, with the literal inputs that polars adds after them.
+
+        Example:
+            >>> len(Rules(Frames())._selected(Cases().nodes()["head 2"], ("per row",)))
+            3
+        """
         inputs = [self._frames.selected(form) for form in forms]
         inputs.extend([InSelect.literal()] * node.extra)
-        return RuleAnswer().result(lambda: node.run().select(inputs).length)
+        return inputs
 
     def agg(self, node: Node, forms: tuple[str, ...]) -> object:
         """Give the column of the node in `agg`, or how the rules say it stops.
@@ -708,9 +745,11 @@ def test_select_gives_the_rows_of_polars(case: tuple[Node, tuple[str, ...]]) -> 
     """
     node, forms = case
     frames = Frames()
-    rules = Rules(frames).select(node, forms)
+    rules = Rules(frames)
+    answer = rules.select(node, forms)
     polars = Polars(frames).select(node, forms)
-    assert Agreement(exact=node.exact).holds(rules, polars), (rules, polars)
+    exact = node.exact and not rules.decided(node, forms)
+    assert Agreement(exact=exact).holds(answer, polars), (answer, polars)
 
 
 @pytest.mark.parametrize("case", Cases().all(), ids=Cases().ident)

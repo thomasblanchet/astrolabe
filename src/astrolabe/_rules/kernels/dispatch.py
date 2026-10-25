@@ -587,6 +587,9 @@ class Recast:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `sqrt` operation ...
+            >>> floats = Data(DType("Float64"))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     recast._check_cast(Data(DType("Int8")), floats, Dispatch("sqrt", (), recast))
         """
         if self.checked and not cast.dtype.same(self.target):
             message = f"`{kernel.name}` operation not supported for dtype `{source.dtype!r}`"

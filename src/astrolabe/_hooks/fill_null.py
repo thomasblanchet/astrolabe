@@ -38,6 +38,7 @@ from astrolabe._hooks.propagate import Refusal, explains, not_falsy, not_none, n
 from astrolabe._hooks.recording.recorder import RecordedShortForm, ShortForm
 from astrolabe._hooks.select import SelectHook
 from astrolabe._hooks.unproven import Reason
+from astrolabe._rules.releases import polars_releases
 from astrolabe._hooks.with_columns import WithColumnsHook
 
 if TYPE_CHECKING:
@@ -170,36 +171,88 @@ class FrameFillNullHook:
         return Reason.CALLER_DEPENDENT if kinds.held & refused else None
 
 
-@dataclass(frozen=True)
-class FillStrategy:
-    """Give the kinds of the columns that the strategy of a `fill_null` call refuses.
+class RefusedKinds:
+    """Give the kinds of the columns that one strategy of `fill_null` refuses.
 
-    `min` and `max` need an order of the values, `mean` a number, and
-    `zero` and `one` a constant of the physical type of the column. Polars
-    computes that value only where the column holds a null, and raises
-    `InvalidOperationError` there for a column of another kind. `forward`
-    and `backward` accept every column. A strategy whose value the call
-    does not state refuses no kind here.
-
-    Attributes:
-        arguments: The argument values of the call.
+    A kind is a data type with its parameters taken away, for example
+    `Datetime` for every time unit. `min` and `max` need an order of the
+    values, `mean` a number, and `zero` and `one` a constant of the physical
+    type of the column. Polars computes that value only where the column
+    holds a null, and raises `InvalidOperationError` there for a column of
+    another kind. `forward` and `backward` accept every column. From polars
+    1.44.0, `zero`, `one` and `mean` also refuse a `Categorical` and an
+    `Enum`, and `min` and `max` take the smallest and the largest category.
 
     Example:
-        >>> mean = call_args(["value", "strategy"], [[], [str_literal_node("mean")]])
-        >>> sorted(FillStrategy(mean).refused())
-        ['Array', 'Binary', 'Boolean', 'List', 'String', 'Struct']
+        >>> sorted(RefusedKinds().of("min"))
+        ['Array', 'List', 'Struct']
     """
 
-    arguments: CallArgs
-
     NESTED: ClassVar[frozenset[str]] = frozenset({"Array", "List", "Struct"})
-    REFUSED: ClassVar[dict[str, frozenset[str]]] = {
+    STRATEGIES: ClassVar[dict[str, frozenset[str]]] = {
         "min": NESTED,
         "max": NESTED,
         "zero": NESTED | {"Null"},
         "one": NESTED | {"Binary", "Null", "String"},
         "mean": NESTED | {"Binary", "Boolean", "String"},
     }
+    CATEGORIES: ClassVar[frozenset[str]] = frozenset({"Categorical", "Enum"})
+    VALUED: ClassVar[frozenset[str]] = frozenset({"zero", "one", "mean"})
+
+    @polars_releases
+    def of(self, strategy: str) -> frozenset[str]:
+        """Give the kinds that the strategy refuses, with the categories for a valued strategy.
+
+        Args:
+            strategy: The name of the strategy, for example `zero`.
+
+        Returns:
+            The names of the kinds. None for a strategy that refuses no kind.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     sorted(RefusedKinds().of("zero"))
+            ['Array', 'Categorical', 'Enum', 'List', 'Null', 'Struct']
+        """
+        kinds = self._without_categories(strategy)
+        return kinds | self.CATEGORIES if strategy in self.VALUED else kinds
+
+    @of.before("1.44.0")
+    def _without_categories(self, strategy: str) -> frozenset[str]:
+        """Give the kinds that the strategy refuses in every release.
+
+        Args:
+            strategy: The name of the strategy, for example `zero`.
+
+        Returns:
+            The names of the kinds.
+
+        Example:
+            >>> sorted(RefusedKinds()._without_categories("zero"))
+            ['Array', 'List', 'Null', 'Struct']
+        """
+        return self.STRATEGIES.get(strategy, frozenset())
+
+
+@dataclass(frozen=True)
+class FillStrategy:
+    """Give the kinds of the columns that the strategy of a `fill_null` call refuses.
+
+    A strategy whose value the call does not state refuses no kind here. The
+    kinds of each strategy come from `RefusedKinds`.
+
+    Attributes:
+        arguments: The argument values of the call.
+
+    Example:
+        >>> mean = call_args(["value", "strategy"], [[], [str_literal_node("mean")]])
+        >>> sorted(FillStrategy(mean).refused()) == sorted(RefusedKinds().of("mean"))
+        True
+    """
+
+    arguments: CallArgs
+
     REASON: ClassVar[str] = (
         "the fill strategy does not accept {kind} where the column holds a null, "
         "and polars raises InvalidOperationError"
@@ -218,7 +271,7 @@ class FillStrategy:
         """
         refused: set[str] = set()
         for name in self._names():
-            refused |= self.REFUSED.get(name, frozenset())
+            refused |= RefusedKinds().of(name)
         return frozenset(refused)
 
     def _names(self) -> list[str]:

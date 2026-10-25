@@ -27,7 +27,8 @@ import polars as pl
 import polars.selectors as cs
 import pytest
 
-from astrolabe._hooks.fill_null import FillStrategy
+from astrolabe._hooks.fill_null import RefusedKinds
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._hooks.row_counts import RowCounts
 
 from astrolabe import frame
@@ -1001,8 +1002,12 @@ class TestOperationDomains:
         "Binary": pl.Series([b"x", None], dtype=pl.Binary),
         "Null": pl.Series([None, None], dtype=pl.Null),
     }
+    CATEGORIES: ClassVar[dict[str, pl.Series]] = {
+        "Categorical": pl.Series(["a", None], dtype=pl.Categorical),
+        "Enum": pl.Series(["a", None], dtype=pl.Enum(["a", "b"])),
+    }
 
-    def rejected_by_fill_null(self, strategy: str) -> set[str]:
+    def rejected_by_fill_null(self, strategy: str, *, categories: bool = False) -> set[str]:
         """Give the data types a fill strategy rejects.
 
         A data type is rejected when the strategy raises on a column
@@ -1010,11 +1015,12 @@ class TestOperationDomains:
 
         Args:
             strategy: The `fill_null` strategy to try.
+            categories: Whether to try the categorical types in place of the others.
 
         Returns:
             The names of the types that raise.
         """
-        probes = {**self.SCALAR, **self.NESTED}
+        probes = self.CATEGORIES if categories else {**self.SCALAR, **self.NESTED}
         rejected = set()
         for name, series in probes.items():
             try:
@@ -1053,11 +1059,24 @@ class TestOperationDomains:
             "Binary",
         }
 
-    @pytest.mark.parametrize("strategy", sorted(FillStrategy.REFUSED))
+    @pytest.mark.parametrize("strategy", ["zero", "one", "mean", "min", "max"])
+    def test_a_strategy_with_a_value_rejects_the_categories_from_polars_1_44(
+        self,
+        strategy: str,
+    ) -> None:
+        """From polars 1.44.0, the strategies that compute a value reject a categorical type."""
+        valued = strategy in {"zero", "one", "mean"}
+        recent = PolarsRelease.installed() >= PolarsRelease.parse("1.44.0")
+        expected = set(self.CATEGORIES) if valued and recent else set()
+        assert self.rejected_by_fill_null(strategy, categories=True) == expected
+
+    @pytest.mark.parametrize("strategy", sorted(RefusedKinds.STRATEGIES))
     def test_the_checker_reports_the_kinds_that_each_strategy_rejects(self, strategy: str) -> None:
         """The frame `fill_null` reports a declared column of each kind that polars rejects."""
-        probes = {**self.SCALAR, **self.NESTED}
-        assert FillStrategy.REFUSED[strategy] & set(probes) == self.rejected_by_fill_null(strategy)
+        probes = {**self.SCALAR, **self.NESTED, **self.CATEGORIES}
+        rejected = self.rejected_by_fill_null(strategy)
+        rejected |= self.rejected_by_fill_null(strategy, categories=True)
+        assert RefusedKinds().of(strategy) & set(probes) == rejected
 
     def test_a_whole_frame_cast_rejects_two_of_the_three_nested_types(self) -> None:
         """`Struct` casts to text where `List` and `Array` raise.
@@ -1344,8 +1363,14 @@ class TestFrameFill:
             assert column.dtype == self.COLUMNS[name].dtype, (name, strategy)
 
     def test_each_other_strategy_raises_on_its_kinds_only(self) -> None:
-        """`min`, `max`, `zero`, `one` and `mean` raise on their kinds and keep every other type."""
-        for name, (strategy, refused) in product(self.COLUMNS, self.REFUSED.items()):
+        """`min`, `max`, `zero`, `one` and `mean` raise on their kinds and keep every other type.
+
+        From polars 1.44.0, `zero`, `one` and `mean` also raise on a categorical type.
+        """
+        recent = PolarsRelease.installed() >= PolarsRelease.parse("1.44.0")
+        for name, (strategy, kinds) in product(self.COLUMNS, self.REFUSED.items()):
+            valued = strategy in {"zero", "one", "mean"}
+            refused = kinds | {"Categorical", "Enum"} if valued and recent else kinds
             kind = name.split("_", maxsplit=1)[0]
             column = self.run(name, {"strategy": strategy})
             if kind in refused:

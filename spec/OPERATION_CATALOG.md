@@ -47,13 +47,13 @@ Every identifier is defined in `OPERATIONS.md`. The ones used most:
 
 ### 0.4 How the Polars column was measured
 
-Every behavior stated here was executed on **polars 1.43.2** and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
+Every behavior stated here was executed on **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
 
 ```
 uv run pytest spec
 ```
 
-A polars release that changes one of these behaviors fails the test that names it, so this document cannot quietly drift away from the library it describes.
+A polars release that changes one of these behaviors fails the test that names it, so this document cannot quietly drift away from the library it describes. Where a behavior differs between releases, the row says which releases show it, and the rules apply the behavior of the installed release.
 
 ### 0.5 Scope, and why nothing is missing
 
@@ -256,9 +256,9 @@ These keep every name and change types.
 | `.fill_null(value)`, an expression, a `Decimal` or `bytes` | fills every column, as `.select(pl.all().fill_null(value))` | as for that `.select` | as for that `.select` | `R-9` on each kind where the fill raises |
 | `.fill_null(strategy="forward"/"backward")` | carries a value along the column | unchanged | `E-1` | `none` |
 | `.fill_null(strategy="min"/"max")` | takes a value from the column | unchanged | `E-1` | `R-9` on `NestedType` |
-| `.fill_null(strategy="zero")` | fills with zero | unchanged | `E-1` | `R-9` on `{NestedType, Null}` |
-| `.fill_null(strategy="one")` | fills with one | unchanged | `E-1` | `R-9` on `{NestedType, String, Binary, Null}` |
-| `.fill_null(strategy="mean")` | fills with the mean | unchanged | `E-1` | `R-9` on `{NestedType, String, Boolean, Binary}` |
+| `.fill_null(strategy="zero")` | fills with zero | unchanged | `E-1` | `R-9` on `{NestedType, Null}`, and from polars 1.44.0 on `Categorical` and `Enum` too |
+| `.fill_null(strategy="one")` | fills with one | unchanged | `E-1` | `R-9` on `{NestedType, String, Binary, Null}`, and from polars 1.44.0 on `Categorical` and `Enum` too |
+| `.fill_null(strategy="mean")` | fills with the mean | unchanged | `E-1` | `R-9` on `{NestedType, String, Boolean, Binary}`, and from polars 1.44.0 on `Categorical` and `Enum` too |
 | `.fill_nan(value)` | replaces NaN in the `Float16`, `Float32` and `Float64` columns, as `.with_columns(cs.float().fill_nan(value))`, with a value that is not an expression read as `pl.lit(value)` | as for that `.with_columns`: a number keeps each float column, and a `str` gives `String`. Every other column is unchanged | as for that `.with_columns`: each float kind of the remainder retyped kind by kind (`T-20`) | `R-9` on each float kind where the fill raises |
 | `.interpolate()` | fills nulls between values; integer columns become `Float64` | integers to `Float64`, the rest unchanged | `E-6` to `Unchecked` | `none` |
 
@@ -734,7 +734,14 @@ A lazy frame stores the planner type of each column, and plans each later step a
 
 ### 17.3 The counts
 
-`pl.Expr` carries 222 public members: 212 methods and 10 namespaces, and the namespaces carry 223 members between them, 435 in all. The methods split into 205 that the census calls and 7 whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars and fails when the catalog and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
+`pl.Expr` carries 10 namespaces. Its methods and the members of its namespaces depend on the release of polars. Polars 1.44.0 adds `arr.dot` and `struct.drop`.
+
+| Polars | Methods | Members of the namespaces | In all |
+| -- | -- | -- | -- |
+| 1.43.2 | 212 | 223 | 435 |
+| 1.44.2 | 212 | 225 | 437 |
+
+The methods split into 205 that the census calls and 7 whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars, and fails when the table has no row for that release or when the row and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
 
 ______________________________________________________________________
 
@@ -802,7 +809,7 @@ ______________________________________________________________________
 | rewrites of the output name (`D-32`) | `name.keep`, `name.prefix`, `name.prefix_fields`, `name.replace`, `name.suffix`, `name.suffix_fields`, `name.to_lowercase`, `name.to_uppercase` |
 | a rewrite of the output name by a function of the user, so the name is unknown (`D-32`) | `name.map`, `name.map_fields` |
 | reads the expression and builds no column (section 21) | `meta.as_expression`, `meta.as_selector`, `meta.eq`, `meta.has_multiple_outputs`, `meta.is_column`, `meta.is_column_selection`, `meta.is_literal`, `meta.is_regex_projection`, `meta.ne`, `meta.output_name`, `meta.pop`, `meta.root_names`, `meta.serialize`, `meta.show_graph`, `meta.tree_format`, `meta.undo_aliases`, `meta.write_json` |
-| no definition states the node, so its answer is `Unchecked` (`D-37`) | `ext.storage`, `ext.to` |
+| no definition states the node, so its answer is `Unchecked` (`D-37`) | `arr.dot` and `struct.drop` (from polars 1.44.0), `ext.storage`, `ext.to` |
 
 A `list` or `arr` member that evaluates an inner expression, `list.eval(pl.element() * 2)`, evaluates it at the element of the list, with the element as the one column of the inner tree. The `name` members rewrite the output name and never a data type, so a selection admits only the two affixes (`T-3`, `M-13`).
 

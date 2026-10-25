@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, ClassVar
 from astrolabe._rules.cast_pass import CastFold
 from astrolabe._rules.dtypes import DType, Is, Parameter
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, Undecided, UndecidedError
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.arithmetic import SeriesArithmetic
 from astrolabe._rules.casts import SeriesCast
 from astrolabe._rules.kernels.comparison import CompareOp, Comparison
@@ -1776,7 +1777,9 @@ class Concatenated:
     supertype raise. The kernel casts each input to a list of the supertype,
     and a cast that fails raises. Each other input has the length of the first
     input, or one row, or the kernel raises a `ShapeError`. A first input of
-    one row first repeats to the longest of the others.
+    one row first repeats to the longest of the others. From polars 1.44.0,
+    the kernel checks the lengths before it casts the inputs, so a length that
+    does not fit raises before a cast that fails.
 
     Example:
         >>> lists = Data(DType("List", (DType("Int8"),)))
@@ -1784,8 +1787,38 @@ class Concatenated:
         List(Int16)
     """
 
+    @polars_releases
     def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
-        """Give the type of the output.
+        """Give the type of the output: the check of the lengths, then the casts.
+
+        It raises `PolarsRefusal` where an input has a length that does not
+        fit, where two types have no supertype, or where a cast fails.
+
+        Args:
+            inputs: The data of each input.
+            lengths: The number of rows of each input, or none where they are not known.
+
+        Returns:
+            A list of the supertype.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> lists = Data(DType("List", (DType("Int8"),)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     Concatenated().output([lists, lists], [5, 1])
+            List(Int8)
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     Concatenated().output([lists, lists], [5, 2])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: ...
+        """
+        self._lengths(lengths)
+        return self._target(inputs)
+
+    @output.before("1.44.0")
+    def _lengths_after_casts(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
+        """Give the type of the output: the casts, then the check of the lengths.
 
         It raises `PolarsRefusal` where two types have no supertype, where a
         cast fails, or where an input has a length that does not fit.
@@ -1798,11 +1831,35 @@ class Concatenated:
             A list of the supertype.
 
         Example:
+            >>> fields = (("a", DType("Int8")), ("b", DType("String")))
+            >>> nested = Data(DType("Struct", (fields,)))
             >>> lists = Data(DType("List", (DType("Int8"),)))
-            >>> Concatenated().output([lists, lists], [5, 2])  # doctest: +ELLIPSIS
+            >>> Concatenated()._lengths_after_casts([lists, nested], [5, 2])
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: ShapeError: ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+        """
+        target = self._target(inputs)
+        self._lengths(lengths)
+        return target
+
+    def _target(self, inputs: Sequence[Data]) -> DType:
+        """Join the types of the inputs, and cast each input to a list of the supertype.
+
+        It raises `PolarsRefusal` where two types have no supertype, or where a
+        cast fails.
+
+        Args:
+            inputs: The data of each input.
+
+        Returns:
+            A list of the supertype.
+
+        Example:
+            >>> lists = Data(DType("List", (DType("Int8"),)))
+            >>> Concatenated()._target([lists, Data(DType("Int16"))])
+            List(Int16)
         """
         first = inputs[0]
         if first.dtype.name != "List":
@@ -1815,7 +1872,6 @@ class Concatenated:
         RunCast().of(first, target)
         for other in inputs[1:]:
             self._cast(other, inner, target)
-        self._lengths(lengths)
         return target
 
     def _cast(self, other: Data, inner: DType, target: DType) -> None:

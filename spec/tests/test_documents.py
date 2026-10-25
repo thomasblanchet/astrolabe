@@ -22,6 +22,7 @@ import polars.selectors as cs
 import pytest
 
 from astrolabe.remainder import Prefixed, Suffixed
+from astrolabe._rules.releases import PolarsRelease
 from spec.tests.documents import ROOT, Document, Glossary, LeanSources, Ledger
 
 from spec.tests.test_measurements import MIXED
@@ -501,7 +502,7 @@ class TestExpressionCensus:
         """
         calls = CensusCalls()
         assert calls.method_keys() == {f"root.{m}" for m in PolarsApi().expression_methods()}
-        assert set(calls.MEMBERS) == self.swept_namespace_members()
+        assert set(calls.members()) == self.swept_namespace_members()
         assert self.accounted_constructors() == PolarsApi().expression_constructors()
 
     def test_each_function_left_out_has_one_reason(self) -> None:
@@ -547,22 +548,24 @@ class TestExpressionCensus:
         return found
 
     def test_the_counts_the_catalogue_quotes(self) -> None:
-        """Every count in section 17.3 and section 18 is computed, not remembered."""
+        """Every count in section 17.3 and section 18 is computed, not remembered.
+
+        The table of section 17.3 has one row for each release of polars, and
+        the row of the installed release gives its counts.
+        """
         api = PolarsApi()
-        assert len(api.expression_methods()) == 212
-        assert len(api.namespace_members()) == 223
+        release = str(PolarsRelease.installed())
+        rows = [row for row in CATALOGUE.table_rows if row[0] == release]
+        assert rows, f"section 17.3 has no row for polars {release}"
+        methods, members, total = (int(cell) for cell in rows[0][1:4])
+        assert len(api.expression_methods()) == methods
+        assert len(api.namespace_members()) == members
+        assert methods + members == total
         assert len(api.expression_constructors()) == 82
         assert len(CensusCalls.ROOT_CALLS) == 205
         assert len(CensusCalls.OPAQUE) == 7
         assert len(CensusCalls.CONSTRUCTORS) == 73
-        for quoted in (
-            "222 public members",
-            "212 methods",
-            "223 members",
-            "435 in all",
-            "205 that the census calls",
-            "Eighty-two callables",
-        ):
+        for quoted in ("205 that the census calls", "Eighty-two callables"):
             assert quoted in CATALOGUE.text, quoted
 
     @pytest.mark.parametrize("document", ALL, ids=lambda d: d.name)
