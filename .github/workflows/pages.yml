@@ -1,5 +1,8 @@
 # Build the website in site/ and deploy it to GitHub Pages.
 #
+# A pull request builds the site too, so a change that breaks the build
+# cannot merge. Only a push to main deploys it.
+#
 # The site reads the examples that tools/site_examples writes to
 # site/src/data/examples.json, and the documents of spec/. The CI workflow
 # checks that the examples are up to date, so this build needs no Python.
@@ -9,6 +12,7 @@ name: Website
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -17,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -36,13 +40,16 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci
       - run: npm run build
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
 
   deploy:
     name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
