@@ -23,12 +23,15 @@ import io
 import itertools
 import tokenize
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar, TypeIs
+from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._hooks.checked import checked_cast, checked_not_none
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    # `typing.TypeIs` exists from Python 3.13, and the checker supports 3.12.
+    from typing_extensions import TypeIs
 
 
 @dataclass(frozen=True)
