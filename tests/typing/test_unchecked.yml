@@ -1,0 +1,321 @@
+# `Unchecked` is the data type of a column whose name is known and whose
+# data type is not, as `typing.Any` is for a value. A column gets it in
+# two ways:
+#
+# 1. The user writes it, for example `payload: Unchecked` in a `Columns`
+#    class.
+# 2. An operation gives it where it knows the name of an output column
+#    and not its data type. The other columns keep their own types.
+#
+# An operation on an `Unchecked` column gives `Unchecked` again, with no
+# error, also for a method that only some data types allow (`.round()`).
+
+- case: unchecked_column_can_be_declared_manually
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select("payload"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'payload': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: select_substitutes_unchecked_for_one_unresolvable_column_keeping_siblings_typed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.col("id") + 1, (pl.col("payload") + 1).alias("bumped")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'bumped': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: with_columns_arithmetic_on_unchecked_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.with_columns((pl.col("payload") * 2).alias("doubled")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'payload': astrolabe.frame.Unchecked, 'doubled': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: method_call_on_unchecked_does_not_crash_and_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.with_columns(pl.col("payload").round().alias("r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'payload': astrolabe.frame.Unchecked, 'r': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: unchecked_column_still_requires_a_declared_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    df.select("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: assume_schema_type_checks_with_unchecked_declared
+  main: |
+    import polars as pl
+    from astrolabe import assume_schema, Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    raw: pl.DataFrame
+    reveal_type(assume_schema(raw, Frame))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'id': polars.datatypes.classes.Int64, 'payload': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: check_schema_type_checks_with_unchecked_declared
+  main: |
+    import polars as pl
+    from astrolabe import check_schema, Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    raw: pl.DataFrame
+    reveal_type(check_schema(raw, Frame))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'id': polars.datatypes.classes.Int64, 'payload': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: force_schema_type_checks_with_unchecked_declared
+  main: |
+    import polars as pl
+    from astrolabe import Columns, force_schema, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    raw: pl.DataFrame
+    reveal_type(force_schema(raw, Frame))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'id': polars.datatypes.classes.Int64, 'payload': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: negation_on_unchecked_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select((-pl.col("any_col")).alias("neg")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'neg': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: fill_null_on_unchecked_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.col("any_col").fill_null(0).alias("fn")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'fn': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: comparison_with_unchecked_operand_recovers_boolean
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+
+    # The lifting reads Unchecked as every kind: a comparison answers
+    # Boolean at every kind where it is defined, so the output is
+    # Boolean, not Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select((pl.col("any_col") == 5).alias("cmp")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'cmp': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: boolean_op_with_unchecked_operand_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_flag: Unchecked
+        known_flag: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select((pl.col("any_flag") & pl.col("known_flag")).alias("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: struct_field_on_unchecked_receiver_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.col("any_col").struct.field("x").alias("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: when_then_chain_with_unchecked_branch_propagates_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+        known: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.when(True).then(pl.col("any_col")).otherwise(pl.col("known")).alias("wt")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'wt': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_branch_with_an_unchecked_member_keeps_its_own_frame
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_col: Unchecked
+        known: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    flag = True
+    if flag:
+        w = pl.col("any_col")
+    else:
+        w = pl.col("known").round()
+    # Each branch gives its own frame: Unchecked for the column of the
+    # frame that declares it so, and Int64 for the other branch.
+    reveal_type(df.select(w.alias("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_list_method_over_an_unchecked_column_answers
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: Unchecked
+        b: List[pl.Int64]
+
+    df: TypedDataFrame[FrameSchema]
+
+    class OutSchema(Columns):
+        a: List[Unchecked]
+
+    class LengthSchema(Columns):
+        a: pl.UInt32
+
+    # The read covers the List member, where the method answers.
+    lengths: TypedDataFrame[LengthSchema] = df.select(pl.col("a").list.len())
+    joined: TypedDataFrame[OutSchema] = df.select(pl.col("a").list.concat(pl.col("b")))
+
+- case: a_container_beside_an_unchecked_column_answers_for_every_kind
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame, Unchecked, column
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        l: List[pl.Int16]
+        a: Array[pl.Int16, Literal[1]]
+        q: Unchecked
+
+    df: TypedDataFrame[FrameSchema]
+
+    # q can be Null, which gives List(Int16), or List(Float32), which gives
+    # List(Float32), so no one type holds.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("q"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("q"), pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").fill_null(pl.col("q"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").fill_null(pl.col("q"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A member over q reads an element that no kind names.
+    reveal_type(df.select(pl.col("l").fill_null(pl.col("q").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").shift(1, fill_value=pl.col("q").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+
+    Trusted = column("q", Unchecked)
+
+    class ListSchema(Columns):
+        l: List[pl.Int16]
+        q: List[pl.Float32]
+
+    lists: TypedDataFrame[ListSchema]
+
+    # A declared Unchecked operand joins the list by the type that the frame gives it.
+    def joined(q: Trusted) -> None:
+        reveal_type(lists.select(pl.coalesce(pl.col("l"), q)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float32]}, closed=True), None]"
+        reveal_type(lists.select(pl.col("l").fill_null(q)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float32]}, closed=True), None]"
+        reveal_type(lists.select(pl.col("l").shift(1, fill_value=q.first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float32]}, closed=True), None]"
+
+- case: an_expression_with_no_answer_at_any_data_type_fails_over_an_unchecked_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        q: Unchecked
+
+    df: TypedDataFrame[FrameSchema]
+
+    # replace_time_zone gives a Datetime, and list.first then meets it.
+    df.select(pl.col("q").dt.replace_time_zone("UTC").list.first())  # E: "q" has no result type at this frame's column types: replace-time-zone operation not supported for dtype `Null`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    # len_chars gives a UInt32, and dt.year then meets it.
+    df.select(pl.col("q").str.len_chars().dt.year())  # E: "q" has no result type at this frame's column types: str.len_chars does not accept Null, and polars raises SchemaError  [unsupported-dtype-op]
+    # The sum is a number, a list or a struct, and none of them has a time zone.
+    df.select((pl.col("q") + 1).dt.replace_time_zone("UTC").list.first())  # E: "q" has no result type at this frame's column types: replace-time-zone operation not supported for dtype `List(Unknown)`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: implode_over_an_unchecked_column_gives_a_list_of_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        u: Unchecked
+        g: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The answer is a list at every data type of u.
+    reveal_type(df.select(pl.col("u").implode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'u': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("u").implode().list.len()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+# A declared read of every data type over an `Unchecked` column gives the
+# column back as `Unchecked`, with no report: the frame wrote `Unchecked`.
+- case: a_declared_read_over_an_unchecked_column_gives_it_back
+  main: |
+    import polars as pl
+    from astrolabe import Columns, EveryDType, TypedDataFrame, Unchecked, column
+
+    Loose = column("p", EveryDType)
+
+    class Opaque(Columns):
+        p: Unchecked
+
+    def picked(df: TypedDataFrame[Opaque], loose: Loose) -> None:
+        reveal_type(df.select(loose))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Opaque, {'p': astrolabe.frame.Unchecked}, closed=True), None]"

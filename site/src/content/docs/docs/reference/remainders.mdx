@@ -1,0 +1,76 @@
+---
+title: Remainders
+description: Declare a remainder and its promises, and read the markers that the checker writes for a remainder that it computes.
+sidebar:
+  order: 4
+---
+
+A remainder is the columns of an open frame that its type does not name. Declare one with `other_columns()`, and write it as the second argument of `TypedDataFrame`. For the result of a function, write `InferredRemainder` in the place of the remainder, and wrap the returned value in `infer(...)`. The checker then computes the remainder from the body. See [Open frames](../../guides/open-frames/) and [Inferred return types](../../guides/inferred/).
+
+## Promises
+
+Each keyword of `other_columns(...)` states one promise that each caller must keep. The body of the function can rely on it, and the checker reports a call that cannot prove it. With no keyword, the remainder can hold any column.
+
+| Keyword | The promise |
+| -- | -- |
+| `without=[...]` | The remainder holds none of these names. |
+| `only=[...]` | The remainder holds only these names. |
+| `without_prefix=` | No name of the remainder starts with this prefix. |
+| `only_prefix=` | Each name of the remainder starts with this prefix. |
+| `without_suffix=` | No name of the remainder ends with this suffix. |
+| `only_suffix=` | Each name of the remainder ends with this suffix. |
+| `all_of=` | Each column has one of these data types. |
+| `none_of=` | No column has one of these data types. |
+| `disjoint_from=` | This remainder shares no name with the other remainders. |
+| `within=` | The other remainders hold each name of this one. |
+
+`all_of=` and `none_of=` take a Polars class such as `NumericType` or `pl.String`, a data type with parameters such as `pl.Datetime("us")`, or a set of them. `disjoint_from=` and `within=` take one remainder or a set of them.
+
+## Markers in revealed types
+
+The checker writes a remainder that it computes with markers, in a revealed type and in a message. For example, after `with_columns` adds `notional` to a frame with the remainder `Rest`, the remainder is `Minus[Rest, Literal["notional"]]`. A program does not need to write these markers.
+
+:::caution[Not the intended use]
+The checker also accepts a marker that a return type writes by hand. Write `InferredRemainder` and `infer(...)` instead: a marker repeats what the body does, and you must change it each time that the body changes.
+:::
+
+| Marker | The columns it holds | An operation that gives it in the body |
+| -- | -- | -- |
+| `Minus[R, Literal["a", "b"]]` | The columns of `R`, without `a` and `b`. | `with_columns` of `a`, which replaces any `a` of the caller. |
+| `Only[R, C]` | The columns of `R` that the selector `C` picks. | `select(cs.starts_with("sec_"))` |
+| `Except[R, C]` | The columns of `R` that `C` does not pick. | `select(~cs.numeric())` |
+| `Suffixed[R, Literal["_s"]]` | The columns of `R`, each name with `_s` at the end. | A join, for the right columns. `.name.suffix()` |
+| `Prefixed[Literal["p_"], R]` | The columns of `R`, each name with `p_` at the start. The prefix comes first. | `.name.prefix()` |
+| `Retyped[R, D]` | The columns of `R`, each with the data type `D`. | A whole-frame reducer, for example `count()`. |
+| `Both[A, B]` | The columns of `A` and the columns of `B`. | A join or a horizontal concat of two open frames. |
+| `SplitColumns[A, B]` | The remainder divided into parts. Each column goes to the first part that accepts it. | A parameter that treats each part in its own way. |
+
+`Minus` takes one union of names: `Literal["a", "b"]`. `Both[A, B]` and `Both[B, A]` are the same type, because a union has no order.
+
+### Selector markers
+
+A selector of Polars picks columns by name or by data type, for example `cs.numeric()`. When a selector meets a remainder, the checker writes the columns that it picks as `Only[R, C]`, and the others as `Except[R, C]`. `C` is one of these markers:
+
+| Marker | It picks |
+| -- | -- |
+| `OneOf[Literal["a", "b"]]` | The columns named `a` or `b`. |
+| `StartsWith[Literal["sec_"]]` | The columns whose names start with `sec_`. |
+| `EndsWith[Literal["_prev"]]` | The columns whose names end with `_prev`. |
+| `Contains[Literal["tmp"]]` | The columns whose names contain `tmp`. |
+| `Matching[...]` | The columns whose names match a rule. |
+| `OfType[F]` | The columns whose data type is in the family `F`, or is `F`. |
+| `SelAnd[A, B]` | The columns that both selectors pick. |
+| `SelOr[A, B]` | The columns that one selector or the other picks. |
+| `SelNot[A]` | The columns that the selector does not pick. |
+
+| Polars | Marker |
+| -- | -- |
+| `cs.by_name("a", "b")` | `OneOf[Literal["a", "b"]]` |
+| `cs.numeric()` | `OfType[NumericType]` |
+| `cs.numeric() \| cs.string()` | `SelOr[OfType[NumericType], OfType[String]]` |
+| `~cs.numeric()` over a remainder | `Except[R, OfType[NumericType]]` |
+| `cs.starts_with(...)`, `cs.ends_with(...)`, `cs.contains(...)`, `cs.matches(...)` | `Matching[...]` |
+
+The checker turns each rule on names into the smallest machine that accepts the matching names. Two rules that accept the same names have the same machine, so they are the same type, however each one is written: `Only[R, StartsWith[Literal["sec_"]]]` is the type that `df.select(cs.starts_with("sec_"))` gives.
+
+See [Selections](../../guides/selections/) to declare the type of an expression over a selector.

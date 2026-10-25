@@ -1,0 +1,15 @@
+
+- case: two_datetimes_join_at_the_coarser_time_unit
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class Stamps(Columns):
+        ns: Datetime[Literal["ns"], None]
+        us: Datetime[Literal["us"], None]
+        ms: Datetime[Literal["ms"], None]
+
+    df: TypedDataFrame[Stamps]
+    # polars joins two time units at the coarser one, in either order.
+    reveal_type(df.select(pl.coalesce(pl.col("ns"), pl.col("us")).alias("nsus"), pl.coalesce(pl.col("us"), pl.col("ns")).alias("usns"), pl.coalesce(pl.col("us"), pl.col("ms")).alias("usms"), pl.coalesce(pl.col("ms"), pl.col("us")).alias("msus"), pl.coalesce(pl.col("ns"), pl.col("ms")).alias("nsms"), pl.coalesce(pl.col("ms"), pl.col("ns")).alias("msns")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'nsus': astrolabe.frame.Datetime[Literal['us'], None], 'usns': astrolabe.frame.Datetime[Literal['us'], None], 'usms': astrolabe.frame.Datetime[Literal['ms'], None], 'msus': astrolabe.frame.Datetime[Literal['ms'], None], 'nsms': astrolabe.frame.Datetime[Literal['ms'], None], 'msns': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"

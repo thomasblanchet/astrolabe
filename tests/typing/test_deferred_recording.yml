@@ -1,0 +1,393 @@
+# The recorder: each call on an expression becomes code in the type, as the
+# user wrote it. These cases reveal the code that each form of call writes.
+
+- case: a_method_and_an_operator_write_their_call
+  main: |
+    import polars as pl
+
+    reveal_type(pl.col("price") * 0.9)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('price') * 0.9"]]]"
+    reveal_type(pl.col("a").abs().alias("b"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').abs().alias('b')"]]]"
+
+- case: a_reused_variable_is_written_once
+  main: |
+    import polars as pl
+
+    e = pl.col("a") + pl.col("b")
+    reveal_type(e * e)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["($0 := (pl.col('a') + pl.col('b'))) * $0"]]]"
+
+- case: a_member_of_a_namespace_reads_the_code_of_its_expression
+  main: |
+    import polars as pl
+
+    reveal_type(pl.col("s").str)  # N: Revealed type is "astrolabe.expr.TypedExprStrNamespace[astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('s')"]]]]"
+    reveal_type(pl.col("s").str.contains("x", literal=True))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('s').str.contains('x', literal=True)"]]]"
+
+- case: a_hand_written_code_that_does_not_parse_is_a_hole
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Struct, Column, TypedDataFrame, column, typed_lit
+    from astrolabe.expr import Deferred, TypedExpr
+
+    Price = column("price", pl.Float64)
+
+    def discounted(price: Price) -> Price:
+        return price * 0.9
+
+    class FrameSchema(Columns):
+        price: pl.Float64
+        s: Struct[Column[Literal["a"], pl.Int8]]
+
+    df: TypedDataFrame[FrameSchema]
+    # The checker writes code that parses. A type written by hand can hold any
+    # text, and a call on it reads that text as a value it cannot know.
+    by_hand: TypedExpr[Deferred[Literal["pl.col("]]]
+    reveal_type(by_hand.alias("z"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["hole('expr').alias('z')"]]]"
+    reveal_type(df.select(by_hand.alias("z")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'z': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").struct.with_fields(by_hand)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Unchecked}, closed=True), None]"
+    discounted(by_hand)  # E: Argument "price" does not match its declared type: the checker cannot read the name of its column, but the declared name is "price"  [expression-fit]
+    reveal_type(df.join(df, on=by_hand))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A code that does not read, or that reads no expression, gives the plain
+    # frame. An alias still names the column.
+    one: TypedExpr[Deferred[Literal["1"]]]
+    reveal_type(df.select(by_hand))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.select(one))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.select(one.alias("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Unchecked}, closed=True), None]"
+    # The reader refuses an item of an expression, and values listed in a hole
+    # that is not of the kind `one of`.
+    item: TypedExpr[Deferred[Literal["pl.col('price')[0]"]]]
+    listed: TypedExpr[Deferred[Literal["pl.col('price') + hole('int', 1)"]]]
+    reveal_type(df.select(item))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.select(listed))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    none: TypedExpr[Deferred[Literal["pl.col('price') + hole('one of', None)"]]]
+    reveal_type(df.select(none))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A hole of a data type that does not parse, that polars does not write,
+    # or that names a class of no data type, has no sample.
+    unparsed: TypedExpr[Deferred[Literal["pl.col('price').cast(hole('dtype:List('))"]]]
+    shaped: TypedExpr[Deferred[Literal["pl.col('price').cast(hole('dtype:Array(Unchecked, 2)'))"]]]
+    foreign: TypedExpr[Deferred[Literal["pl.col('price').cast(hole('dtype:List(Tagged)'))"]]]
+    reveal_type(df.select(unparsed))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(shaped))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(foreign))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': astrolabe.frame.Unchecked}, closed=True), None]"
+
+    Flag = typed_lit(gives=pl.Int32)
+
+    def flagged(a: Flag) -> None: ...
+
+    flagged(by_hand)  # E: Argument "a" does not match its declared type: the checker cannot read the name of its column, but the declared name is "literal"  [expression-fit]
+
+- case: a_callable_of_the_user_is_a_hole_that_polars_can_read_as_a_value
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        x: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    # The recorder writes the class int as a hole of a function. Polars reads
+    # int as a data type here, so a refusal of the placeholder is no error.
+    reveal_type(cs.by_dtype([int]))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_dtype([hole('function')])"]]]"
+    reveal_type(df.select(cs.by_dtype([int])))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_when_chain_keeps_the_head_of_each_step
+  main: |
+    import polars as pl
+
+    reveal_type(pl.when(pl.col("f")))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('f'))"]]]"
+    reveal_type(pl.when(pl.col("f")).then(1))  # N: Revealed type is "astrolabe.expr.TypedThen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('f')).then(1)"]]]"
+    reveal_type(pl.when(pl.col("f")).then(1).when(pl.col("g")))  # N: Revealed type is "astrolabe.expr.TypedChainedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('f')).then(1).when(pl.col('g'))"]]]"
+    reveal_type(pl.when(pl.col("f")).then(1).otherwise(pl.lit(2, dtype=pl.Int8)))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.when(pl.col('f')).then(1).otherwise(pl.lit(2, dtype=pl.Int8))"]]]"
+
+- case: a_selector_and_its_operations_write_their_calls
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    reveal_type(cs.numeric() - cs.float())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.numeric() - cs.float()']]]"
+    reveal_type(cs.numeric().abs())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.numeric().abs()']]]"
+
+- case: a_literal_on_the_left_and_a_unary_operator_write_their_form
+  main: |
+    import polars as pl
+
+    reveal_type(1 == pl.col("a"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["1 == pl.col('a')"]]]"
+    reveal_type(1 + pl.col("a"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["1 + pl.col('a')"]]]"
+    reveal_type(-pl.col("a"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["-pl.col('a')"]]]"
+    reveal_type(abs(pl.col("a")))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["abs(pl.col('a'))"]]]"
+    reveal_type(pl.col("a") > 1)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') > 1"]]]"
+
+- case: arithmetic_over_constants_is_written_as_its_value
+  main: |
+    from typing import Final
+    import polars as pl
+
+    reveal_type(pl.col("a") + 2**10)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + 1024"]]]"
+    reveal_type(pl.col("a") * (1 << 9))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') * 512"]]]"
+    reveal_type(pl.col("a") - (True + 1))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') - 2"]]]"
+    reveal_type(pl.col("a") + -(2**3))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + -8"]]]"
+    reveal_type(pl.col("a") + 1 // 0)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + hole('int')"]]]"
+    reveal_type(pl.col("a") + ~1)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + -2"]]]"
+    # Python deprecates ~ on a bool, so the recorder does not fold it.
+    reveal_type(pl.col("a") + ~True)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + hole('int')"]]]"
+    reveal_type(pl.col("a") + 2**40 * 2**40)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + 1208925819614629174706176"]]]"
+
+    # A Final name whose type keeps no value gives no constant either.
+    def local(n: int) -> None:
+        declared: Final[int] = n
+        reveal_type(pl.col("a") + declared)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + hole('int')"]]]"
+        reveal_type(pl.col("a") + 2**declared)  # N: Revealed type is "Any"
+
+- case: a_float_that_folds_to_an_infinity_is_written_as_float_of_a_text
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Float64
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+    # The tree of polars writes an infinity as null, so the code holds the
+    # text of the float, which the evaluation reads back.
+    reveal_type(pl.col("a") + 1e308 * 10)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + float('inf')"]]]"
+    reveal_type(pl.col("a").fill_null(-1e309))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').fill_null(float('-inf'))"]]]"
+    reveal_type(pl.col("a") + float("1.5"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + float('1.5')"]]]"
+    reveal_type(df.select(pl.col("u") + 1e308 * 10, pl.col("a").fill_null(-1e309)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64, 'a': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("u").fill_null(float("1.5"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_data_type_argument_is_written_by_its_constructor
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    Stamp = pl.Datetime("ms", "UTC")
+    reveal_type(pl.col("a").cast(Stamp))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').cast(pl.Datetime(time_unit='ms', time_zone='UTC'))"]]]"
+    reveal_type(pl.col("a").cast(pl.List(pl.Int8)))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').cast(pl.List(pl.Int8))"]]]"
+    # A class stays a class: in a selector, it picks every data type of its kind.
+    reveal_type(cs.by_dtype(pl.Datetime))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.by_dtype(pl.Datetime)']]]"
+
+- case: keyword_arguments_take_the_order_of_their_names
+  main: |
+    import polars as pl
+
+    reveal_type(pl.col("s").str.contains(literal=True, pattern="x"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('s').str.contains(literal=True, pattern='x')"]]]"
+    reveal_type(pl.col("s").str.contains(pattern="x", literal=True))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('s').str.contains(literal=True, pattern='x')"]]]"
+
+- case: containers_dates_and_named_values_are_written_as_values
+  main: |
+    import datetime
+    from typing import Final
+    import polars as pl
+
+    LIMIT: Final = 3
+    reveal_type(pl.col("a").is_in([1, 2, LIMIT]))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').is_in([1, 2, 3])"]]]"
+    reveal_type(pl.col("a").replace({1: -2.5}))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').replace({1: -2.5})"]]]"
+    reveal_type(pl.col("d") > datetime.date(2020, 1, 2))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('d') > date(2020, 1, 2)"]]]"
+    reveal_type(pl.struct(x=pl.col("a"), y=None))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.struct(x=pl.col('a'), y=None)"]]]"
+
+- case: a_value_the_checker_cannot_know_is_a_hole_of_its_kind
+  main: |
+    from typing import Any
+    import polars as pl
+
+    def calls(n: int, flag: bool, plain: pl.Expr, f: Any, pattern: str, ratio: float, other: object) -> None:
+        reveal_type(pl.col("a").shift(n))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').shift(hole('int'))"]]]"
+        reveal_type(pl.col("a").sort(descending=flag))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').sort(descending=hole('bool'))"]]]"
+        reveal_type(pl.col("a") + plain)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + hole('expr')"]]]"
+        reveal_type(pl.col("a").map_batches(lambda s: s))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').map_batches(hole('function'))"]]]"
+        reveal_type(pl.col("s").str.contains(pattern))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('s').str.contains(hole('str'))"]]]"
+        # mypy accepts an int where the type is float, so the hole is a number.
+        reveal_type(pl.col("a") * ratio)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') * hole('number')"]]]"
+        reveal_type(pl.col("a").fill_null(other))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').fill_null(hole('value'))"]]]"
+
+- case: a_declared_parameter_is_a_leaf_of_the_code
+  main: |
+    import polars as pl
+    from astrolabe import column
+
+    Price = column("price", pl.Float64)
+    Qty = column("qty", pl.Int64)
+
+    def notional(price: Price, qty: Qty) -> None:
+        reveal_type(price * 0.9 + qty * price)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0 * 0.9 + $1 * $0'], astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64], astrolabe.expr.TypedColumn[Literal['qty'], polars.datatypes.classes.Int64]]]"
+        reveal_type(price.str)  # N: Revealed type is "astrolabe.expr.TypedExprStrNamespace[astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64]]"
+
+- case: a_union_of_expressions_records_each_member
+  main: |
+    import polars as pl
+
+    def pick(flag: bool) -> None:
+        x = pl.col("a") if flag else pl.col("b")
+        reveal_type(x.abs())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').abs()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('b').abs()"]]]"
+        reveal_type(pl.col("c") + x)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('c') + pl.col('a')"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('c') + pl.col('b')"]]]"
+
+- case: a_call_that_gives_no_expression_keeps_its_type
+  main: |
+    import polars as pl
+
+    def compare(x: int) -> None:
+        reveal_type(x == 2)  # N: Revealed type is "bool"
+
+    reveal_type(pl.col("a").meta.output_name())  # N: Revealed type is "str"
+    reveal_type(abs(-1))  # N: Revealed type is "int"
+    reveal_type(pl.col("a", "b"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a', 'b')"]]]"
+
+- case: pipe_keeps_the_expression_that_its_function_gives
+  main: |
+    import polars as pl
+
+    reveal_type(pl.col("a").pipe(lambda e: e.abs()))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').abs()"]]]"
+    reveal_type(pl.col("a").pipe(lambda e: 1))  # N: Revealed type is "int"
+
+- case: a_plain_expression_keeps_its_stub_type
+  main: |
+    import polars as pl
+
+    def plain(e: pl.Expr) -> None:
+        reveal_type(abs(e))  # N: Revealed type is "polars.expr.expr.Expr"
+        reveal_type(e.str)  # N: Revealed type is "polars.expr.string.ExprStringNameSpace"
+        reveal_type((1).__eq__(pl.col("a")))  # N: Revealed type is "bool"
+
+- case: a_function_of_pl_that_gives_a_frame_keeps_its_hook
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        a: pl.Int64
+
+    df: TypedDataFrame[Schema]
+    reveal_type(pl.concat([df, df], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema, {'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: starred_arguments_tuples_and_sets_are_written_as_the_user_wrote_them
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Pair(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    parts = [pl.col("a"), pl.col("b")]
+    nothing = None
+    reveal_type(pl.struct(*parts))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.struct(*hole('value'))"]]]"
+    reveal_type(pl.when(**{"a": 1}))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal["pl.when(**{'a': 1})"]]]"
+    reveal_type(pl.col("a").is_in((1, 2)))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').is_in((1, 2))"]]]"
+    reveal_type(pl.col("a").is_in({1, 2}))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').is_in({1, 2})"]]]"
+    reveal_type(pl.col("a").shift(1, fill_value=nothing))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').shift(1, fill_value=None)"]]]"
+    reveal_type(pl.lit(str(1)))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.lit(hole('str'))"]]]"
+    # A list written after `*` stays a list, which the evaluation spreads.
+    reveal_type(pl.max_horizontal(*["a", "b"]))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.max_horizontal(*['a', 'b'])"]]]"
+    df: TypedDataFrame[Pair]
+    reveal_type(df.select(pl.max_horizontal(*["a", "b"])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: too_many_choices_over_unions_keep_each_union_as_a_hole
+  main: |
+    import polars as pl
+
+    def pick(flag: bool) -> None:
+        x = pl.col("a") if flag else pl.col("b")
+        reveal_type(pl.max_horizontal(x, x, x, x, x, x, x))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.max_horizontal(hole('value'), hole('value'), hole('value'), hole('value'), hole('value'), hole('value'), hole('value'))"]]]"
+        y = pl.col("a") if flag else 1
+        reveal_type(pl.col("c") + y)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('c') + hole('value')"]]]"
+
+- case: a_hand_written_deferred_type_with_no_code_is_a_leaf
+  main: |
+    from astrolabe.expr import Deferred, TypedExpr
+
+    def body(e: TypedExpr[Deferred[int]]) -> None:
+        reveal_type(e.abs())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0.abs()'], astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[int]]]]"
+
+- case: a_call_whose_stub_gives_no_class_keeps_its_type
+  main: |
+    from typing import Any
+    import polars as pl
+
+    def call(f: Any) -> None:
+        reveal_type(pl.col("a").pipe(f))  # N: Revealed type is "Any"
+        reveal_type(pl.collect_all([]))  # N: Revealed type is "list[polars.dataframe.frame.DataFrame]"
+
+- case: a_call_that_polars_refuses_while_it_builds_the_expression_is_an_error
+  main: |
+    import polars as pl
+
+    pl.lit(170141183460469231731687303715884105728)  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape]
+    # Polars refuses some arguments with a TypeError or a ValueError.
+    pl.col("a").fill_null(None)  # E: This call raises ValueError before any frame meets it: must specify either a fill `value` or `strategy`  [invalid-call-shape]
+    pl.lit(pl.col("a"))  # E: This call raises TypeError before any frame meets it: cannot create expression literal for value of type Expr.  [invalid-call-shape]
+    # mypy hides an error of the reflected side of an operator, so the frame reports it.
+    reveal_type(170141183460469231731687303715884105728 + pl.col("a"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["170141183460469231731687303715884105728 + pl.col('a')"]]]"
+    pl.DataFrame({"a": [1]}).select(170141183460469231731687303715884105728 + pl.col("a"))  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape]
+    # A hole of a value is not checked: its placeholder stands for any value.
+    def shifted(n: int) -> None:
+        reveal_type(pl.col("a").shift(n))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').shift(hole('int'))"]]]"
+
+- case: an_expression_that_polars_refuses_at_every_frame_is_an_error_at_the_call
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        i: pl.Int64
+        u: pl.UInt8
+
+    df: TypedDataFrame[Schema]
+    pl.lit(1).name.keep()  # E: This call has no result at any frame: `name.keep_name` expected at least one column name, and polars raises InvalidOperationError  [invalid-call-shape]
+    pl.col("i").cumulative_eval(pl.element() * 2)  # E: This call has no result at any frame: `cumulative_eval` is not allowed with non-scalar output, and polars raises InvalidOperationError  [invalid-call-shape]
+    cs.numeric().cumulative_eval(pl.element() * 2)  # E: This call has no result at any frame: `cumulative_eval` is not allowed with non-scalar output, and polars raises InvalidOperationError  [invalid-call-shape]
+    # Polars builds a series of objects from a list of expressions, and replace refuses it.
+    pl.col("i").replace([1], [pl.col("i").first()])  # E: This call has no result at any frame: `replace` does not support `old`/`new` values of object dtype, and polars raises InvalidOperationError  [invalid-call-shape]
+    # The call keeps its stub type, so the frame that meets it reports no second error.
+    reveal_type(df.select(pl.lit(1).sum().name.keep()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"  # E: This call has no result at any frame: `name.keep_name` expected at least one column name, and polars raises InvalidOperationError  [invalid-call-shape]
+    # A body of an evaluation runs inside the evaluation, so it is no error alone.
+    reveal_type(pl.element() * 2)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['pl.element() * 2']]]"
+    reveal_type(pl.field("a") + 1)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.field('a') + 1"]]]"
+    reveal_type(pl.col("i").cumulative_eval(pl.element().sum()))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('i').cumulative_eval(pl.element().sum())"]]]"
+    # A refusal that depends on the frame waits for the frame.
+    reveal_type(cs.numeric().alias("z"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["cs.numeric().alias('z')"]]]"
+    # The data types of two columns give too many choices, so the frame reports the refusal.
+    shifted = pl.col("i").shift(1, fill_value=pl.col("u"))
+    df.select(shifted)  # E: "i" has no result type at this frame's column types: 'fill_value' must be a scalar value, and polars raises ShapeError  [unsupported-dtype-op]
+
+- case: a_value_of_a_subclass_or_of_a_temporal_type_is_a_hole_of_its_kind
+  main: |
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+    from enum import IntEnum
+    import polars as pl
+
+    class Ratio(float):
+        pass
+
+    class Flag(IntEnum):
+        A = 1
+
+    def values(ratio: Ratio, flag: Flag, day: date, moment: datetime, amount: Decimal) -> None:
+        reveal_type(pl.col("u") + ratio)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('u') + hole('float')"]]]"
+        reveal_type(pl.col("u") * flag)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('u') * hole('int')"]]]"
+        reveal_type(pl.col("d") - day)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('d') - hole('date')"]]]"
+        reveal_type(pl.col("d") < moment)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('d') < hole('datetime')"]]]"
+        reveal_type(pl.col("u") + amount)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('u') + hole('decimal')"]]]"
+    # The constant UTC is written by its name, and a value on the left of an operator by its value.
+    reveal_type(pl.col("d") < datetime(2020, 1, 1, tzinfo=UTC))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('d') < datetime(2020, 1, 1, tzinfo=UTC)"]]]"
+    reveal_type(Decimal("1.5") * pl.col("u"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["Decimal('1.5') * pl.col('u')"]]]"
+
+- case: a_value_from_a_union_of_literal_values_is_a_hole_that_lists_them
+  main: |
+    from enum import Enum
+    from typing import Literal
+    import polars as pl
+
+    class Color(Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    def values(method: Literal["average", "dense"], step: Literal[1, 2], color: Literal[Color.RED, Color.BLUE], maybe: Literal["a"] | None) -> None:
+        reveal_type(pl.col("a").rank(method))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').rank(hole('one of', 'average', 'dense'))"]]]"
+        reveal_type(pl.col("a").shift(step))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').shift(hole('one of', 1, 2))"]]]"
+        # The literal of an enum member holds its name, which is not the value that polars reads.
+        reveal_type(pl.col("a").fill_null(color))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').fill_null(hole('value'))"]]]"
+        reveal_type(pl.col("a").fill_null(maybe))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').fill_null(hole('value'))"]]]"

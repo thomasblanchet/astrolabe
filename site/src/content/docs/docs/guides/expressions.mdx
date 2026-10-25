@@ -1,0 +1,44 @@
+---
+title: Expressions and data types
+description: How the checker computes the data type of each column that an expression gives.
+sidebar:
+  order: 4
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+The type of an expression holds its code. When the expression meets a frame, the checker computes its column from that code and the data types of the frame, with the typing rules of Polars.
+
+## The checker computes each result
+
+<Example name="expr_types" />
+
+- `pl.col("price") * 2` keeps the name `price`, and gives a `Float64`.
+- `str.len_chars()` gives a `UInt32`.
+- `when/then/otherwise` gives the common data type of its branches. The literal `0` becomes a `Float64` next to `price`.
+
+The same expression can give other data types in other frames, because the checker computes it at the data types of each frame.
+
+## Aggregations
+
+An aggregation, for example `sum()`, gives one value for a group of rows. Its frame decides what that means:
+
+<Example name="expr_aggregations" />
+
+- In `select`, the sum gives a frame of one row.
+- In `with_columns`, Polars repeats the sum on each row.
+- In `agg`, the sum gives one value for each group.
+
+A declaration can state that an expression works row by row, and the checker then refuses an aggregation. See [Declare expression types](../expression-types/).
+
+## Faults in an expression
+
+If Polars refuses an expression at the data types of the frame, the checker reports it:
+
+<Example name="expr_errors" />
+
+- `round` needs a number.
+- Polars cannot cast a `Datetime` to a `Boolean`.
+- Polars cannot add a `Datetime` to a `String`.
+
+An expression that Polars refuses at every data type is an error where you write it, before it meets a frame.

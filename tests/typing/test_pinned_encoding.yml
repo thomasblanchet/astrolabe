@@ -1,0 +1,688 @@
+# Cases that pin the codecs, which write the types of expressions,
+# selectors and remainders, and read them back.
+
+- case: a_region_of_one_object_kind_is_written_as_its_own_class
+  main: |
+    import polars as pl
+    from astrolabe import column, row, same, typed_expr
+
+    Counted = typed_expr(
+        row(column("a", {pl.Object}), gives=pl.Int64),
+        row(column("a", {pl.Int64, pl.Float64}), gives=same),
+        named="a",
+    )
+
+    def kept(x: Counted) -> Counted:
+        return x
+
+    # A row whose region holds only Object names the Object class.
+    # The family class ObjectType must not replace it.
+    reveal_type(kept)  # N: Revealed type is "def (x: astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Float64 | polars.datatypes.classes.Int64 | polars.datatypes.classes.Object]], astrolabe.frame.Column[Literal['a'], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.Float64 | polars.datatypes.classes.Int64, astrolabe.expr.Same[Literal['a']]], astrolabe.expr.Row[polars.datatypes.classes.Object, polars.datatypes.classes.Int64]]]]) -> astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Float64 | polars.datatypes.classes.Int64 | polars.datatypes.classes.Object]], astrolabe.frame.Column[Literal['a'], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.Float64 | polars.datatypes.classes.Int64, astrolabe.expr.Same[Literal['a']]], astrolabe.expr.Row[polars.datatypes.classes.Object, polars.datatypes.classes.Int64]]]]"
+
+- case: a_declared_family_region_reads_back_as_its_members
+  main: |
+    import polars as pl
+    from polars.datatypes.classes import FloatType
+    from astrolabe import Columns, TypedDataFrame, column, same, typed_expr
+
+    Rounded = typed_expr(column("a", FloatType), gives=same, named="a")
+
+    def rounded(x: Rounded) -> Rounded:
+        return x.round(1)
+
+    class FrameSchema(Columns):
+        a: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A region named by a family class reads back as every member of the family.
+    # A Float32 column is a member of FloatType, so the call fits.
+    reveal_type(df.select(rounded(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Float32}, closed=True), None]"
+
+- case: a_declared_region_of_two_kinds_reads_back_as_those_kinds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, column, same, typed_expr
+
+    Rounded = typed_expr(column("a", {pl.Float32, pl.Float64}), gives=same, named="a")
+
+    def rounded(x: Rounded) -> Rounded:
+        return x.round(1)
+
+    class FrameSchema(Columns):
+        a: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A region written as a union of classes reads back as one kind for each class.
+    # A Float32 column is in the region, so the call fits.
+    reveal_type(df.select(rounded(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Float32}, closed=True), None]"
+
+- case: a_malformed_relation_base_leaves_the_other_relations_readable
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import DeclaredRemainder, DisjointFrom
+
+    class Loose(DeclaredRemainder, DisjointFrom[None]): ...
+
+    Other = other_columns(disjoint_from=Loose)
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    def joined(df: TypedDataFrame[FrameSchema, Loose], other: TypedDataFrame[FrameSchema, Other]) -> None:
+        # Other promises that it shares no name with Loose, so the join renames nothing.
+        # The base of Loose that names no class states no relation, and the join must still use the promise of Other.
+        reveal_type(df.join(other, on="a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.Loose, main.Other]]"
+        reveal_type(other.join(df, on="a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.Loose, main.Other]]"
+
+- case: a_declaration_with_a_malformed_relation_base_promises_no_relation
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import DeclaredRemainder, DisjointFrom, Within
+
+    Other = other_columns()
+
+    class Loose(DeclaredRemainder, DisjointFrom[Other], Within[None]): ...
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    def joined(df: TypedDataFrame[FrameSchema, Loose], other: TypedDataFrame[FrameSchema, Other]) -> None:
+        # The Within base of Loose names no class, so the checker cannot read the relations of Loose.
+        # Loose then promises no relation, and its DisjointFrom base must not count.
+        reveal_type(df.join(other, on="a"))  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_declaration_with_a_malformed_requirement_base_proves_nothing
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import AllOf, DeclaredRemainder, Without
+
+    class NoNames(DeclaredRemainder, Without[int]): ...
+    class NoFamily(DeclaredRemainder, AllOf[int]): ...
+
+    Open = other_columns()
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    def takes_names(df: TypedDataFrame[FrameSchema, NoNames]) -> None: ...
+    def takes_family(df: TypedDataFrame[FrameSchema, NoFamily]) -> None: ...
+
+    def caller(df: TypedDataFrame[FrameSchema, Open]) -> None:
+        # A requirement base whose argument is not a name or a family cannot be read.
+        # The call must then report that the argument does not prove the requirements.
+        takes_names(df)  # E: The argument's own remainder does not prove the requirements of "NoNames". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+        takes_family(df)  # E: The argument's own remainder does not prove the requirements of "NoFamily". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+    def inside(names: TypedDataFrame[FrameSchema, NoNames], family: TypedDataFrame[FrameSchema, NoFamily]) -> None:
+        # Inside the function, a new column still takes its name out of the remainder.
+        reveal_type(names.with_columns(b=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Minus[main.NoNames, Literal['b']]]"
+        reveal_type(family.with_columns(b=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Minus[main.NoFamily, Literal['b']]]"
+
+- case: an_open_chain_type_whose_output_is_not_a_hole_is_not_read
+  main: |
+    from typing import Any, Literal
+    import polars as pl
+    from astrolabe import Column, Columns, TypedDataFrame
+    from astrolabe.expr import Reads, TypedThen
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    def picked(df: TypedDataFrame[FrameSchema], e: TypedThen[Reads[Column[Literal["a"], pl.Int64]], Column[Literal["a"], Any]]) -> None:
+        # A chain type that holds no code does not read as an expression, so the select gives the plain frame.
+        reveal_type(df.select(e))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_column_type_with_a_malformed_part_is_not_read
+  main: |
+    from typing import Any, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, column
+    from astrolabe.expr import TypedColumn
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Price = column("a", pl.Int64)
+
+    def kept(x: Price) -> Price:
+        return x
+
+    def picked(df: TypedDataFrame[FrameSchema], e: TypedColumn[Literal["a"], Any], g: TypedColumn[str, pl.Int64]) -> None:
+        # A TypedColumn type needs a literal name and a region of data types.
+        # A type with another part does not read as an expression, so the select gives the plain frame.
+        reveal_type(df.select(e))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(g))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        # A declared parameter cannot accept a value that does not read as an expression.
+        kept(e)  # E: Argument "x" does not match its declared type: this value is not a typed expression, so its columns and types are unknown  [expression-fit] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: a_right_join_drops_the_left_key_from_the_names_at_risk
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Left(Columns):
+        a: pl.Int64
+        v: pl.Int64
+
+    class Right(Columns):
+        b: pl.Int64
+
+    def joined(left: TypedDataFrame[Left], right: TypedDataFrame[Right, Rest]) -> None:
+        # A right join drops the left key column "a", so a hidden right column "a" cannot collide with it.
+        # A hidden right column "v" still collides with the left column "v".
+        reveal_type(left.join(right, left_on="a", right_on="b", how="right"))  # E: This join renames columns for some callers but not others: the remainder can hold "v". Exclude the names with without=/without_prefix=, or make the overlap total with within=  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_containment_join_refuses_a_declared_left_name_with_the_suffix
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    L = other_columns(without_suffix="_x")
+    R = other_columns(only=["price"])
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        price_x: pl.Float64
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema, L]
+    previous: TypedDataFrame[PreviousSchema, R]
+    # A hidden right column "price" gets the suffix and becomes "price_x".
+    # The left frame declares "price_x", so polars raises, and the join is an error.
+    current.join(previous, on="symbol", suffix="_x")  # E: This join renames every right column with "_x", but the left frame can already hold a name ending in it, and real polars raises rather than suffixing twice. Declare without_suffix="_x" on the left remainder  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_containment_join_into_a_closed_left_frame_suffixes_the_right_remainder
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    R = other_columns(only=["price"])
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema]
+    previous: TypedDataFrame[PreviousSchema, R]
+    # A hidden right column can only be "price", so it always collides and takes the suffix.
+    # A closed left frame holds no hidden name that ends with the suffix, so the join is allowed.
+    reveal_type(current.join(previous, on="symbol", suffix="_x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.CurrentSchema, {'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Suffixed[main.R, Literal['_x']]]"
+
+- case: a_containment_join_refuses_a_left_remainder_whose_requirements_cannot_be_read
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import DeclaredRemainder, Without
+
+    class Broken(DeclaredRemainder, Without[int]): ...
+
+    R = other_columns(only=["price"])
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema, Broken]
+    previous: TypedDataFrame[PreviousSchema, R]
+    # The checker cannot read the requirement of Broken, so it cannot prove that the left frame holds no name that ends with "_x".
+    current.join(previous, on="symbol", suffix="_x")  # E: This join renames every right column with "_x", but the left frame can already hold a name ending in it, and real polars raises rather than suffixing twice. Declare without_suffix="_x" on the left remainder  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_join_of_a_closed_left_frame_with_an_open_right_frame_can_rename
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    R = other_columns()
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema]
+    previous: TypedDataFrame[PreviousSchema, R]
+    # The right remainder can hold "price", and it can also hold other names.
+    # No promise can put it inside a closed left frame, so the rename depends on the caller.
+    current.join(previous, on="symbol")  # E: This join renames columns for some callers but not others: the remainder can hold "price". Exclude the names with without=/without_prefix=, or make the overlap total with within=  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_right_remainder_whose_requirements_cannot_be_read_proves_no_containment
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+    from astrolabe.remainder import DeclaredRemainder, Without
+
+    class Broken(DeclaredRemainder, Without[int]): ...
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema]
+    previous: TypedDataFrame[PreviousSchema, Broken]
+    # The checker cannot read the requirement of Broken, so Broken can hold any name.
+    # It cannot prove that every hidden right column collides, so the rename depends on the caller.
+    current.join(previous, on="symbol")  # E: This join renames columns for some callers but not others: the remainder can hold "price". Exclude the names with without=/without_prefix=, or make the overlap total with within=  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_within_promise_breaks_when_the_right_remainder_is_renamed
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Suffixed, TypedDataFrame, other_columns
+
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[SnapshotSchema, L]
+    previous: TypedDataFrame[SnapshotSchema, Suffixed[R, Literal["_p"]]]
+    # R promises that its names sit inside L.
+    # A suffix renames every column of R, so the promise no longer holds and the two remainders can share a name.
+    current.join(previous, on="symbol", suffix="_prev")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_within_base_that_names_no_class_promises_no_containment
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import DeclaredRemainder, Within
+
+    L = other_columns(without_suffix="_prev")
+
+    class Loose(DeclaredRemainder, Within[None]): ...
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[SnapshotSchema, L]
+    previous: TypedDataFrame[SnapshotSchema, Loose]
+    # The Within base of Loose names no class, so Loose does not promise that its names sit inside L.
+    current.join(previous, on="symbol", suffix="_prev")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_remainder_whose_requirements_cannot_be_read_can_share_a_name_with_an_open_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import DeclaredRemainder, Without
+
+    class Broken(DeclaredRemainder, Without[int]): ...
+
+    L = other_columns(without=["symbol"])
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[SnapshotSchema, L]
+    previous: TypedDataFrame[SnapshotSchema, Broken]
+    # The checker cannot read the requirement of Broken, so it cannot prove that Broken and L share no name.
+    # The join is an error on either side.
+    current.join(previous, on="symbol")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+    previous.join(current, on="symbol")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_within_promise_needs_the_whole_left_declaration
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, TypedDataFrame, other_columns
+
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+
+    left: TypedDataFrame[SnapshotSchema, Minus[L, Literal["x"]]]
+    right: TypedDataFrame[SnapshotSchema, R]
+    # R promises that its names sit inside L.
+    # The left frame lost "x" from L, so a hidden right "x" does not collide, and the promise proves nothing.
+    left.join(right, on="symbol", suffix="_prev")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: a_disjoint_promise_survives_a_filter_on_the_left_remainder
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, TypedDataFrame, other_columns
+
+    L = other_columns()
+    R = other_columns(disjoint_from=L)
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+
+    left: TypedDataFrame[SnapshotSchema, Minus[L, Literal["x"]]]
+    right: TypedDataFrame[SnapshotSchema, R]
+    # R promises that it shares no name with L.
+    # Minus only takes a name out of L and renames nothing, so the promise still holds and the join is allowed.
+    reveal_type(left.join(right, on="symbol"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.SnapshotSchema, {'symbol': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Minus[main.L, Literal['x']], main.R]]"
+
+- case: the_family_class_of_a_one_kind_family_is_not_a_region
+  main: |
+    from typing import Literal
+    import polars as pl
+    from polars.datatypes.classes import ObjectType
+    from astrolabe import Columns, TypedDataFrame
+    from astrolabe.expr import TypedColumn
+
+    class FrameSchema(Columns):
+        o: pl.Object
+
+    def picked(df: TypedDataFrame[FrameSchema], e: TypedColumn[Literal["o"], ObjectType], g: TypedColumn[Literal["o"], pl.Object]) -> None:
+        # ObjectType is the family class of one kind, so a region never names it.
+        # The Object class names that kind, so only the second type reads as an expression.
+        reveal_type(df.select(e))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(g))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'o': polars.datatypes.classes.Object}, closed=True), None]"
+
+- case: an_imploded_expression_reads_back_as_a_list_of_its_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        q: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    imploded = pl.col("q").implode()
+    # The type of an imploded expression holds a List wrapped around the column.
+    # A frame operation reads it back and gives a List of the column data type.
+    reveal_type(df.select(imploded))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: a_datetime_difference_reads_back_with_the_time_unit_of_its_column
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        t: Datetime[Literal["ms"], None]
+
+    df: TypedDataFrame[FrameSchema]
+    gap = pl.col("t").diff()
+    # The type of the difference keeps a Duration that takes the time unit of the read column.
+    # A frame operation reads it back and gives a Duration in milliseconds.
+    reveal_type(df.select(gap))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+- case: a_running_decimal_sum_reads_back_with_the_widened_precision
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: Decimal[Literal[10], Literal[2]]
+
+    df: TypedDataFrame[FrameSchema]
+    running = pl.col("d").cum_sum()
+    # The type of a running decimal sum holds a rule over one operand, the read column.
+    # A frame operation reads it back and widens the precision to 38.
+    reveal_type(df.select(running))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+- case: a_deferred_read_of_an_operand_table_reads_back
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        q: pl.Int64
+        r: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    peak = pl.max_horizontal(pl.col("q") + 1, pl.col("r"))
+    packed = pl.struct(pl.col("q").abs())
+    # The type of each expression holds its code, which a frame operation evaluates at the declared data types.
+    # So the result keeps its data types.
+    reveal_type(df.select(peak))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(packed))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['q'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+
+- case: a_family_of_data_types_with_parameters_is_written_as_its_members
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    # A family of one data type with parameters is written as that data type.
+    reveal_type(cs.by_dtype(pl.Datetime("us")))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_dtype(pl.Datetime(time_unit='us', time_zone=None))"]]]"
+    # A family of two such data types is written as the union of both, in sorted order.
+    reveal_type(cs.by_dtype(pl.Datetime("us"), pl.Datetime("ms")))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_dtype(pl.Datetime(time_unit='us', time_zone=None), pl.Datetime(time_unit='ms', time_zone=None))"]]]"
+
+- case: a_set_of_names_is_written_as_its_sorted_literals
+  main: |
+    import polars.selectors as cs
+
+    # One name is written as its literal.
+    reveal_type(cs.by_name("a"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_name('a')"]]]"
+    # Two names are written as the union of their literals, in sorted order.
+    reveal_type(cs.by_name("b", "a"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_name('b', 'a')"]]]"
+
+- case: a_nested_both_marker_reads_as_one_flat_union
+  main: |
+    import polars as pl
+    from astrolabe import Both, Columns, TypedDataFrame, other_columns
+
+    L = other_columns()
+    R = other_columns()
+    T = other_columns()
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+
+    def widened(a: TypedDataFrame[FrameSchema, Both[Both[L, R], T]]) -> None:
+        # A Both marker inside a Both marker reads as one union of all three parts.
+        # The result writes that union again, nested to the right.
+        reveal_type(a.with_columns(z=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'z': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Minus[main.L, Literal['z']], astrolabe.remainder.Both[astrolabe.remainder.Minus[main.R, Literal['z']], astrolabe.remainder.Minus[main.T, Literal['z']]]]]"
+
+- case: a_returned_remainder_that_no_argument_binds_keeps_the_declared_return
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    L = other_columns()
+    M = other_columns()
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+
+    def made(df: TypedDataFrame[FrameSchema, L]) -> TypedDataFrame[FrameSchema, M]:
+        raise NotImplementedError
+
+    closed: TypedDataFrame[FrameSchema]
+    # The closed argument binds L to no column.
+    # No argument binds M, so the call keeps the declared return type.
+    reveal_type(made(closed))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'k': polars.datatypes.classes.Int64}, closed=True), main.M]"
+
+- case: a_both_marker_over_a_type_that_is_not_a_class_is_refused
+  main: |
+    from typing import Any
+    import polars as pl
+    from astrolabe import Both, Columns, TypedDataFrame, other_columns
+
+    L = other_columns()
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+
+    # Each part of a Both marker must be a remainder, and Any is not one.
+    def widened(b: TypedDataFrame[FrameSchema, Both[L, Any]]) -> None:  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+        pass
+
+- case: remainder_filter_selectors_read_back_from_their_markers
+  main: |
+    # Each selector marker in an Only filter reads back as its test on names or data types.
+    # A new column whose name the test accepts must be taken out of the filtered remainder.
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import Contains, EndsWith, OfType, OneOf, Only, SelAnd, SelNot, SelOr, StartsWith
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def f(
+        a: TypedDataFrame[Keys, Only[Rest, StartsWith[Literal["p"]]]],
+        b: TypedDataFrame[Keys, Only[Rest, EndsWith[Literal["p"]]]],
+        c: TypedDataFrame[Keys, Only[Rest, Contains[Literal["p"]]]],
+        d: TypedDataFrame[Keys, Only[Rest, OneOf[Literal["p"]]]],
+        g: TypedDataFrame[Keys, Only[Rest, OfType[pl.String]]],
+        h: TypedDataFrame[Keys, Only[Rest, SelNot[StartsWith[Literal["q"]]]]],
+        i: TypedDataFrame[Keys, Only[Rest, SelAnd[StartsWith[Literal["p"]], EndsWith[Literal["q"]]]]],
+    ) -> None:
+        reveal_type(a.with_columns(pz=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'pz': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['p(([^z]|z.).*)?']]]]"
+        reveal_type(b.with_columns(zp=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'zp': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0[[^pz]>1;p>2;z>3]|1[[^pz]>1;p>2;z>1]|2F[[^pz]>1;p>2;z>1]|3[[^pz]>1;p>1;z>1]']]]]"
+        reveal_type(c.with_columns(zpz=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'zpz': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0[[^pz]>1;p>2;z>3]|1[[^pz]>1;p>2;z>1]|2F[[^pz]>2;p>2;z>2]|3[[^pz]>1;p>4;z>1]|4F[[^pz]>2;p>2;z>5]|5[[^pz]>2;p>2;z>2]']]]]"
+        reveal_type(d.with_columns(p=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'p': polars.datatypes.classes.Int32}, closed=True), None]"
+        reveal_type(g.with_columns(s=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.String], astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['s']]]]]]"
+        reveal_type(h.with_columns(z=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'z': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['(([^qz]|z.).*)?']]]]"
+        reveal_type(i.with_columns(pq=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'pq': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0[[^pq]>1;p>2;q>1]|1[[^pq]>1;p>1;q>1]|2[[^pq]>3;p>3;q>3]|3[[^pq]>3;p>3;q>4]|4F[[^pq]>3;p>3;q>4]']]]]"
+    def g2(j: TypedDataFrame[Keys, Only[Rest, SelOr[StartsWith[Literal["p"]], EndsWith[Literal["q"]]]]]) -> None:
+        reveal_type(j.with_columns(pz=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'pz': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0[[^pqz]>1;p>2;q>3;z>1]|1[[^pqz]>1;p>1;q>3;z>1]|2F[[^pqz]>4;p>4;q>4;z>5]|3F[[^pqz]>1;p>1;q>3;z>1]|4F[[^pqz]>4;p>4;q>4;z>4]|5[[^pqz]>4;p>4;q>4;z>4]']]]]"
+
+- case: a_matching_marker_reads_back_as_its_machine
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import Matching, Only
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def f(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal['p.*']]]]) -> None:
+        # The Matching marker holds the machine of the names that start with "p".
+        # A new column "pz" is taken out of that set, so the filter becomes a new machine.
+        reveal_type(a.with_columns(pz=pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'pz': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['p(([^z]|z.).*)?']]]]"
+
+- case: a_matching_marker_reads_a_signature_and_refuses_another_text
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import Matching, Only
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    # A Matching marker reads the signature of its set too. A text that is no
+    # spelling, or a pattern that does not read back as itself, is no remainder.
+    def signature(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal["0F[.>0]"]]]]) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0F[.>0]']]]]"
+
+    def unparsed(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal["[a"]]]]) -> None: ...  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+    def unread(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal["a(b)?.*"]]]]) -> None: ...  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+    def broken(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal["0F.>0]"]]]]) -> None: ...  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+    def looped(a: TypedDataFrame[Keys, Only[Rest, Matching[Literal["(ab)*"]]]]) -> None: ...  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+- case: a_selection_type_reads_only_its_own_markers
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, TypedDataFrame
+    from astrolabe.expr import Affix, Blank, Row, Rows, Same, TypedSelection
+    from astrolabe.remainder import OfType
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        fee: pl.Int64
+
+    def picked(
+        df: TypedDataFrame[FrameSchema],
+        affix: TypedSelection[OfType[pl.Int64], Rows[Row[pl.Int64, Same[Blank]]], Affix[Literal["p_"], Literal[""], None]],
+        restamp: TypedSelection[OfType[pl.Int64], Rows[Row[pl.Int64, Same[Blank]]], Row[Literal["p_"], Literal[""], None]],
+    ) -> None:
+        # The rename part is an Affix marker, and it adds its prefix to each picked column.
+        reveal_type(df.select(affix))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p_a': polars.datatypes.classes.Int64, 'p_fee': polars.datatypes.classes.Int64}, closed=True), None]"
+        # Another marker with three parts is not a rename, so the type does not read as a selection.
+        reveal_type(df.select(restamp))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: expression_types_with_malformed_outcome_markers_are_not_read
+  main: |
+    from typing import Any, Literal
+    import polars as pl
+    from astrolabe import Column, Columns, TypedDataFrame
+    from astrolabe.expr import Reads, Row, Rows, Same, TypedExpr, Wrap
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    A = Literal["a"]
+    In = Reads[Column[A, pl.Int64]]
+
+    def picked(
+        df: TypedDataFrame[FrameSchema],
+        e1: TypedExpr[In, Column[A, Wrap[pl.List, Any]]],  # E: Type argument "Wrap[polars.datatypes.classes.List, Any]" of "Column" must be a subtype of "DataType"  [type-var]
+        e3: TypedExpr[In, Column[A, Same[int]]],  # E: Type argument "Same[int]" of "Column" must be a subtype of "DataType"  [type-var]
+        e12: TypedExpr[Reads[Column[A, Any]], Column[A, pl.Int64]],
+        e13: TypedExpr[In, Column[A, Rows[Row[pl.Int64]]]],  # E: Type argument "Rows[Row[Int64]]" of "Column" must be a subtype of "DataType"  [type-var]
+        e14: TypedExpr[In, Column[A, Rows[int]]],  # E: Type argument "Rows[int]" of "Column" must be a subtype of "DataType"  [type-var]
+        e18: TypedExpr[In, Column[A, Wrap[int, Same[A]]]],  # E: Type argument "Wrap[int, Same[Literal['a']]]" of "Column" must be a subtype of "DataType"  [type-var]
+        e19: TypedExpr[Reads[Column[A, pl.Int64 | int]], Column[A, pl.Int64]],  # E: Type argument "Int64 | int" of "Column" must be a subtype of "DataType"  [type-var]
+    ) -> None:
+        # An expression type whose output part is not a well-formed outcome does not read as an expression.
+        # The select then gives the plain frame, or keeps the column under Unchecked.
+        reveal_type(df.select(e1))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(e3))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(e12))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(e13))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(e14))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.select(e18))  # E: "a" has no result type at this frame's column types: the declared result 'int(Int64)' is not a data type  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+        # A region of a read that holds a type that is no data type does not read either.
+        reveal_type(df.select(e19))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: an_empty_list_of_time_units_picks_no_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        t: pl.Datetime
+        k: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    # A datetime selector with no time unit picks no column, so the select gives an empty frame.
+    reveal_type(df.select(cs.datetime(time_unit=[])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+
+- case: a_family_class_in_a_remainder_filter_reads_back_as_its_members
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from polars.datatypes.classes import NumericType
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import OfType, Only
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def picked(a: TypedDataFrame[Keys, Only[Rest, OfType[NumericType]]]) -> None:
+        # The remainder holds only numeric columns, so no column is a string.
+        reveal_type(a.select(cs.string()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"

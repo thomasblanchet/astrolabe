@@ -1,0 +1,260 @@
+# Schema classes: a `Columns` subclass (`class Legislators(Columns): ...`),
+# any other closed `TypedDict` class, a generic class, and a class that
+# `columns(...)` builds for names that are not identifiers. Covers
+# `ColumnsRestrictionCheck` and `SchemaDeclarationHook`.
+
+- case: columns_class_schema_interconverts_regardless_of_declared_field_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Legislators(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    class LegislatorsReordered(Columns):
+        last_name: pl.String
+        first_name: pl.String
+
+    x: TypedDataFrame[Legislators]
+    reveal_type(x)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Legislators, {'first_name': polars.datatypes.classes.String, 'last_name': polars.datatypes.classes.String}, closed=True), None]"
+    # Two schemas with the same columns, declared in a different order,
+    # freely interconvert -- this is the actual bug this migration fixes.
+    y: TypedDataFrame[LegislatorsReordered] = x
+    reveal_type(y)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.LegislatorsReordered, {'last_name': polars.datatypes.classes.String, 'first_name': polars.datatypes.classes.String}, closed=True), None]"
+    z: TypedDataFrame[Legislators] = y
+
+- case: columns_class_total_false_is_rejected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class BadTotal(Columns, total=False):  # E: Columns subclass "BadTotal" must not use total=False, Required[...], or NotRequired[...]: every column is required  [columns-not-total]
+        a: pl.Int64
+
+    bad_total: TypedDataFrame[BadTotal]
+    reveal_type(bad_total)  # N: Revealed type is "Any"
+
+- case: columns_class_per_field_notrequired_with_no_total_keyword_is_rejected_at_the_classs_own_line
+  main: |
+    from typing import NotRequired
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A per-field NotRequired[...] override makes a field non-required
+    # without the class itself ever declaring total=..., so the
+    # violation has no keyword to report against and falls back to the
+    # class's own declaration line instead.
+    class BadTotal(Columns):  # E: Columns subclass "BadTotal" must not use total=False, Required[...], or NotRequired[...]: every column is required  [columns-not-total]
+        a: NotRequired[pl.Int64]
+
+    bad_total: TypedDataFrame[BadTotal]
+    reveal_type(bad_total)  # N: Revealed type is "Any"
+
+- case: columns_class_closed_false_is_rejected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class BadClosed(Columns, closed=False):  # E: Columns subclass "BadClosed" must not use closed=False. Declare a remainder with other_columns() and write it as the frame's second argument, for example TypedDataFrame[BadClosed, Rest]  [columns-not-closed]
+        a: pl.Int64
+
+    bad_closed: TypedDataFrame[BadClosed]
+    reveal_type(bad_closed)  # N: Revealed type is "Any"
+
+- case: columns_class_field_with_a_non_dtype_type_is_rejected
+  main: |
+    from astrolabe import Columns, TypedDataFrame
+
+    class BadField(Columns):
+        a: int  # E: Column "a" must be a polars dtype or an astrolabe dtype marker  [columns-field-type]
+
+    bad_field: TypedDataFrame[BadField]
+    reveal_type(bad_field)  # N: Revealed type is "Any"
+
+- case: a_typeddict_not_derived_from_columns_is_a_schema_too
+  main: |
+    from typing import TypedDict
+    import polars as pl
+    from astrolabe import TypedDataFrame
+
+    class Plain(TypedDict):
+        a: pl.Int64
+
+    plain: TypedDataFrame[Plain]
+    reveal_type(plain)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Plain, {'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: columns_class_multi_base_composition
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Base1(Columns):
+        a: pl.Int64
+
+    class Base2(Columns):
+        b: pl.String
+
+    class Combined(Base1, Base2):
+        c: pl.Boolean
+
+    combined: TypedDataFrame[Combined]
+    reveal_type(combined)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Combined, {'b': polars.datatypes.classes.String, 'a': polars.datatypes.classes.Int64, 'c': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: columns_class_multi_base_composition_field_collision_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns
+
+    class BaseX(Columns):
+        a: pl.Int64
+
+    class BaseY(Columns):
+        a: pl.String
+
+    class Colliding(BaseX, BaseY):  # E: Incompatible definitions of field "a" in base classes "BaseY" and "BaseX"  [misc]
+        pass
+
+- case: columns_class_open_function_round_trips_through_the_two_argument_shape
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Legislators(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    Rest = other_columns()
+
+    def add_flag(
+        df: TypedDataFrame[Legislators, Rest],
+    ) -> TypedDataFrame[Legislators, Rest]:
+        return df
+
+    conforming: TypedDataFrame[Legislators, Rest]
+    reveal_type(add_flag(conforming))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Legislators, {'first_name': polars.datatypes.classes.String, 'last_name': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: columns_class_frames_own_second_argument_must_be_a_remainder
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Legislators(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    bad_rest: TypedDataFrame[Legislators, int]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+- case: columns_class_schema_also_works_for_typedlazyframe
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class Legislators(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    lz: TypedLazyFrame[Legislators]
+    reveal_type(lz)  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Legislators, {'first_name': polars.datatypes.classes.String, 'last_name': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: columns_class_inherited_bad_field_reports_at_the_composing_classes_own_line
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A documented, accepted precision limitation of the deferred
+    # validation this project uses (see SCHEMA_MIGRATION.md): a field
+    # inherited from an ancestor reports at the *composing* class's own
+    # declaration line, not the original ancestor's, since that is the
+    # real, confirmed limit of mypy's own TypedDictFieldSource
+    # bookkeeping for an inherited field.
+    class BadBase(Columns):
+        bad: int
+
+    class BadDerived(BadBase):  # E: Column "bad" must be a polars dtype or an astrolabe dtype marker  [columns-field-type]
+        good: pl.Int64
+
+    bad_derived: TypedDataFrame[BadDerived]
+
+- case: columns_class_declared_but_never_used_gets_no_enforcement_at_all
+  main: |
+    import polars as pl
+    from astrolabe import Columns
+
+    # A documented, accepted limitation: no hook fires for a plain class
+    # definition on its own, only for actual TypedDataFrame[...]/
+    # TypedLazyFrame[...] usage, so a Columns subclass that is declared
+    # but never used this way gets zero restriction enforcement -- this
+    # total=False violation is never reported at all.
+    class NeverUsed(Columns, total=False):
+        a: pl.Int64
+
+- case: a_generic_columns_class_binds_its_data_type_at_each_use
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Keyed[T: pl.DataType](Columns):
+        k: pl.String
+        v: T
+
+    def keep[T: pl.DataType](df: TypedDataFrame[Keyed[T]]) -> TypedDataFrame[Keyed[T]]:
+        reveal_type(df.select("v"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v': T}, closed=True), None]"
+        return df
+
+    ints: TypedDataFrame[Keyed[pl.Int64]]
+    reveal_type(keep(ints))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keyed, {'k': polars.datatypes.classes.String, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(ints.select("v"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_generic_columns_class_needs_a_data_type_bound
+  main: |
+    from astrolabe import Columns, TypedDataFrame
+
+    class Loose[T](Columns):
+        v: T  # E: Column "v" must be a polars dtype or an astrolabe dtype marker  [columns-field-type]
+
+    loose: TypedDataFrame[Loose[int]]
+    reveal_type(loose)  # N: Revealed type is "Any"
+
+- case: columns_declares_names_that_are_not_identifiers
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, Unchecked, columns, other_columns
+
+    Pivoted = columns("Pivoted", {"id": pl.Int64, "1": pl.Int64, "v1|a": pl.Datetime("us"), "u": Unchecked})
+    Rest = other_columns()
+
+    pivoted: TypedDataFrame[Pivoted]
+    reveal_type(pivoted)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Pivoted, {'id': polars.datatypes.classes.Int64, '1': polars.datatypes.classes.Int64, 'v1|a': astrolabe.frame.Datetime[Literal['us'], None], 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pivoted.select("v1|a", "1"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v1|a': astrolabe.frame.Datetime[Literal['us'], None], '1': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    def open_frame(df: TypedDataFrame[Pivoted, Rest]) -> None:
+        reveal_type(df.select("1"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'1': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: columns_refuses_a_malformed_call
+  main: |
+    import polars as pl
+    from astrolabe import NumericType, columns
+
+    Wrong = columns("Other", {"a": pl.Int64})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg]
+    Family = columns("Family", {"a": NumericType})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg]
+    Keys = columns("Keys", {1: pl.Int64})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg] # E: Dict entry 0 has incompatible type "int": "type[Int64]"; expected "str": "Any"  [dict-item]
+    Listed = columns("Listed", [("a", pl.Int64)])  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg] # E: Argument 2 to "columns" has incompatible type "list[tuple[str, type[Int64]]]"; expected "Mapping[str, Any]"  [arg-type]
+    Plain = columns("Plain", {"a": int})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg]
+    Computed = columns("Computed", {"a": 1 + 1})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg]
+    Dotted = columns("Dotted", {"a": pl.NUMERIC_DTYPES})  # E: Module has no attribute "NUMERIC_DTYPES"  [attr-defined]
+
+- case: columns_waits_for_an_incomplete_class
+  main: |
+    import polars as pl
+    from astrolabe import Columns, columns
+
+    # A class whose own field is a forward reference is incomplete on
+    # the first pass, so the hook waits. On the next pass it reports
+    # that a schema class is not a data type.
+    Waiting = columns("Waiting", {"n": Deferred})  # E: columns() takes the class name and a dict of column names to data types, for example columns("Pivoted", {"1": pl.Int64})  [marker-arg]  # E: Name "Deferred" is used before definition  [used-before-def]
+
+    class Deferred(Columns):
+        n: Later
+
+    Later = pl.Int64

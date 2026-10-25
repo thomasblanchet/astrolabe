@@ -1,0 +1,240 @@
+# Real-world test: every `.join()` shape from polars' own user guide,
+# adapted to astrolabe's typed frame API. Source: pola-rs/polars,
+# `docs/source/src/python/user-guide/transformations/joins.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The "Monopoly properties" data and every join shown here
+# (equi-join, a mismatched-name join key, every `how=`, a non-equi join,
+# a cross join) are the documentation's own real teaching example,
+# reproduced almost verbatim; only the untyped `pl.read_csv(...)` calls
+# are replaced with declared `TypedDataFrame` schemas matching the same
+# columns, so the plugin has a real, literal schema to check against.
+#
+# The docs' own `join-key-expression` example (`right_on=` transforming
+# "name" with `.str.to_lowercase()` before matching) narrows too
+# (API_METHOD_COVERAGE_REMEDIATION.md Stage 10): a transforming key
+# forces coalescing off for the whole call, confirmed empirically
+# against real polars 1.43.2, so "name" appears as its own ordinary,
+# uncoalesced column, keeping its own *source* dtype -- see
+# `test_join.yml`'s own scope note for the full reasoning. The docs'
+# own non-equi `join_where` example narrows too, via its own
+# `JoinWhereHook`.
+
+- case: real_world_monopoly_equi_join_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PropsGroupsSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+
+    PropsGroups = TypedDataFrame[PropsGroupsSchema]
+
+    class PropsPricesSchema(Columns):
+        property_name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    props_groups: PropsGroups
+    props_prices: PropsPrices
+
+    class ResultSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+        cost: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = props_groups.join(props_prices, on="property_name")
+
+- case: real_world_monopoly_join_key_expression_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PropsGroupsSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+
+    PropsGroups = TypedDataFrame[PropsGroupsSchema]
+
+    class PropsPricesSchema(Columns):
+        name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    props_groups2: PropsGroups
+    props_prices2: PropsPrices
+
+    class ResultSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+        name: pl.String
+        cost: pl.Int64
+
+    # real polars accepts an Expr for right_on= (lowercasing "name"
+    # before matching): a transforming key, so coalescing turns off for
+    # the whole call, and "name" appears as its own ordinary column
+    # (its own source dtype, String, untouched by the lowercasing),
+    # confirmed empirically against real polars 1.43.2.
+    result: TypedDataFrame[ResultSchema] = props_groups2.join(
+        props_prices2, left_on="property_name", right_on=pl.col("name").str.to_lowercase()
+    )
+
+- case: real_world_monopoly_inner_left_right_full_narrow
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PropsGroupsSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+
+    PropsGroups = TypedDataFrame[PropsGroupsSchema]
+
+    class PropsPricesSchema(Columns):
+        property_name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    props_groups: PropsGroups
+    props_prices: PropsPrices
+
+    class MergedSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+        cost: pl.Int64
+
+    Merged = TypedDataFrame[MergedSchema]
+    inner: Merged = props_groups.join(props_prices, on="property_name", how="inner")
+    left: Merged = props_groups.join(props_prices, on="property_name", how="left")
+
+    class RightSchema(Columns):
+        group: pl.String
+        property_name: pl.String
+        cost: pl.Int64
+
+    # how="right" coalesces at the RIGHT side's own name/position: left's
+    # non-key columns first, then the coalesced key, then right's
+    # non-key columns -- a genuinely different layout from inner/left.
+    right: TypedDataFrame[RightSchema] = props_groups.join(props_prices, on="property_name", how="right")
+
+    class FullSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+        property_name_right: pl.String
+        cost: pl.Int64
+
+    full: TypedDataFrame[FullSchema] = props_groups.join(props_prices, on="property_name", how="full")
+
+- case: real_world_monopoly_full_join_coalesce_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PropsGroupsSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+
+    PropsGroups = TypedDataFrame[PropsGroupsSchema]
+
+    class PropsPricesSchema(Columns):
+        property_name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    props_groups: PropsGroups
+    props_prices: PropsPrices
+
+    class ResultSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+        cost: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = props_groups.join(props_prices, on="property_name", how="full", coalesce=True)
+
+- case: real_world_monopoly_semi_anti_join_keep_left_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PropsGroupsSchema(Columns):
+        property_name: pl.String
+        group: pl.String
+
+    PropsGroups = TypedDataFrame[PropsGroupsSchema]
+
+    class PropsPricesSchema(Columns):
+        property_name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    props_groups: PropsGroups
+    props_prices: PropsPrices
+    semi: PropsGroups = props_groups.join(props_prices, on="property_name", how="semi")
+    anti: PropsGroups = props_groups.join(props_prices, on="property_name", how="anti")
+
+- case: real_world_monopoly_cross_join_players_and_tokens_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PlayersSchema(Columns):
+        name: pl.String
+        cash: pl.Int64
+
+    Players = TypedDataFrame[PlayersSchema]
+
+    class TokensSchema(Columns):
+        monopoly_token: pl.String
+
+    Tokens = TypedDataFrame[TokensSchema]
+
+    players: Players
+    tokens: Tokens
+
+    class NamesSchema(Columns):
+        name: pl.String
+
+    names: TypedDataFrame[NamesSchema] = players.select(pl.col("name"))
+
+    class ResultSchema(Columns):
+        name: pl.String
+        monopoly_token: pl.String
+
+    result: TypedDataFrame[ResultSchema] = names.join(tokens, how="cross")
+
+- case: real_world_monopoly_join_where_non_equi_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class PlayersSchema(Columns):
+        name: pl.String
+        cash: pl.Int64
+
+    Players = TypedDataFrame[PlayersSchema]
+
+    class PropsPricesSchema(Columns):
+        property_name: pl.String
+        cost: pl.Int64
+
+    PropsPrices = TypedDataFrame[PropsPricesSchema]
+
+    players: Players
+    props_prices: PropsPrices
+
+    class ResultSchema(Columns):
+        name: pl.String
+        cash: pl.Int64
+        property_name: pl.String
+        cost: pl.Int64
+
+    # join_where() is a genuinely different method from join(), handled
+    # by its own JoinWhereHook: its result is always every column from
+    # both sides, regardless of the predicate, so this narrows exactly
+    # like a how="cross" join would.
+    result: TypedDataFrame[ResultSchema] = players.join_where(props_prices, pl.col("cash") > pl.col("cost"))

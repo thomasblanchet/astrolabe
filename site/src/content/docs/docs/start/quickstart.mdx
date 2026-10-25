@@ -1,0 +1,32 @@
+---
+title: Quickstart
+description: Declare a schema, type a frame, and see the checker find a fault.
+sidebar:
+  order: 3
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+This page takes five minutes. It assumes that you [installed Astrolabe and set up the project](../install/).
+
+## Declare a schema
+
+A schema is a class that inherits from `Columns`. Each field is a column, with a Polars data type. Use the schema in the type `TypedDataFrame`:
+
+<Example name="quickstart_check" />
+
+Run mypy. The function sorts by `prices`, and the frame has `price`, so the checker reports the line.
+
+## Fix the fault, and read a type
+
+Correct the name. Then ask mypy for the type of a new frame with `reveal_type`:
+
+<Example name="quickstart_fixed" />
+
+The new column `doubled` has the data type `Float64`, because a `Float64` times an integer gives a `Float64` in Polars. The checker computes that type with the rules of Polars, so each later step knows the column and its data type.
+
+## Next steps
+
+- Follow the [Tutorial](../../tutorial/load/) to type a whole pipeline, one idea at a time.
+- Read the [Guides](../../guides/schemas/) for one topic at a time.
+- Look up an error in [Error codes](../../reference/error-codes/).

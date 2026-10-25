@@ -1,0 +1,150 @@
+# Tier 10 item 6: `.pipe()` on `DataFrame`/`LazyFrame`/`Expr` -- the
+# standard extension point for chaining an arbitrary user function into
+# a fluent call chain. Real `pl.DataFrame.pipe`/`pl.LazyFrame.pipe`/
+# `pl.Expr.pipe` each hardcode `function`'s first parameter to the
+# plain, untyped `DataFrame`/`LazyFrame`/`Expr`, not `Self`, confirmed
+# via `inspect.signature` against real polars 1.43.2. Because a
+# `Callable`'s parameter types are contravariant, a function written to
+# accept a specific `TypedDataFrame[Column[...]]`/`TypedLazyFrame[...]`/
+# `TypedExpr[Name, DType]` does not satisfy that plain signature, so
+# `.pipe()` is unusable for a schema-specific transform function under
+# today's real stub. This needs no mypy plugin hook: `TypedDataFrame`/
+# `TypedLazyFrame` (`frame.py`) and `TypedExpr` (`expr.py`) each gain a
+# pure typing-level `def pipe[**P, T](self, function: Callable[Concatenate[Self, P], T], ...) -> T`
+# override instead, the same `Self`-typed-override shape `filter`/
+# `sort`/`unique` already use. `pl.Series` has no `.pipe()` method at
+# all, confirmed via `hasattr(pl.Series, "pipe")`, so `TypedSeries`
+# needs no override.
+
+- case: dataframe_pipe_with_matching_schema_function_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def transform(df: Frame) -> Frame:
+        return df
+
+    df: Frame
+    reveal_type(df.pipe(transform))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: dataframe_pipe_with_mismatched_schema_function_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    class OtherSchema(Columns):
+        b: pl.Int64
+
+    Other = TypedDataFrame[OtherSchema]
+
+    def wrong_transform(df: Other) -> Other:
+        return df
+
+    df: Frame
+    df.pipe(wrong_transform)  # E: Argument 1 to "pipe" of "TypedDataFrame" has incompatible type "Callable[[TypedDataFrame[OtherSchema, None]], TypedDataFrame[OtherSchema, None]]"; expected "Callable[[TypedDataFrame[FrameSchema, None]], TypedDataFrame[TypedDict({'b': Int64}), None]]"  [arg-type]  # N: This is likely because "wrong_transform" has named arguments: "df". Consider marking them positional-only
+
+- case: dataframe_pipe_forwards_extra_args_and_kwargs
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def transform(df: Frame, factor: int, *, label: str) -> str:
+        return label * factor
+
+    df: Frame
+    reveal_type(df.pipe(transform, 2, label="x"))  # N: Revealed type is "str"
+
+- case: lazyframe_pipe_with_matching_schema_function_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedLazyFrame[FrameSchema]
+
+    def transform(lf: Frame) -> int:
+        return 1
+
+    lf: Frame
+    reveal_type(lf.pipe(transform))  # N: Revealed type is "int"
+
+- case: lazyframe_pipe_with_mismatched_schema_function_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedLazyFrame[FrameSchema]
+
+    class OtherSchema(Columns):
+        b: pl.Int64
+
+    Other = TypedLazyFrame[OtherSchema]
+
+    def wrong_transform(lf: Other) -> int:
+        return 1
+
+    lf: Frame
+    lf.pipe(wrong_transform)  # E: Argument 1 to "pipe" of "TypedLazyFrame" has incompatible type "Callable[[TypedLazyFrame[OtherSchema, None]], int]"; expected "Callable[[TypedLazyFrame[FrameSchema, None]], int]"  [arg-type]  # N: This is likely because "wrong_transform" has named arguments: "lf". Consider marking them positional-only
+
+- case: expr_pipe_with_matching_schema_function_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import TypedExpr
+
+    e: TypedExpr[Literal["a"], pl.Int64]
+
+
+    def transform(expr: TypedExpr[Literal["a"], pl.Int64]) -> int:
+        return 1
+
+
+    reveal_type(e.pipe(transform))  # N: Revealed type is "int"
+
+- case: expr_pipe_with_mismatched_dtype_function_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import TypedExpr
+
+    e: TypedExpr[Literal["a"], pl.Int64]
+
+
+    def wrong_transform(expr: TypedExpr[Literal["a"], pl.String]) -> int:
+        return 1
+
+
+    e.pipe(wrong_transform)  # E: Argument 1 to "pipe" of "TypedExpr" has incompatible type "Callable[[TypedExpr[Literal['a'], String]], int]"; expected "Callable[[TypedExpr[Literal['a'], Int64]], int]"  [arg-type]  # N: This is likely because "wrong_transform" has named arguments: "expr". Consider marking them positional-only
+
+- case: plain_dataframe_pipe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+
+
+    def transform(df: pl.DataFrame) -> pl.DataFrame:
+        return df
+
+
+    reveal_type(df.pipe(transform))  # N: Revealed type is "polars.dataframe.frame.DataFrame"

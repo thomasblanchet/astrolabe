@@ -1,0 +1,45 @@
+---
+/** The footer of the landing page. */
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<footer class="footer">
+  <span class="name">
+    <span>Astrolabe</span>
+    <span aria-hidden="true" class="dot">·</span>
+    <span>MIT License</span>
+  </span>
+  <span class="links">
+    <a href={`${base}docs/spec/how-to-read-it/`}>Specification</a>
+    <span aria-hidden="true" class="dot">·</span>
+    <a href="https://github.com/thomasblanchet/astrolabe">github.com/thomasblanchet/astrolabe</a>
+  </span>
+</footer>
+
+<style>
+  .footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 0 40px;
+    border-top: 1px solid rgba(212, 175, 55, 0.15);
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  .name,
+  .links {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .dot {
+    color: rgba(212, 175, 55, 0.6);
+  }
+
+  a {
+    color: var(--muted);
+  }
+</style>

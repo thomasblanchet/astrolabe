@@ -1,0 +1,35 @@
+---
+title: 2. Transform the frame
+description: Each operation gives a frame with its own schema, and each later step is checked against it.
+sidebar:
+  order: 2
+  label: Transform the frame
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+The pipeline now computes the value of each trade, keeps the large ones, and sums them by symbol.
+
+## Each step has a schema
+
+<Example name="tut_transform_steps" />
+
+The checker computes the schema of each result:
+
+- `with_columns` adds `notional`. A `Float64` times an `Int64` gives a `Float64`.
+- `filter` keeps the rows and the columns.
+- `group_by(...).agg(...)` keeps the key and the aggregates. `pl.len()` counts the rows as a `UInt32`. The other columns are gone.
+
+A later step that reads `price` from `by_symbol` is an error, because the column is gone.
+
+## Each step checks its data types
+
+An operation needs columns of the right data types. A mismatch is an error, like a missing column:
+
+<Example name="tut_transform_errors" />
+
+- `filter` keeps the rows where a condition is true, so it needs a `Boolean` column.
+- Polars cannot subtract a `Float64` from a `String`.
+- A join compares the keys on the two sides, and a `String` key cannot match an `Int64` key.
+
+Next: [3. Write a function that accepts other columns](../functions/).

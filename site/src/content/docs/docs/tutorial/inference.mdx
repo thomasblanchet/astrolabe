@@ -1,0 +1,31 @@
+---
+title: 4. Let the body decide the return type
+description: Declare the columns that a function adds, and let the checker compute what the body does to the others.
+sidebar:
+  order: 4
+  label: Let the body decide the return type
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A function that adds a column to an open frame returns the columns of the caller, and the new one. The return type must say both.
+
+Below, `add_notional` accepts any frame with the columns of `Priced`: `price` and `quantity`. `Rest` stands for the other columns of the caller. The function adds `notional`, so its result has the columns of `WithNotional` and the other columns of the caller.
+
+## Let the checker compute the remainder
+
+Write `InferredRemainder` in the place of the remainder, and wrap the returned value in `infer(...)`. The checker computes the remainder from the body:
+
+<Example name="tut_inference_remainder" />
+
+The returned value must hold each column of `WithNotional`, with the same data type. At each call, the result keeps the other columns of the caller: the frame of `Trades` has `symbol`, and so does `result`. If a caller passes a `notional` column, `with_columns` replaces it, and the checker takes that into account.
+
+## Let the checker compute the whole frame
+
+`InferredDataFrame` lets the checker compute the whole return type. With two `return` statements, the result is the union of the two frames:
+
+<Example name="tut_inference_frame" />
+
+Write `infer(...)` around the whole value of each `return`. See [Inferred return types](../../guides/inferred/) for `InferredExpr` and `InferredLazyFrame`.
+
+Next: [5. Declare reusable expressions](../declarations/).

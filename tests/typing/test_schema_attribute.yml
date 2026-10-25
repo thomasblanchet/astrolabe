@@ -1,0 +1,75 @@
+# `.schema` as a static attribute. Written before the corresponding
+# get_attribute_hook implementation exists. This test is expected to
+# fail (red) until plugin.py implements it.
+#
+# Scope: instance access (`df.schema`) is typed as polars' own `Schema`
+# class. This replaces the `Any` it revealed before this change. This
+# was confirmed empirically as a real, pre-existing gap, not just an
+# enhancement. Class-level access through the descriptor
+# (`Frame.schema`, a real dict/None at runtime, not a `Schema`) is
+# deliberately left alone, still `Any`. See the hook's docstring for how
+# the two are told apart and why only one of them is safe to improve
+# here.
+
+- case: schema_attribute_is_typed_as_polars_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.schema)  # N: Revealed type is "polars.schema.Schema"
+
+- case: schema_attribute_is_typed_as_polars_schema_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    reveal_type(lf.schema)  # N: Revealed type is "polars.schema.Schema"
+
+- case: schema_attribute_on_open_receiver_is_typed_as_polars_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    def peek(
+        df: TypedDataFrame[DfSchema, Rest],
+    ) -> None:
+        reveal_type(df.schema)  # N: Revealed type is "polars.schema.Schema"
+
+- case: schema_class_level_access_is_unaffected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    reveal_type(Frame.schema)  # N: Revealed type is "Any"
+
+- case: schema_attribute_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.schema)  # N: Revealed type is "polars.schema.Schema"

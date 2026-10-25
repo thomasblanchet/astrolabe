@@ -1,0 +1,247 @@
+---
+/**
+ * The install commands for uv, pip and Poetry.
+ *
+ * The tabs are radio inputs, so they work without a script. A small script
+ * adds the copy button, which copies the commands of the selected tab.
+ */
+const REPOSITORY = 'git+https://github.com/thomasblanchet/astrolabe';
+
+const MANAGERS: { name: string; add: string; init: string }[] = [
+  { name: 'uv', add: 'uv add', init: 'uv run astrolabe init' },
+  { name: 'pip', add: 'pip install', init: 'astrolabe init' },
+  { name: 'Poetry', add: 'poetry add', init: 'poetry run astrolabe init' },
+];
+---
+
+<section id="install" class="install">
+  <div class="head">
+    <h2>Install</h2>
+    <p>Requires Python 3.12 or later.</p>
+  </div>
+  <div class="pm-card">
+    {MANAGERS.map((_, index) => <input class="pm-input" type="radio" name="pm" id={`pm-${index}`} checked={index === 0} />)}
+    <div class="pm-bar">
+      <span class="pm-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div class="pm-switch" role="group" aria-label="Package manager">
+        {MANAGERS.map((manager, index) => <label class="pm-tab" for={`pm-${index}`}>{manager.name}</label>)}
+      </div>
+      <button class="pm-copy" type="button" hidden>Copy</button>
+    </div>
+    {
+      MANAGERS.map((manager, index) => (
+        <div class={`pm-panel pm-panel-${index}`} data-commands={`${manager.add} ${REPOSITORY}\n${manager.init}`}>
+          <div class="pm-line">
+            <span class="pm-c"># add the package</span>
+          </div>
+          <div class="pm-line">
+            <span class="pm-d">$ </span>
+            <span class="pm-k">{manager.add} </span>
+            <span class="pm-u">{REPOSITORY}</span>
+          </div>
+          <div class="pm-line pm-gap" />
+          <div class="pm-line">
+            <span class="pm-c"># register the plugin with mypy</span>
+          </div>
+          <div class="pm-line">
+            <span class="pm-d">$ </span>
+            <span class="pm-k">{manager.init}</span>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<script>
+  const card = document.querySelector<HTMLElement>('.pm-card');
+  const button = card?.querySelector<HTMLButtonElement>('.pm-copy');
+  if (card && button && navigator.clipboard) {
+    button.hidden = false;
+    button.addEventListener('click', async () => {
+      const checked = card.querySelector<HTMLInputElement>('.pm-input:checked');
+      const index = checked ? checked.id.replace('pm-', '') : '0';
+      const panel = card.querySelector<HTMLElement>(`.pm-panel-${index}`);
+      await navigator.clipboard.writeText(panel?.dataset.commands ?? '');
+      button.textContent = 'Copied';
+      setTimeout(() => {
+        button.textContent = 'Copy';
+      }, 1600);
+    });
+  }
+</script>
+
+<style>
+  .install {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding: 0 0 96px;
+  }
+
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  h2 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 40px;
+    color: var(--star);
+  }
+
+  .head p {
+    margin: 0;
+    max-width: 44rem;
+    color: var(--muted);
+  }
+
+  .pm-card {
+    position: relative;
+    border-radius: 12px;
+    background: #0d1326;
+    border: 1px solid rgba(212, 175, 55, 0.22);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+  }
+
+  .pm-input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    pointer-events: none;
+  }
+
+  .pm-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 10px 16px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.14);
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .pm-dots {
+    display: inline-flex;
+    gap: 7px;
+    margin-right: auto;
+  }
+
+  .pm-dots i {
+    display: block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(201, 205, 220, 0.18);
+  }
+
+  .pm-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(212, 175, 55, 0.2);
+  }
+
+  .pm-tab {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 14px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    transition:
+      background 0.2s,
+      color 0.2s;
+  }
+
+  .pm-tab:hover {
+    color: var(--star);
+  }
+
+  #pm-0:checked ~ .pm-bar label[for='pm-0'],
+  #pm-1:checked ~ .pm-bar label[for='pm-1'],
+  #pm-2:checked ~ .pm-bar label[for='pm-2'] {
+    background: var(--gold);
+    color: var(--navy);
+  }
+
+  #pm-0:focus-visible ~ .pm-bar label[for='pm-0'],
+  #pm-1:focus-visible ~ .pm-bar label[for='pm-1'],
+  #pm-2:focus-visible ~ .pm-bar label[for='pm-2'] {
+    outline: 2px solid var(--gold-bright);
+    outline-offset: 2px;
+  }
+
+  .pm-copy {
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    background: none;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .pm-copy:hover {
+    color: var(--star);
+    border-color: rgba(212, 175, 55, 0.45);
+  }
+
+  .pm-panel {
+    display: none;
+    margin: 0;
+    padding: 22px 24px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--code-plain);
+  }
+
+  #pm-0:checked ~ .pm-panel-0,
+  #pm-1:checked ~ .pm-panel-1,
+  #pm-2:checked ~ .pm-panel-2 {
+    display: block;
+  }
+
+  .pm-line {
+    white-space: pre;
+  }
+
+  .pm-gap {
+    height: 0.9em;
+  }
+
+  .pm-c {
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  .pm-d {
+    color: var(--gold);
+  }
+
+  .pm-k {
+    color: var(--star);
+  }
+
+  .pm-u {
+    color: var(--code-string);
+  }
+</style>

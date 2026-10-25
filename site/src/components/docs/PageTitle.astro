@@ -1,0 +1,54 @@
+---
+/**
+ * The title of a page, with the section of the sidebar above it.
+ *
+ * A page with the splash template draws its own title, so this component
+ * draws nothing there.
+ */
+import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+
+const route = Astro.locals.starlightRoute;
+const splash = route.entry.data.template === 'splash';
+
+type Entry = StarlightRouteData['sidebar'][number];
+
+function section(entries: Entry[]): string | undefined {
+  for (const entry of entries) {
+    if (entry.type === 'group' && entry.entries.some((child) => child.type === 'link' && child.isCurrent)) {
+      return entry.label;
+    }
+  }
+  return undefined;
+}
+
+const eyebrow = section(route.sidebar);
+---
+
+{
+  !splash && (
+    <>
+      {eyebrow && <p class="docs-eyebrow">{eyebrow}</p>}
+      <h1 id="_top">{route.entry.data.title}</h1>
+    </>
+  )
+}
+
+<style>
+  .docs-eyebrow {
+    margin: 0 0 8px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: clamp(2.25rem, 4vw, 2.875rem);
+    line-height: 1.08;
+    color: var(--heading);
+  }
+</style>

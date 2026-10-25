@@ -1,0 +1,476 @@
+# infer()/InferredExpr/InferredDataFrame/InferredLazyFrame: a function's
+# return type inferred from the union of what its own body computes
+# across branches, instead of the user writing the union by hand.
+#
+# Scope:
+# - A single infer(...) variant narrows the return type directly.
+# - Multiple infer(...) variants (if/elif/try/for/while/with/match)
+#   narrow to their union.
+# - Dead code costs nothing: mypy never fires a hook for unreachable
+#   code, so a dead infer(...) call never contributes a variant.
+# - A variant that doesn't match the declared placeholder's family is a
+#   [wrong-inferred-variant] error -- reported at a call site of the
+#   Inferred*-returning function, not inside its own body: resolution
+#   is call-site-driven, so an entirely uncalled function's own
+#   internal misuse goes unreported, the same way an unused ordinary
+#   generic function's own body is never instantiated against a
+#   concrete type.
+# - One untyped/erased variant collapses the whole function's return
+#   type to the plain, erased type -- an [implicitly-inferred-fallback]
+#   error only when disallow_implicit_inferred_fallback is set.
+# - infer() used outside an Inferred*-returning function is an
+#   [infer-misuse] error, reported immediately, with no call site
+#   needed (there is no enclosing function to call). infer() reachable
+#   but not the return statement's own expression is also
+#   [infer-misuse], but -- like the family check -- only reported at a
+#   call site of the enclosing function.
+# - InferredDataFrame composes with real method chaining: a union of
+#   whole frame schemas is checked per-branch by mypy automatically.
+# - Generic composition works via an explicit TypeVar bound to
+#   pl.Expr/TypedDataFrame/TypedLazyFrame -- no InferredExpr-specific
+#   plugin code needed for this.
+
+- case: infer_single_variant_narrows_directly
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def price_expr() -> InferredExpr:
+        return infer(pl.col("price").cast(pl.Float64))
+
+    reveal_type(price_expr())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('price').cast(pl.Float64)"]]]"
+
+- case: infer_multi_variant_narrows_to_union
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def summary_expr(mode: str) -> InferredExpr:
+        if mode == "count":
+            return infer(pl.col("orders").count())
+        return infer(pl.col("orders").mean())
+
+    reveal_type(summary_expr("count"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('orders').count()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('orders').mean()"]]]"
+
+- case: infer_dead_code_excluded
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def experimental_expr(flag: bool) -> InferredExpr:
+        if flag:
+            return infer(pl.col("a") + pl.col("b"))
+        return infer(pl.col("c").str.to_lowercase())
+        return infer(pl.col("never").cast(pl.Int8))
+
+    reveal_type(experimental_expr(True))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a') + pl.col('b')"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('c').str.to_lowercase()"]]]"
+
+- case: infer_wrong_variant_family_errors
+  main: |
+    from astrolabe import InferredExpr, infer
+
+    def bad_expr(flag: bool) -> InferredExpr:
+        if flag:
+            return infer("not an expr at all")
+        return infer(1)
+
+    bad_expr(True)  # E: infer(...) variant has type "Literal['not an expr at all']?", which is not a valid variant of InferredExpr  [wrong-inferred-variant] # E: infer(...) variant has type "Literal[1]?", which is not a valid variant of InferredExpr  [wrong-inferred-variant]
+
+- case: infer_variant_of_another_family_is_named_by_its_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredDataFrame, InferredExpr, TypedDataFrame, infer
+
+    class Prices(Columns):
+        price: pl.Float64
+
+    def frame() -> InferredDataFrame:
+        return infer(pl.col("price"))
+
+    def expression(df: TypedDataFrame[Prices]) -> InferredExpr:
+        return infer(df.select("price"))
+
+    prices: TypedDataFrame[Prices]
+    frame()  # E: infer(...) variant is an expression, which is not a valid variant of InferredDataFrame  [wrong-inferred-variant]
+    expression(prices)  # E: infer(...) variant is a DataFrame, which is not a valid variant of InferredExpr  [wrong-inferred-variant]
+
+- case: infer_misuse_outside_function
+  main: |
+    from astrolabe import infer
+
+    infer(1)  # E: infer() has no effect here: the enclosing function's return type is not InferredExpr/InferredDataFrame/InferredLazyFrame  [infer-misuse]
+
+- case: infer_misuse_not_directly_returned
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def price_expr() -> InferredExpr:
+        result = infer(pl.col("price"))
+        return result
+
+    price_expr()  # E: infer(...) must be the return statement's own expression  [infer-misuse]
+
+- case: infer_finds_variants_and_misuses_inside_loops_and_with_blocks
+  main: |
+    import contextlib
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def looped(names: list[str], flag: bool, count: int) -> InferredExpr:
+        for name in names:
+            if name == "a":
+                return infer(pl.col("a").abs())
+        else:
+            if flag:
+                return infer(pl.col("b").abs())
+        while count > 0:
+            return infer(pl.col("c").abs())
+        with contextlib.suppress(ValueError):
+            return infer(pl.col("d").abs())
+        return infer(pl.col("e").abs())
+
+    def misplaced(names: list[str]) -> InferredExpr:
+        for name in names:
+            with contextlib.suppress(ValueError):
+                result = infer(pl.col(name))
+        return infer(pl.col("e"))
+
+    reveal_type(looped([], True, 1))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a').abs()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('b').abs()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('c').abs()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('d').abs()"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('e').abs()"]]]"
+    misplaced([])  # E: infer(...) must be the return statement's own expression  [infer-misuse]
+
+- case: infer_dataframe_branching_unions_schemas_with_downstream_chaining
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredDataFrame, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def load(df: Frame, with_totals: bool) -> InferredDataFrame:
+        if with_totals:
+            return infer(df.with_columns((pl.col("a") + pl.col("b")).alias("total")))
+        return infer(df)
+
+    df: Frame
+    result = load(df, True)
+    reveal_type(result)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'total': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), None]"
+    good = result.select(pl.col("total"))  # E: Unknown column "total"  [unknown-column]
+    reveal_type(good)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'total': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'total': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: infer_generic_composition_via_explicit_typevar
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def normalize[ExprT: pl.Expr](e: ExprT, upper: bool) -> InferredExpr:
+        if upper:
+            return infer(e)
+        return infer(e)
+
+    reveal_type(normalize(pl.col("name"), True))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('name')"]]]"
+    reveal_type(normalize(pl.col("age"), False))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('age')"]]]"
+
+- case: infer_misuse_wrong_return_type_on_a_named_function
+  main: |
+    import polars as pl
+    from astrolabe import infer
+
+    def wrong_return() -> pl.Expr:
+        return infer(pl.col("a"))  # E: infer() has no effect here: the enclosing function's return type is not InferredExpr/InferredDataFrame/InferredLazyFrame  [infer-misuse]
+
+- case: infer_called_with_no_argument_still_masks_the_type
+  main: |
+    from astrolabe import InferredExpr, infer
+
+    def price_expr() -> InferredExpr:
+        x = infer()  # E: Missing positional argument "x" in call to "infer"  [call-arg]
+        reveal_type(x)  # N: Revealed type is "astrolabe.declare.InferredExpr"
+        return infer()  # E: Missing positional argument "x" in call to "infer"  [call-arg]
+
+- case: infer_generic_composition_with_omitted_optional_parameter_stays_generic
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def normalize[ExprT: pl.Expr](e: ExprT = pl.col("default"), upper: bool = True) -> InferredExpr:  # E: Incompatible default for parameter "e" (default has type "TypedExpr[Deferred[Literal["pl.col('default')"]]]", parameter has type "ExprT")  [assignment]
+        if upper:
+            return infer(e)
+        return infer(e)
+
+    reveal_type(normalize())  # E: infer(...) variant has type "ExprT", which is not a valid variant of InferredExpr  [wrong-inferred-variant] # N: Revealed type is "Any"
+
+
+- case: infer_open_receiver_unions_the_remainder_edits
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredDataFrame, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    def maybe_flag(
+        df: TypedDataFrame[DfSchema, Rest], flag: bool,
+    ) -> InferredDataFrame:
+        if flag:
+            return infer(df.with_columns(pl.lit(True).alias("flag")))
+        return infer(df)
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(maybe_flag(df, True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'flag': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['flag']]] | astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'a': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+
+- case: infer_open_receiver_call_with_missing_arguments_still_reveals_the_union
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredDataFrame, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    def maybe_flag(
+        df: TypedDataFrame[DfSchema, Rest], flag: bool,
+    ) -> InferredDataFrame:
+        if flag:
+            return infer(df.with_columns(pl.lit(True).alias("flag")))
+        return infer(df)
+
+    reveal_type(maybe_flag())  # E: Missing positional arguments "df", "flag" in call to "maybe_flag"  [call-arg] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'flag': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['flag']]] | astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'a': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+
+- case: infer_return_hook_ignores_an_unannotated_function
+  main: |
+    def helper(x):  # E: Function is missing a type annotation  [no-untyped-def]
+        return x
+
+    helper(1)  # E: Call to untyped function "helper" in typed context  [no-untyped-call]
+
+- case: infer_unions_quadruples_and_carries_a_declared_parameter
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, column, infer
+
+    Price = column("price", pl.Float64)
+
+    def price_expr(currency: str) -> InferredExpr:
+        if currency == "USD":
+            return infer(pl.col("price_usd"))
+        return infer(pl.col("price_eur").cast(pl.Float64))
+
+    def scaled(price: Price, double: bool) -> InferredExpr:
+        if double:
+            return infer(price * 2)
+        return infer(price / 2)
+
+    class Trades(Columns):
+        price: pl.Float64
+        price_usd: pl.Int32
+        price_eur: pl.String
+
+    trades: TypedDataFrame[Trades]
+    reveal_type(price_expr("USD"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('price_usd')"]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('price_eur').cast(pl.Float64)"]]]"
+    reveal_type(scaled(pl.col("price"), True))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0 * 2'], astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64]]] | astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0 / 2'], astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64]]]"
+    reveal_type(trades.select(scaled(pl.col("price"), False)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(trades.select(price_expr("USD")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price_usd': polars.datatypes.classes.Int32}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'price_eur': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_method_with_an_inferred_return_type_types_each_call
+  main: |
+    from typing import TypeVar
+    import polars as pl
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, infer
+
+    ExprT = TypeVar("ExprT", bound=pl.Expr)
+
+    class Maker:
+        def make(self) -> InferredExpr:
+            return infer(pl.col("q").cast(pl.Int32))
+
+        def same(self, e: ExprT) -> InferredExpr:
+            return infer(e)
+
+    class Quantities(Columns):
+        q: pl.Int64
+        a: pl.Int64
+
+    df: TypedDataFrame[Quantities]
+    maker = Maker()
+    # A call on an instance does not list `self`, so the argument binds the
+    # type variable of the next parameter.
+    reveal_type(df.select(maker.make()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(maker.same(pl.col("a").cast(pl.Int8))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int8}, closed=True), None]"
+    # A call on the class lists `self` as its first argument.
+    reveal_type(df.select(Maker.same(maker, pl.col("a").cast(pl.Int16))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int16}, closed=True), None]"
+
+- case: a_function_whose_body_marks_no_value_keeps_its_declared_type
+  main: |
+    from astrolabe import InferredExpr
+
+    # The body marks no value with `infer(...)`, so no variant gives the
+    # call a type, and the call keeps the declared placeholder.
+    def pending() -> InferredExpr:
+        raise NotImplementedError
+
+    reveal_type(pending())  # N: Revealed type is "astrolabe.declare.InferredExpr"
+
+- case: a_call_above_the_body_waits_for_its_variants
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, infer
+
+    class FrameSchema(Columns):
+        q: pl.Int64
+
+    # mypy checks these functions again after the body of later().
+    def early(df: TypedDataFrame[FrameSchema]) -> None:
+        reveal_type(later())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('q')"]]]"
+        reveal_type(df.select(later()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'q': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    class Holder:
+        def method(self) -> None:
+            reveal_type(later())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('q')"]]]"
+
+    def outer() -> None:
+        def inner() -> None:
+            reveal_type(later())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('q')"]]]"
+        inner()
+
+    # A body that calls itself has no variant before its own return.
+    def recursive() -> InferredExpr:
+        reveal_type(recursive())  # N: Revealed type is "astrolabe.declare.InferredExpr"
+        return infer(pl.col("q"))
+
+    # A body that returns no infer(...) gives no variant to wait for.
+    def empty() -> InferredExpr:  # E: Missing return statement  [empty-body]
+        ...
+
+    def uses_empty() -> None:
+        reveal_type(empty())  # N: Revealed type is "astrolabe.declare.InferredExpr"
+
+    # A call at the top of the module has no function that mypy can check again.
+    reveal_type(later())  # N: Revealed type is "astrolabe.declare.InferredExpr" # E: Name "later" is used before definition  [used-before-def]
+
+    def later() -> InferredExpr:
+        return infer(pl.col("q"))
+
+- case: a_call_above_the_body_reports_only_in_the_last_pass
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, infer
+
+    class FrameSchema(Columns):
+        q: pl.Int64
+
+    # The first pass of early() gives the call no type, and reports nothing for it.
+    def early(df: TypedDataFrame[FrameSchema]) -> None:
+        reveal_type(df.select(later()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'q': polars.datatypes.classes.Int64}, closed=True), None]"
+        df.select(pl.col("q").map_elements(lambda v: v))  # E: Column "q" of "map_elements" is Unchecked: a Python function decides the type, and no return_dtype= names it  [implicitly-unchecked] # N: set allow_unproven = "omitted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_elements = "omitted"
+
+    def later() -> InferredExpr:
+        return infer(pl.col("q"))
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: infer_open_receiver_is_written_in_the_callers_terms
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredDataFrame, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+    Mine = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    class Full(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    def maybe_flag(
+        df: TypedDataFrame[DfSchema, Rest],
+        flag: bool,
+    ) -> InferredDataFrame:
+        if flag:
+            return infer(df.with_columns(pl.lit(True).alias("flag")))
+        return infer(df)
+
+    # A closed caller gets closed frames that name its own column "b".
+    full: TypedDataFrame[Full]
+    reveal_type(maybe_flag(full, True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'flag': polars.datatypes.classes.Boolean, 'b': polars.datatypes.classes.String}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+    # An open caller gets its own remainder, not the function's.
+    mine: TypedDataFrame[DfSchema, Mine]
+    reveal_type(maybe_flag(mine, True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'flag': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Minus[main.Mine, Literal['flag']]] | astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'a': polars.datatypes.classes.Int64}, closed=True), main.Mine]"
+
+- case: infer_with_one_closed_and_one_open_frame_is_written_in_the_callers_terms
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredDataFrame, other_columns, TypedDataFrame
+
+    R1 = other_columns()
+    R2 = other_columns()
+    Mine = other_columns()
+
+    class A(Columns):
+        a: pl.Int64
+
+    class B(Columns):
+        b: pl.Int64
+
+    class Full(Columns):
+        a: pl.Int64
+        x: pl.String
+
+    def first(left: TypedDataFrame[A, R1], right: TypedDataFrame[B, R2]) -> InferredDataFrame:
+        return infer(left)
+
+    closed: TypedDataFrame[Full]
+    open_b: TypedDataFrame[B, Mine]
+    reveal_type(first(closed, open_b))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.String}, closed=True), None]"
+
+# A returned code reads each parameter through its declaration. An
+# argument that fits `Float32` can give any type at another data type,
+# so a frame whose column the declaration does not allow is an error.
+# An `Unchecked` column keeps the data types that the declaration allows.
+- case: a_declared_leaf_refuses_a_frame_outside_its_declaration
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, column, infer, typed_agg
+    from astrolabe.frame import Unchecked
+
+    Price = column("price", pl.Float32)
+    Total = typed_agg(Price, gives=pl.Float32, named="price")
+
+    def bumped(price: Price) -> InferredExpr:
+        return infer(price + 1)
+
+    def doubled(total: Total) -> InferredExpr:
+        return infer(total * 2)
+
+    class Wide(Columns):
+        price: pl.Int64
+
+    class Narrow(Columns):
+        price: pl.Float32
+
+    class Loose(Columns):
+        price: Unchecked
+
+    wide: TypedDataFrame[Wide]
+    narrow: TypedDataFrame[Narrow]
+    loose: TypedDataFrame[Loose]
+    reveal_type(narrow.select(bumped(pl.col("price").cast(pl.Float32))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Narrow, {'price': polars.datatypes.classes.Float32}, closed=True), None]"
+    wide.select(bumped(pl.col("price").cast(pl.Float32)))  # E: "price" has no result type at this frame's column types: column "price" is Int64, which the declared type of an argument does not allow  [unsupported-dtype-op]
+    wide.select(doubled(pl.col("price").sum().cast(pl.Float32)))  # E: "price" has no result type at this frame's column types: column "price" is Int64, which the declared type of an argument does not allow  [unsupported-dtype-op]
+    reveal_type(loose.select(bumped(pl.col("price").cast(pl.Float32))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float32}, closed=True), None]"

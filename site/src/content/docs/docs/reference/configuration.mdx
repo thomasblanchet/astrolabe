@@ -1,0 +1,74 @@
+---
+title: Configuration
+description: Every setting of [tool.astrolabe], and the levels of allow_unproven.
+sidebar:
+  order: 7
+---
+
+import LevelScale from '../../../../components/docs/LevelScale.astro';
+
+Every setting lives under `[tool.astrolabe]` in `pyproject.toml`. `astrolabe init` writes each one at its default, with a comment.
+
+| Setting | Default | Effect |
+| -- | -- | -- |
+| `allow_unproven` | `"omitted"` | The level: which results the checker accepts without a proof. |
+| `allow_unproven_overrides` | none | A level for one operation, which wins over the global level. |
+| `report_checker_gaps` | `false` | When true, the checker reports each checker gap at every level. |
+| `disallow_vertical_concat` | `false` | When true, `pl.concat(how="vertical")` is an error. |
+| `elevate_untyped_select` | `true` | When true, `.select()` on a plain frame gives a typed frame with each requested name. |
+| `disallow_implicit_inferred_fallback` | `false` | When true, an inferred return type that falls back to the plain type is an error. |
+| `disallow_implicit_inferred_fallback_overrides` | none | The same setting for one kind: `expr`, `dataframe` or `lazyframe`. |
+
+The plugin warns about a key that names no setting, and about a value that it cannot read. A setting with a value that it cannot read takes its default.
+
+## allow_unproven
+
+Some results have no proof. Each one has a reason, and each reason has a level. A level accepts its own reasons and the reasons of every stricter level on the scale.
+
+<LevelScale />
+
+| Level | It accepts these reasons, and those of the levels above |
+| -- | -- |
+| `never` | Nothing. The checker also reports each checker gap. |
+| `none` | Nothing on the scale. A checker gap passes, unless `report_checker_gaps = true`. |
+| `stated` | A column name is not a literal string. An option of the call is not a literal. An expression is not typed. No schema gives the column types. The data type of a column decides whether a selector picks it, and no type declares it. A Python function decides the type. |
+| `omitted` | A Python function decides the type, and no `return_dtype=` names it. No `dtype=` names the type of a `pl.Series`. A number variable has no fixed width. A data type is not written as a literal. |
+| `possible` | The undeclared columns of the frame can hold the name, or not. The result depends on the undeclared columns that the caller passes. The caller can pass a join key of another form, which changes the join. |
+| `asserted` | The undeclared columns of the caller do not prove the requirement. An argument is not typed, so its columns and types are unknown. The call is checked as declared, and the declared type is taken on trust. |
+
+The default is `omitted`. At this level, the checker accepts the reasons of `stated` and `omitted`, and reports the reasons of `possible` and `asserted`.
+
+A checker gap is a case that the plugin does not model. The code has nothing to fix there, so a gap passes at every level except `never`.
+
+## allow_unproven_overrides
+
+A sub-table sets the level of one operation. The keys are operation names:
+
+```toml title="pyproject.toml"
+[tool.astrolabe]
+allow_unproven = "none"
+
+[tool.astrolabe.allow_unproven_overrides]
+map_elements = "omitted"
+select = "possible"
+```
+
+The keys are `agg`, `concat`, `corr`, `drop`, `explode`, `fill_nan`, `fill_null`, `filter`, `fit`, `from_dict`, `from_dicts`, `from_numpy`, `from_records`, `get_column`, `group_by`, `group_by_dynamic`, `hstack`, `join`, `join_asof`, `join_where`, `map_batches`, `map_columns`, `map_elements`, `melt`, `pivot`, `read_csv`, `read_json`, `read_ndjson`, `read_parquet`, `remove`, `rename`, `rolling`, `rolling_map`, `scan_csv`, `scan_ndjson`, `scan_parquet`, `select`, `Series`, `unnest`, `unpivot`, `update`, `with_columns` and `with_row_index`.
+
+The key `fit` covers each call to a function with a declared parameter. The key `get_column` also covers `df["a"]`.
+
+## report_checker_gaps
+
+When true, the checker reports each checker gap at every level. Use it to find the places where the plugin gives up for a reason that the code cannot fix.
+
+## disallow_vertical_concat
+
+A vertical concat stacks frames by the position of their columns. A type does not hold the order of the columns, so the checker never types the result: it gives the plain frame. When true, each vertical concat is an error, both `"vertical"` and `"vertical_relaxed"`.
+
+## elevate_untyped_select
+
+When true, `.select()` on a plain, never typed frame gives a typed frame with each requested name. A column takes the data type of its `.cast(...)`, or `Unchecked`. See [Loading data](../../guides/loading/).
+
+## disallow_implicit_inferred_fallback
+
+If one value that a function marks with `infer(...)` is a plain type, the whole return type of the function is the plain type. By default, that happens with no error. When true, it is an error. The sub-table `[tool.astrolabe.disallow_implicit_inferred_fallback_overrides]` takes a boolean for each kind: `expr`, `dataframe` and `lazyframe`.

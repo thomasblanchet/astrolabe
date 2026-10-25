@@ -1,0 +1,82 @@
+---
+/**
+ * The hero: what Astrolabe does, in one headline and one paragraph.
+ *
+ * The right column stays empty, because the figures of the sky fill it.
+ */
+import { MYPY, POLARS, PYTHON } from '../../lib/versions';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<header id="top" class="hero">
+  <div class="copy">
+    <p class="eyebrow">static type checking for Polars</p>
+    <h1>Catch Polars bugs before your code runs.</h1>
+    <p class="lead">
+      Astrolabe tells mypy, the Python type checker, how to track the contents of your Polars dataframes. A missing column or a
+      wrong data type becomes a type error in your editor, not a runtime failure.
+    </p>
+    <div class="actions">
+      <a class="button primary" href={`${base}docs/`}>Read the documentation</a>
+      <a class="button secondary" href="#install">Install</a>
+    </div>
+    <p class="requires">Python {PYTHON}+ · mypy {MYPY}+ · Polars {POLARS}</p>
+  </div>
+  <div class="space" aria-hidden="true"></div>
+</header>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 48px;
+    align-items: center;
+    padding: 64px 0 88px;
+  }
+
+  .copy {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 64px;
+    line-height: 1.05;
+    color: var(--star);
+  }
+
+  .lead {
+    margin: 0;
+    max-width: 34rem;
+    font-size: 19px;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 12px;
+  }
+
+  .requires {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .space {
+    min-height: 380px;
+  }
+
+  @media (max-width: 700px) {
+    .space {
+      display: none;
+    }
+  }
+</style>

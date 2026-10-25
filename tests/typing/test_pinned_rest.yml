@@ -1,0 +1,234 @@
+# Cases that pin rules that no other case reached. Each case names the
+# rule that it pins. A comment above each check states the rule.
+
+- case: declaration_same_and_some_column_need_their_argument
+  main: |
+    import polars as pl
+    from astrolabe import column, same, some_column, typed_agg, typed_expr
+
+    A = column("a", pl.Int64)
+    B = column("b", pl.Int64)
+    # same(name) reads its name from the first argument.
+    Named = typed_expr(A, B, gives=same("a"), named="out")
+    # same() with no name is not an outcome.
+    NoName = typed_expr(A, B, gives=same(), named="out")  # E: Malformed declaration: gives= must be a data type, same, same(name) or wrap(...)  [malformed-declaration] # E: Missing positional argument "read" in call to "__call__" of "SameOutcome"  [call-arg]
+    # some_column(region) reads its region from the first argument.
+    Counted = typed_agg(some_column(pl.String), gives=pl.UInt32)
+    # some_column() with no region is not a read.
+    Blank = typed_expr(some_column(), gives=pl.Boolean)  # E: Malformed declaration: a read is column(name, region), some_column(region), a declared column, a Columns class, column_of(...) or subset_of(...)  [malformed-declaration] # E: Missing positional argument "region" in call to "some_column"  [call-arg]
+
+- case: declaration_rows_must_read_the_same_columns
+  main: |
+    import polars as pl
+    from astrolabe import column, row, typed_expr
+
+    # The second row must read the same columns as the first row.
+    Rows = typed_expr(  # E: Malformed declaration: the rows read different columns. Give every row the same reads  [malformed-declaration]
+        row(column("q", pl.Int64), gives=pl.Int64),
+        row(column("r", pl.Float64), gives=pl.Float64),
+    )
+
+- case: declaration_alias_to_another_type_is_not_a_read
+  main: |
+    import polars as pl
+    from astrolabe import typed_expr
+
+    Alias = list[int]
+    # A name that is an alias for a type other than a declared column is not a read.
+    NotAColumn = typed_expr(Alias, gives=pl.Boolean, named="z")  # E: Malformed declaration: a read is column(name, region), some_column(region), a declared column, a Columns class, column_of(...) or subset_of(...)  [malformed-declaration]
+
+- case: selection_declaration_refuses_a_bad_region_and_a_bad_selector
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import row, same, typed_selection
+
+    # A set region with an item that is not a data type is not a region.
+    Mixed = typed_selection(cs.numeric(), row({pl.Int64, 1}, gives=same))  # E: Malformed declaration: a selection's row takes a region, never Unchecked  [malformed-declaration]
+    # A declaration reads a selector as polars builds it, so the operator ^ and
+    # a selector by family with arguments are selectors.
+    Xor = typed_selection(cs.numeric() ^ cs.string(), gives=same)
+    Narrow = typed_selection(cs.datetime("us"), gives=same)
+    # A selector reads a list of names, and a list of data types.
+    Listed = typed_selection(cs.by_name(["a", "b"]), gives=same)
+    Typed = typed_selection(cs.by_dtype([pl.Int64, pl.String]), gives=same)
+    # A Python type is no data type of a declaration.
+    Foreign = typed_selection(cs.by_dtype([int]), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+    # A selector by position is not a rule of names and data types.
+    First = typed_selection(cs.first(), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+    # A selector by name needs string literals.
+    NoLiteral = typed_selection(cs.by_name(3), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration] # E: Argument 1 to "by_name" has incompatible type "int"; expected "str | Collection[str]"  [arg-type]
+
+- case: declaration_reads_a_data_type_with_parameters_as_its_kind
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, column, column_of, same, typed_agg, typed_expr, wrap
+
+    class Stamps(Columns):
+        t: Datetime[Literal["us"], None]
+
+    T = typed_expr(column_of(Stamps, "t"), gives=same)
+    W = typed_agg(column("q", pl.Int64), gives=wrap(pl.Array(pl.Int64, 2), same))
+    R = typed_expr(column("t", pl.Datetime("us")), gives=same)
+
+    def f(t: T, w: W, r: R) -> None:
+        # A schema column with parameters gives a read at its kind.
+        reveal_type(t)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['t'], polars.datatypes.classes.Datetime]"
+        # The constructor of wrap is read as its kind.
+        reveal_type(w)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['q'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['q'], astrolabe.expr.Wrap[polars.datatypes.classes.Array, astrolabe.expr.Same[Literal['q']]]]]"
+        # A region with parameters is read as its kind.
+        reveal_type(r)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['t'], polars.datatypes.classes.Datetime]"
+
+- case: columns_call_waits_for_an_unresolved_key
+  main: |
+    import polars as pl
+    from astrolabe import columns
+
+    # A key that is a name that does not resolve gives only the error of mypy.
+    Bad = columns("Bad", {undefined_name: pl.Int64})  # E: Name "undefined_name" is not defined  [name-defined]
+
+- case: columns_call_builds_a_closed_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, columns
+
+    Small = columns("Small", {"id": pl.Int64})
+
+    class Big(Columns):
+        id: pl.Int64
+        extra: pl.Int64
+
+    # A closed schema class does not accept a class with more columns.
+    def widen(b: Big) -> Small:
+        return b  # E: Incompatible return value type (got "Big", expected "Small")  [return-value]
+
+    def read(s: Small) -> None:
+        # The schema class is closed.
+        reveal_type(s)  # N: Revealed type is "TypedDict(main.Small, {'id': polars.datatypes.classes.Int64}, closed=True)"
+        # A closed schema class holds no key that it does not declare.
+        reveal_type(s.get("extra"))  # N: Revealed type is "None"
+
+- case: series_round_and_cast_check_the_data_type
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Decimal, List, Struct, TypedDataFrame, TypedSeries
+
+    class S(Columns):
+        a: pl.Int64
+
+    def f(
+        u: TypedSeries[Literal["u"], pl.Int64 | pl.String],
+        d: TypedSeries[Literal["d"], Decimal[Literal[10], Literal[2]]],
+        s: TypedSeries[Literal["s"], Struct[Column[Literal["x"], List[pl.Int64]]]],
+        t: TypedSeries[Literal["t"], Struct[Column[Literal["x"], pl.Int32]]],
+        n: TypedSeries[str, pl.Int64],
+        df: TypedDataFrame[S],
+    ) -> None:
+        # A union of data types can hold String, so round() can fail.
+        reveal_type(u.round())  # E: This Series is not numeric or Decimal, cannot .round()  [wrong-column-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['u'], astrolabe.frame.Unchecked]"
+        # round() keeps a Decimal series.
+        reveal_type(d.round(1))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['d'], astrolabe.frame.Decimal[Literal[10], Literal[2]]]"
+        # A struct cannot cast to Int64 if one field is a list.
+        reveal_type(s.cast(pl.Int64))  # E: This Series cannot cast from Struct({'x': List(Int64)}) to Int64  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['s'], astrolabe.frame.Unchecked]"
+        # A cast of a struct to a scalar casts each field.
+        reveal_type(t.cast(pl.Int64))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['t'], astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], polars.datatypes.classes.Int64]]]]"
+        # A series with no literal name gives the plain frame.
+        reveal_type(df.hstack([n]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: group_by_shorthand_on_a_small_and_an_open_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class One(Columns):
+        a: pl.Int64
+
+    class Two(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    Rest = other_columns()
+
+    one: TypedDataFrame[One]
+    # len() adds a UInt32 column, also when the key is the only column.
+    reveal_type(one.group_by("a").len())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'len': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+    def o(df: TypedDataFrame[Two, Rest]) -> None:
+        # sum() fails on a String column that the remainder can hold.
+        reveal_type(df.group_by("a").sum())  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_and_full_join_with_a_type_variable
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Ids[T: pl.DataType](Columns):
+        id: pl.Int64
+        v: T
+
+    class Keys[T: pl.DataType](Columns):
+        id: T
+
+    class Loose(Columns):
+        id: Unchecked
+
+    def f[T: pl.DataType](a: TypedDataFrame[Ids[T]], b: TypedDataFrame[Ids[pl.Int64]]) -> None:
+        # update() cannot merge a type variable with a known data type.
+        reveal_type(a.update(b, on="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'v': astrolabe.frame.Unchecked}, closed=True), None]"
+
+    def g[T: pl.DataType](left: TypedDataFrame[Keys[T]], right: TypedDataFrame[Loose]) -> None:
+        # A full join keeps the type variable of a key beside an Unchecked key.
+        reveal_type(right.join(left, on="id", how="full", coalesce=True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': T}, closed=True), None]"
+
+- case: inferred_return_reads_every_block_and_only_returned_calls
+  main: |
+    import polars as pl
+    from astrolabe import Columns, InferredDataFrame, TypedDataFrame, infer
+
+    class S(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    def tried(df: TypedDataFrame[S]) -> InferredDataFrame:
+        try:
+            return infer(df.select("a"))
+        except ValueError:
+            return infer(df.select("b"))
+
+    def matched(df: TypedDataFrame[S], mode: str) -> InferredDataFrame:
+        match mode:
+            case "a":
+                return infer(df.select("a"))
+            case _:
+                return infer(df.select("b"))
+
+    def misplaced(df: TypedDataFrame[S]) -> InferredDataFrame:
+        kept = infer(df.select("b"))
+        return infer(df.select("a"))
+
+    def unreachable(df: TypedDataFrame[S]) -> InferredDataFrame:
+        if False:
+            kept = infer(df.select("b"))
+        return infer(df.select("a"))
+
+    def plain(df: pl.DataFrame) -> InferredDataFrame:
+        return infer(df)
+
+    def wrong(df: TypedDataFrame[S]) -> InferredDataFrame:
+        return infer(1)
+
+    df: TypedDataFrame[S]
+    # A return in an except block is a variant.
+    reveal_type(tried(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    # A return in a case block is a variant.
+    reveal_type(matched(df, "a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    # A call that is not returned is an error, and it is not a variant.
+    reveal_type(misplaced(df))  # E: infer(...) must be the return statement's own expression  [infer-misuse] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A call in code that cannot run is not an error.
+    reveal_type(unreachable(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    # By default, a plain variant gives the plain frame with no error.
+    reveal_type(plain(pl.DataFrame()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The error for a wrong variant names the placeholder class.
+    reveal_type(wrong(df))  # E: infer(...) variant has type "Literal[1]?", which is not a valid variant of InferredDataFrame  [wrong-inferred-variant] # N: Revealed type is "Any"

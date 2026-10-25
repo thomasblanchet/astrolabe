@@ -1,0 +1,312 @@
+- case: pinned_unnest_splices_the_fields_in_place
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class Nested(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["baz"], pl.String], Column[Literal["qux"], pl.Int64]]
+        tail: pl.Int64
+
+    df: TypedDataFrame[Nested]
+    # The fields of the struct take the place of the struct column.
+    reveal_type(df.unnest("bar"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'baz': polars.datatypes.classes.String, 'qux': polars.datatypes.classes.Int64, 'tail': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A separator puts the struct name before each field name.
+    reveal_type(df.unnest("bar", separator="_"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'bar_baz': polars.datatypes.classes.String, 'bar_qux': polars.datatypes.classes.Int64, 'tail': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: pinned_unnest_of_a_missing_column_is_an_error
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class Nested(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    df: TypedDataFrame[Nested]
+    # A name that the frame does not hold is an error, and the result is the plain frame.
+    reveal_type(df.unnest("missing"))  # E: Unknown column "missing"  [unknown-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pinned_unnest_of_a_dynamic_name_gives_the_plain_frame
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class Nested(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    df: TypedDataFrame[Nested]
+    name: str = "bar"
+    # A name that is not a literal gives the plain frame.
+    reveal_type(df.unnest(name))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pinned_explode_with_no_column_is_an_error
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Listed(Columns):
+        k: pl.Int64
+        vals: pl.List
+
+    df: TypedDataFrame[Listed]
+    # An explode with no column always fails, and the result is the plain frame.
+    reveal_type(df.explode([]))  # E: explode() with no columns to explode always raises  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pinned_infer_in_a_variable_is_misuse
+  main: |
+    import polars as pl
+    from astrolabe import InferredDataFrame, infer
+
+    def load() -> InferredDataFrame:
+        frame = infer(pl.DataFrame({"a": [1]}))
+        return frame
+
+    # An infer call must be the whole expression of a return statement.
+    load()  # E: infer(...) must be the return statement's own expression  [infer-misuse]
+
+- case: pinned_a_blank_binds_into_a_constant_return
+  main: |
+    import polars as pl
+    from polars.datatypes.classes import FloatType
+    from astrolabe import Columns, TypedDataFrame, some_column, same, typed_expr
+
+    Standardised = typed_expr(some_column(FloatType), gives=same)
+    AsFloat64 = typed_expr(some_column(FloatType), gives=pl.Float64)
+
+    def to64(e: Standardised) -> AsFloat64:
+        return e.cast(pl.Float64)
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float32
+
+    trades: TypedDataFrame[Trades]
+    # The call binds the blank read to the name of the argument, and the declared data type stays.
+    reveal_type(to64(pl.col("price")))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['price'], polars.datatypes.classes.FloatType]], astrolabe.frame.Column[Literal['price'], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.Float64, astrolabe.expr.Same[Literal['price']]], astrolabe.expr.Row[polars.datatypes.classes.Float16 | polars.datatypes.classes.Float32, polars.datatypes.classes.Float64]]]]"
+    reveal_type(trades.select(to64(pl.col("price"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: pinned_a_failed_fit_binds_no_blank
+  main: |
+    import polars as pl
+    from polars.datatypes.classes import FloatType
+    from astrolabe import some_column, same, typed_expr
+
+    Standardised = typed_expr(some_column(FloatType), gives=same)
+
+    def zscore(e: Standardised) -> Standardised:
+        return (e - e.mean()) / e.std()
+
+    # An argument that does not fit binds no name, so the result keeps the blank.
+    reveal_type(zscore(pl.col("price").sum()))  # E: Argument "e" does not match its declared type: it combines rows into one value, but the declared type works row by row  [expression-fit] # N: Revealed type is "astrolabe.expr.TypedColumn[astrolabe.expr.Blank, polars.datatypes.classes.FloatType]"
+
+- case: pinned_series_cast_with_no_dtype_keeps_the_series
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import TypedSeries
+
+    s: TypedSeries[Literal["a"], pl.Int64]
+    # A cast with no data type is an error, and the result keeps the type of the series.
+    reveal_type(s.cast())  # E: Missing positional argument "dtype" in call to "cast" of "Series"  [call-arg] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], polars.datatypes.classes.Int64]"
+
+- case: pinned_rename_of_a_missing_name_gives_the_plain_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class S(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    df: TypedDataFrame[S]
+    # An old name that the frame does not hold is an error, and the result is the plain frame.
+    reveal_type(df.rename({"missing": "x"}))  # E: Unknown column "missing"  [unknown-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The check reads each old name, and not only the first one.
+    df.rename({"a": "x", "missing": "y"})  # E: Unknown column "missing"  [unknown-column]
+    # Two columns with one final name are an error, and the result is the plain frame.
+    reveal_type(df.rename({"a": "b"}))  # E: Rename would produce duplicate column "b"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pinned_rename_on_an_open_frame_to_a_new_name_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class S(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Rest = other_columns()
+    op: TypedDataFrame[S, Rest]
+    # The remainder can hold a new name, so the rename can clash, and the result is the plain frame.
+    reveal_type(op.rename({"a": "x"}))  # E: Rename would produce duplicate column "x"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A swap of two declared names cannot clash with the remainder.
+    reveal_type(op.rename({"a": "b", "b": "a"}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: pinned_unpivot_value_dtype_folds_every_on_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class S(Columns):
+        id: pl.Int64
+        a: pl.Int32
+        b: pl.Int64
+        d: pl.Date
+
+    class One(Columns):
+        id: pl.Int64
+
+    df: TypedDataFrame[S]
+    one: TypedDataFrame[One]
+    # The value column takes the supertype of all the on columns.
+    reveal_type(df.unpivot(on=["a", "b"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': polars.datatypes.classes.Int64}, closed=True), None]"
+    # One on column gives its own data type to the value column.
+    reveal_type(df.unpivot(on=["d"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': polars.datatypes.classes.Date}, closed=True), None]"
+    # A pair that the promotion rule does not model gives Unchecked to the value column.
+    reveal_type(df.unpivot(on=["a", "d"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': astrolabe.frame.Unchecked}, closed=True), None]"
+    # An empty on gives the value column the data type Null.
+    reveal_type(one.unpivot(on=[], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': polars.datatypes.classes.Null}, closed=True), None]"
+
+- case: pinned_unpivot_of_a_generic_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Gen[T: pl.DataType](Columns):
+        id: pl.Int64
+        v: T
+        w: pl.Int64
+
+    def f[T: pl.DataType](g: TypedDataFrame[Gen[T]]) -> None:
+        # One on column of a type variable keeps the type variable.
+        reveal_type(g.unpivot(on=["v"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': T}, closed=True), None]"
+        # A type variable and a data type give Unchecked to the value column.
+        reveal_type(g.unpivot(on=["v", "w"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': astrolabe.frame.Unchecked}, closed=True), None]"
+        reveal_type(g.unpivot(on=["w", "v"], index="id"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'variable': polars.datatypes.classes.String, 'value': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: pinned_fit_within_holds_for_equal_name_sets
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, Suffixed, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns()
+    R = other_columns(within=L)
+
+    def compare(
+        current: TypedDataFrame[Keys, L], previous: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, Suffixed[R, Literal["_prev"]]]]:
+        raise NotImplementedError
+
+    class Wide(Columns):
+        k: pl.Int64
+        price: pl.Float64
+        qty: pl.Int64
+
+    wide: TypedDataFrame[Wide]
+    # A set of names is within an equal set of names.
+    reveal_type(compare(wide, wide))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'price': polars.datatypes.classes.Float64, 'price_prev': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64, 'qty_prev': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    Foreign = other_columns()
+    foreign: TypedDataFrame[Keys, Foreign]
+    # A cover that an open argument binds cannot prove a within promise.
+    compare(foreign, wide)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+    def inner(current: TypedDataFrame[Keys, L], previous: TypedDataFrame[Keys, R]) -> None:
+        # An argument bound to its own declaration keeps the within promise of that declaration.
+        reveal_type(compare(current, previous))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.L, astrolabe.remainder.Suffixed[main.R, Literal['_prev']]]]"
+
+- case: pinned_fit_names_the_declaration_by_its_short_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        price: pl.Float64
+
+    class WithSector(Columns):
+        price: pl.Float64
+        sector: pl.String
+
+    NoSector = other_columns(without=["sector"])
+
+    def add_sector(df: TypedDataFrame[Trades, NoSector]) -> None: ...
+
+    bad: TypedDataFrame[WithSector]
+    # The message names the remainder by its short name.
+    add_sector(bad)  # E: Remainder "NoSector" must not contain column "sector"  [forbidden-column]
+
+- case: pinned_fit_keeps_a_residual_column_of_a_type_variable
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        price: pl.Float64
+
+    class TradesN(Columns):
+        price: pl.Float64
+        notional: pl.Float64
+
+    Anything = other_columns()
+
+    def add_notional(
+        df: TypedDataFrame[Trades, Anything],
+    ) -> TypedDataFrame[TradesN, Minus[Anything, Literal["notional"]]]:
+        raise NotImplementedError
+
+    class Blot[T: pl.DataType](Columns):
+        price: pl.Float64
+        x: T
+
+    def outer[T: pl.DataType](df: TypedDataFrame[Blot[T]]) -> None:
+        # A leftover column keeps its own data type, a type variable included.
+        reveal_type(add_notional(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'notional': polars.datatypes.classes.Float64, 'x': T}, closed=True), None]"
+
+- case: pinned_join_asof_on_key_takes_the_known_dtype_of_the_right_key
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class L(Columns):
+        t: Unchecked
+        v: pl.Float64
+
+    class R(Columns):
+        t: pl.Int64
+        w: pl.Float64
+
+    left: TypedDataFrame[L]
+    right: TypedDataFrame[R]
+    # A left on key of data type Unchecked takes the known data type of the right on key.
+    reveal_type(left.join_asof(right, on="t").select("t", "v", "w"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Float64, 'w': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: pinned_join_asof_by_key_takes_the_known_dtype_of_the_right_key
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class L(Columns):
+        t: pl.Int64
+        g: Unchecked
+        v: pl.Float64
+
+    class R(Columns):
+        t: pl.Int64
+        grp: pl.String
+        w: pl.Float64
+
+    left: TypedDataFrame[L]
+    right: TypedDataFrame[R]
+    # A left by key of data type Unchecked takes the known data type of the right by key.
+    reveal_type(left.join_asof(right, on="t", by_left="g", by_right="grp"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': polars.datatypes.classes.Int64, 'g': polars.datatypes.classes.String, 'v': polars.datatypes.classes.Float64, 'w': polars.datatypes.classes.Float64}, closed=True), None]"

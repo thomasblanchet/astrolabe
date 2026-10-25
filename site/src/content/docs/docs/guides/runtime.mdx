@@ -1,0 +1,36 @@
+---
+title: Runtime checks
+description: Bind a frame from outside the program to a schema, with a check, a cast, or no check.
+sidebar:
+  order: 11
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+`TypedDataFrame` and `TypedLazyFrame` are `pl.DataFrame` and `pl.LazyFrame` at run time. A typed frame costs nothing, and the checker does not look at the data. For data that comes from outside the program, bind the frame to its schema once, at the boundary.
+
+## Three functions
+
+Each function takes a frame and a frame type, and gives the frame with that type. For mypy, each call is a `typing.cast` to the frame type:
+
+<Example name="runtime_check" />
+
+| Function | At run time |
+| -- | -- |
+| `check_schema(df, Frame)` | Checks that the frame has exactly the declared columns, with their data types. It casts nothing, and it keeps the order of the columns. |
+| `force_schema(df, Frame)` | Keeps only the declared columns, in their declared order, and casts each one to its declared data type. With `strict=False`, a value that Polars cannot cast becomes null. |
+| `assume_schema(df, Frame)` | Checks nothing. |
+
+`check_schema` raises if a column is missing, if a column has another data type, or if the frame has a column that the type does not declare. A column declared `Unchecked` must be present, and its data type is not checked.
+
+## A closed frame type
+
+Each function needs a closed frame type: a schema class, and no remainder. The undeclared columns of an open frame have no data type to check or to cast, so an open frame type is an error:
+
+<Example name="err_frame_type_not_closed" />
+
+A frame type with no schema class, as `TypedDataFrame[Rest]`, is the same error.
+
+## Read the schema at run time
+
+`.schema` on a typed frame is the `Schema` of Polars. Each declaration is an ordinary value at run time, so `column("price", pl.Float64)` can be inspected.

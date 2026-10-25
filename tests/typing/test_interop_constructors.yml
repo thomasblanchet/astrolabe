@@ -1,0 +1,122 @@
+# Tier 10 item 5: interop/construction functions
+# (`from_pandas`/`from_arrow`/`from_numpy`/`from_dict`/`from_dicts`/
+# `from_records`/`from_repr`) -- the standard way to build a `DataFrame`
+# from in-memory, non-file Python data. `from_numpy`/`from_dict`/
+# `from_dicts`/`from_records` each accept a `schema=` parameter of the
+# exact same shape `SchemaArgFrameHook` already parses (a
+# `SchemaDict`/`SchemaDefinition` dict literal, or a `.schema` alias
+# access), confirmed via `inspect.signature`, so each is exactly one
+# more registration, not a new hook -- the same pattern Tier 7 already
+# used for `read_parquet`/`read_json`/etc.
+#
+# `from_pandas`/`from_arrow`/`from_repr` are deliberately excluded: each
+# can return a plain `Series` instead of a `DataFrame` depending on its
+# own input's shape, confirmed via their own real return type
+# (`DataFrame | Series`), so narrowing unconditionally to
+# `TypedDataFrame` would be unsound for them.
+#
+# `from_dict`'s own `data` dict literal is a second, independent source
+# of column names: when `data` is a dict literal with string-literal
+# keys, this hook mints a fresh frame from those keys even when
+# `schema=` is absent or unreadable, substituting `Unchecked` for every
+# dtype. `schema=` only overrides dtypes/order; it does not change which
+# columns the call produces, so an unreadable `schema=` does not need to
+# erase a `data` literal's already-known names.
+
+- case: from_dict_with_schema_dict_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_dict({"a": [1, 2]}, schema={"a": pl.Int64})
+
+- case: from_dicts_with_schema_dict_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_dicts([{"a": 1}], schema={"a": pl.Int64})
+
+- case: from_records_with_schema_dict_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_records([[1, 2]], schema={"a": pl.Int64})
+
+- case: from_numpy_with_schema_dict_literal_narrows
+  main: |
+    from typing import Any, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    data: Any
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_numpy(data, schema={"a": pl.Int64, "b": pl.Int64})
+
+- case: from_dict_with_schema_alias_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    narrowed: Frame = pl.from_dict({"a": [1, 2]}, schema=Frame.schema)
+
+- case: from_dict_with_no_schema_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class NarrowedSchema(Columns):
+        a: Unchecked
+        b: Unchecked
+
+    # data's own dict literal keys are string literals: the column
+    # names are known outright even with no schema= given, so this
+    # mints a fresh frame instead of erasing to plain pl.DataFrame.
+    # Each dtype substitutes Unchecked: inferring one from the value
+    # list's own element type would need polars' own inference rules,
+    # not attempted here.
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_dict({"a": [1, 2], "b": ["x", "y"]})
+
+- case: from_dict_with_non_literal_data_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+
+    key_name: str = "a"
+    reveal_type(pl.from_dict({key_name: [1, 2]}))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: from_dict_with_non_literal_schema_still_narrows_from_data_literal
+  main: |
+    from typing import Any, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    # schema= itself is unreadable, but data's own dict literal keys
+    # are still known: schema= only overrides dtypes/order, it does not
+    # change which columns a call like this one produces, so this still
+    # mints a fresh frame with every dtype substituting Unchecked,
+    # instead of erasing to plain pl.DataFrame.
+    schema: Any
+
+    class NarrowedSchema(Columns):
+        a: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.from_dict({"a": [1, 2]}, schema=schema)

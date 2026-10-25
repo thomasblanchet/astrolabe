@@ -1,0 +1,1089 @@
+# Selections: an expression rooted in a selector. Its type is its code,
+# as for any expression. A site materializes a selection as the frame
+# effects: on the schema, the picked columns evaluated at their own
+# types and renamed by the affix, and on the remainder, `Only`, then
+# `Retyped` kind by kind, then the affix. Every expected frame is
+# confirmed against real polars.
+
+- case: selector_roots_and_their_algebra
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    reveal_type(cs.numeric())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.numeric()']]]"
+    reveal_type(cs.string())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.string()']]]"
+    reveal_type(cs.by_name("a", "b"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_name('a', 'b')"]]]"
+    reveal_type(pl.col("a", "b"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a', 'b')"]]]"
+    reveal_type(pl.col(["a", "b"]))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col(['a', 'b'])"]]]"
+    reveal_type(pl.all())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['pl.all()']]]"
+    reveal_type(~cs.numeric())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['~cs.numeric()']]]"
+    reveal_type(cs.numeric() | cs.string())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.numeric() | cs.string()']]]"
+    reveal_type(cs.numeric() & ~cs.by_name("n"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.numeric() & ~cs.by_name('n')"]]]"
+    reveal_type(cs.numeric() - cs.by_name("n"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.numeric() - cs.by_name('n')"]]]"
+    reveal_type(cs.starts_with("a", "b"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.starts_with('a', 'b')"]]]"
+    reveal_type(cs.first())  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal['cs.first()']]]"
+    reveal_type(cs.datetime("ms"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.datetime('ms')"]]]"
+    some_name: str
+    reveal_type(cs.by_name(some_name))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.by_name(hole('str'))"]]]"
+    reveal_type(pl.col("a", some_name))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('a', hole('str'))"]]]"
+
+- case: members_compose_onto_the_matched_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    reveal_type(cs.numeric().round(2))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.numeric().round(2)']]]"
+    reveal_type(cs.numeric().sum())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.numeric().sum()']]]"
+    reveal_type(cs.numeric() * 2)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.numeric() * 2']]]"
+    reveal_type(-cs.numeric())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['-cs.numeric()']]]"
+    reveal_type(cs.string().str.len_chars())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.string().str.len_chars()']]]"
+    reveal_type(cs.numeric().cast(pl.String))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['cs.numeric().cast(pl.String)']]]"
+    reveal_type(cs.numeric().name.suffix("_r"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["cs.numeric().name.suffix('_r')"]]]"
+    reveal_type(cs.numeric().name.prefix("p_").name.suffix("_s"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["cs.numeric().name.prefix('p_').name.suffix('_s')"]]]"
+
+- case: an_alias_over_a_selection_of_several_columns_is_refused
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        A: pl.Int64
+        B: pl.Float64
+
+    df: TypedDataFrame[FrameSchema]
+    # A rename of each name keeps the names apart.
+    reveal_type(df.select(cs.numeric().name.to_lowercase()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float64}, closed=True), None]"
+    # An alias gives each picked column the same name, which polars refuses.
+    df.select(cs.numeric().alias("z"))  # E: A selection has several outputs, which .alias() cannot rename: use .name.suffix() or .name.prefix()  [selection-rename]
+    df.select(cs.numeric().round(2).alias("z"))  # E: A selection has several outputs, which .alias() cannot rename: use .name.suffix() or .name.prefix()  [selection-rename]
+    # A keyword names the output as an alias does.
+    reveal_type(df.select(z=cs.numeric()))  # E: A selection has several outputs, which .alias() cannot rename: use .name.suffix() or .name.prefix()  [selection-rename] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'z': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A keyword or an alias over a selection that picks nothing gives no column.
+    reveal_type(df.select(z=cs.string()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+    reveal_type(df.select(cs.string().alias("z")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+
+- case: one_name_for_every_output_depends_on_the_remainder
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+
+    Rest = other_columns()
+    Numbers = other_columns(none_of={pl.String})
+
+    def run(opened: TypedDataFrame[Quotes, Rest], fenced: TypedDataFrame[Quotes, Numbers]) -> None:
+        # The remainder can hold a String column, which takes the same name.
+        reveal_type(opened.select(cs.string().alias("o")))  # E: The result of "select" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(opened.select(o=cs.string()))  # E: The result of "select" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(opened.select(pl.col("symbol") + cs.string()))  # E: The result of "select" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        # The remainder holds no String column, so the declared column is the one output.
+        reveal_type(fenced.select(cs.string().alias("o")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': polars.datatypes.classes.String}, closed=True), None]"
+        reveal_type(fenced.select(o=cs.string()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': polars.datatypes.classes.String}, closed=True), None]"
+        reveal_type(fenced.select(pl.col("symbol") + cs.string()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String}, closed=True), None]"
+
+# Polars refuses a zoned value beside a naive `Datetime` column and runs
+# beside a zoned one. A remainder that can hold either makes the result
+# depend on the caller. A remainder of zoned columns only proves the call.
+- case: a_kind_that_runs_at_some_of_its_data_types_depends_on_the_remainder
+  main: |
+    from datetime import UTC, datetime
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+    Zoned = other_columns(all_of=pl.Datetime("us", "UTC"))
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def run(opened: TypedDataFrame[Keys, Rest], zoned: TypedDataFrame[Keys, Zoned]) -> None:
+        reveal_type(opened.select(cs.datetime() > datetime(2020, 1, 1, tzinfo=UTC)))  # E: The result of "select" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(opened.with_columns(cs.datetime().fill_null(datetime(2020, 1, 1, tzinfo=UTC))))  # E: The result of "with_columns" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(zoned.select(cs.datetime() > datetime(2020, 1, 1, tzinfo=UTC)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Zoned, astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['ms'], astrolabe.frame.AnyZone] | astrolabe.frame.Datetime[Literal['ns'], astrolabe.frame.AnyZone] | astrolabe.frame.Datetime[Literal['us'], astrolabe.frame.AnyZone]]], polars.datatypes.classes.Boolean]]"
+
+- case: a_rewrite_of_whole_names_is_refused_over_a_remainder
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        bid: pl.Float64
+
+    Rest = other_columns()
+
+    def run(opened: TypedDataFrame[Quotes, Rest], closed: TypedDataFrame[Quotes]) -> None:
+        # Two columns of the remainder can take one name in upper case.
+        opened.select(cs.numeric().name.to_uppercase())  # E: A selection has several outputs, which .name.to_uppercase() cannot rename: use .name.suffix() or .name.prefix()  [selection-rename]
+        # The declared names are known, so the checker computes each new name.
+        reveal_type(closed.select(cs.numeric().name.to_uppercase()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'BID': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_select_keeps_the_picked_declared_columns
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        ask: pl.Float64
+        n: pl.Int64
+
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.select(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.select("symbol", cs.numeric().name.suffix("_r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid_r': polars.datatypes.classes.Float64, 'ask_r': polars.datatypes.classes.Float64, 'n_r': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.select(cs.numeric().cast(pl.String), pl.col("symbol")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.String, 'ask': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String, 'symbol': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(quotes.select(pl.all()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.select(pl.col("bid", "ask") * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(quotes.select(~cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(quotes.select(cs.string().str.len_chars()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+- case: a_selection_undefined_at_a_picked_column_is_an_error
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.select(pl.all().str.len_chars()))  # E: "bid" has no result type at this frame's column types: str.len_chars does not accept Float64, and polars raises SchemaError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.UInt32, 'bid': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(quotes.select(x=cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: with_columns_overlays_the_picked_columns
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        n: pl.Int64
+
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.with_columns(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.with_columns(cs.numeric().cast(pl.String)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(quotes.with_columns(cs.numeric().name.suffix("_r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64, 'bid_r': polars.datatypes.classes.Float64, 'n_r': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: agg_applies_the_context_rule_per_matched_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        n: pl.Int64
+
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.group_by("symbol").agg(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': astrolabe.frame.List[polars.datatypes.classes.Float64], 'n': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(quotes.group_by("symbol").agg(cs.numeric().sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(quotes.group_by("symbol").agg(pl.all()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': astrolabe.frame.List[polars.datatypes.classes.Float64], 'n': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: a_selection_keeps_the_departures_of_the_aggregation_context
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Notes(Columns):
+        k: pl.Int64
+        s: pl.String
+        b: pl.Boolean
+
+    notes: TypedDataFrame[Notes]
+    # The mean of text answers in an agg and under a window, and not in a select.
+    reveal_type(notes.group_by("k").agg(cs.string().mean()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(notes.select(cs.string().mean().over("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(notes.with_columns(cs.string().median().over("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Notes, {'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'b': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(notes.select(cs.string().mean()))  # E: "s" has no result type at this frame's column types: mean does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Later members read the answer of each context.
+    reveal_type(notes.group_by("k").agg(cs.string().mean().str.len_chars()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(cs.string().mean() + pl.lit("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(cs.string().mean().name.suffix("_m")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's_m': polars.datatypes.classes.String}, closed=True), None]"
+    # A window inside an agg runs its operand in the aggregation context.
+    reveal_type(notes.group_by("k").agg(cs.string().mean().over("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': astrolabe.frame.List[polars.datatypes.classes.String]}, closed=True), None]"
+    # The spelling reads back.
+    mean = cs.string().mean()
+    reveal_type(notes.group_by("k").agg(mean))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    # Interpolation of a Boolean column answers in a select, and not in an agg.
+    reveal_type(notes.select(cs.boolean().interpolate()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(cs.boolean().interpolate()))  # E: "b" has no result type at this frame's column types: cannot build list with different dtypes, and polars panics  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'b': astrolabe.frame.Unchecked}, closed=True), None]"
+
+    Rest = other_columns()
+
+    def any_rest(df: TypedDataFrame[Notes, Rest]) -> None:
+        reveal_type(df.group_by("k").agg(cs.string().mean()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.String]]]"
+
+- case: rank_gives_each_matched_column_the_type_of_its_method
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Prices(Columns):
+        k: pl.Int64
+        a: pl.Int64
+        u: pl.UInt8
+        s: pl.String
+
+    prices: TypedDataFrame[Prices]
+    method: Literal["average", "dense"] = "dense"
+
+    # The method average gives Float64, and every other method gives UInt32.
+    reveal_type(prices.select(cs.by_name("a").rank()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(prices.select(cs.by_name("a", "u").rank("dense")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.UInt32, 'u': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(prices.select(cs.by_name("a").rank(method)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    # The rank reads the answer of the member before it, in each context.
+    reveal_type(prices.group_by("k").agg(cs.string().mean().rank("dense")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.UInt32}, closed=True), None]"
+    prices.select(cs.string().mean().rank("dense"))  # E: "s" has no result type at this frame's column types: mean does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_bound_meets_the_receiver_in_the_aggregation_context
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Notes(Columns):
+        k: pl.Int64
+        s: pl.String
+        d: pl.Date
+
+    notes: TypedDataFrame[Notes]
+    # The mean of text answers in an agg, so two text bounds meet it there.
+    reveal_type(notes.group_by("k").agg(cs.string().mean().is_between(pl.col("s").first(), pl.col("s").last())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(pl.col("s").mean().is_between(pl.col("s").first(), pl.col("s").last())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(cs.string().mean().is_between(pl.lit("a"), pl.lit("z"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.Boolean}, closed=True), None]"
+    # The sum of dates answers in an agg, and a value of clip must fit it there.
+    reveal_type(notes.group_by("k").agg(cs.date().sum().clip(pl.lit(1))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'd': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(notes.group_by("k").agg(cs.date().sum().clip(pl.lit(2**70))))  # E: "d" has no result type at this frame's column types: conversion from Int128 to Date failed, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'd': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: filter_demands_boolean_at_every_matched_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        n: pl.Int64
+
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.filter(cs.numeric() > 0))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    quotes.filter(cs.numeric())  # E: Column "bid" is not Boolean, cannot .filter()  [wrong-column-shape] # E: Column "n" is not Boolean, cannot .filter()  [wrong-column-shape]
+
+- case: the_data_decides_whether_a_type_selector_picks_an_unchecked_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Mixed(Columns):
+        a: Unchecked
+        s: pl.String
+        n: pl.Int64
+
+    mixed: TypedDataFrame[Mixed]
+    # cs.numeric() picks "a" only where its data are numbers, so the
+    # columns of the result depend on the data.
+    reveal_type(mixed.select(cs.numeric()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(mixed.select(cs.numeric().cast(pl.String)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(mixed.group_by("s").agg(cs.numeric().sum()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # with_columns keeps "a" either way: the cast gives Int8 where it picks
+    # the column, and the data keep their own type elsewhere.
+    reveal_type(mixed.with_columns(cs.numeric().cast(pl.Int8)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 's': polars.datatypes.classes.String, 'n': polars.datatypes.classes.Int8}, closed=True), None]"
+    # A new name exists only where the selector picks the column.
+    reveal_type(mixed.with_columns(cs.numeric().cast(pl.Int8).name.suffix("_x")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A selector that picks the column at every data type, or at none, is exact.
+    reveal_type(mixed.select(cs.all().exclude("s")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(mixed.select(cs.temporal() & cs.string()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+    # A sort key leaves the columns of the result as they are.
+    reveal_type(mixed.sort(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Mixed, {'a': astrolabe.frame.Unchecked, 's': polars.datatypes.classes.String, 'n': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: an_unchecked_column_under_a_type_selector_is_unproven
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Mixed(Columns):
+        a: Unchecked
+        n: pl.Int64
+
+    mixed: TypedDataFrame[Mixed]
+    reveal_type(mixed.select(cs.numeric()))  # E: The result of "select" has no known schema: the data type of a column decides whether a selector picks it, and no type declares it  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: a_selector_after_a_cast_of_the_undeclared_columns_reads_their_new_data_type
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    Rest = other_columns(all_of=NumericType)
+
+    class S(Columns):
+        k: pl.Int64
+
+    # After the cast, every undeclared column is a String, so a test on
+    # data types reads String and not the number that the column held.
+    def f(df: TypedDataFrame[S, Rest]) -> None:
+        texts = df.with_columns(cs.all().cast(pl.String))
+        reveal_type(texts.select(cs.string() | cs.matches("^x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[main.Rest, polars.datatypes.classes.String]]"
+        reveal_type(texts.select(cs.numeric() & cs.matches("^x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+        reveal_type(texts.select(cs.string() & cs.matches("^x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['x.*']]], polars.datatypes.classes.String]]"
+        reveal_type(texts.select(~cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[main.Rest, polars.datatypes.classes.String]]"
+
+- case: an_or_selector_picks_by_either_side_and_lies_inside_a_wider_selector
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns, same, typed_selection
+
+    Rest = other_columns()
+    Numbers = typed_selection(cs.integer() | cs.float(), gives=same)
+
+    class S(Columns):
+        k: pl.String
+        n: pl.Int64
+        f: pl.Float32
+
+    def f(df: TypedDataFrame[S], wide: TypedDataFrame[S, Rest], numbers: Numbers) -> None:
+        reveal_type(df.select(numbers))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+        # Every integer and every float is a number, so the second selection
+        # keeps each column that the first one keeps.
+        reveal_type(wide.select(cs.integer() | cs.float()).select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelOr[astrolabe.remainder.OfType[polars.datatypes.classes.FloatType], astrolabe.remainder.OfType[polars.datatypes.classes.IntegerType]]]]"
+
+- case: a_selection_over_a_remainder_is_the_frame_effects
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        n: pl.Int64
+
+    Numeric = other_columns(all_of=NumericType)
+    Rest = other_columns()
+
+    def numeric_rest(df: TypedDataFrame[Quotes, Numeric]) -> None:
+        reveal_type(df.select(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric().cast(pl.String)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], polars.datatypes.classes.String]]"
+        reveal_type(df.select(cs.numeric().name.suffix("_r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid_r': polars.datatypes.classes.Float64, 'n_r': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], Literal['_r']]]"
+        reveal_type(df.select("symbol", cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric(), pl.lit(1).alias("symbol")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64, 'symbol': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.with_columns(cs.numeric().cast(pl.String)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], polars.datatypes.classes.String], astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['bid'] | Literal['n']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]]]"
+        # The remainder can hold a name like "x_r", which the suffix would overwrite.
+        df.with_columns(cs.numeric().name.suffix("_r"))  # E: The result of "with_columns" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "possible"
+        reveal_type(df.select(cs.string().str.len_chars()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.UInt32}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.String]]]"
+        reveal_type(df.select(cs.numeric().sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]], polars.datatypes.classes.Int64], astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]]]]]]]"
+
+    def any_rest(df: TypedDataFrame[Quotes, Rest]) -> None:
+        reveal_type(df.select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(~cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric().name.prefix("p_")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p_bid': polars.datatypes.classes.Float64, 'p_n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Prefixed[Literal['p_'], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]"
+        # The remainder can hold a Duration, which polars refuses to cast to String.
+        df.select(pl.all().cast(pl.String))  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op]
+        reveal_type(df.select(cs.by_name("bid", "zz")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OneOf[Literal['bid'] | Literal['zz']]]]"
+        reveal_type(df.with_columns(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['bid'] | Literal['n']]]"
+
+- case: a_fresh_name_the_kept_remainder_cannot_exclude_is_a_duplicate
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+
+    Numeric = other_columns(all_of=NumericType)
+    NoOne = other_columns(without=["one"])
+
+    def numeric_rest(df: TypedDataFrame[Quotes, Numeric]) -> None:
+        reveal_type(df.select(cs.numeric(), pl.lit(1).alias("one")))  # E: select would produce duplicate column "one"  [duplicate-column] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'one': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+
+    def no_one(df: TypedDataFrame[Quotes, NoOne]) -> None:
+        reveal_type(df.select(cs.numeric(), pl.lit(1).alias("one")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'one': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.NoOne, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+
+- case: a_selection_undefined_at_a_remainder_type_is_an_error
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+
+    Rest = other_columns()
+
+    def any_rest(df: TypedDataFrame[Quotes, Rest]) -> None:
+        reveal_type(df.select(pl.all().str.len_chars()))  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.UInt32}, closed=True), None]"
+        reveal_type(df.select(pl.all().mean()))  # E: "symbol" has no result type at this frame's column types: mean does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: struct_unnest_spreads_the_declared_fields
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        st: Struct[Column[Literal["a"], pl.Int64], Column[Literal["b"], pl.Float64]]
+        k: pl.String
+        u: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(pl.col("st").struct.unnest())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('st').struct.unnest()"]]]"
+    reveal_type(df.select(pl.col("st").struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.with_columns(pl.col("st").struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'st': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Float64]]], 'k': polars.datatypes.classes.String, 'u': astrolabe.frame.Unchecked, 'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(pl.col("st").struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'a': astrolabe.frame.List[polars.datatypes.classes.Int64], 'b': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    # Any expression that gives a struct unnests, a built struct included.
+    reveal_type(df.select(pl.struct("k", pl.col("st").struct.field("a")).struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    # An aggregating struct holds one value per group, so its fields stay whole.
+    reveal_type(df.group_by("k").agg(pl.struct(pl.col("st").struct.field("a").first()).struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(pl.struct(pl.col("st").struct.field("b")).struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'b': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+
+- case: struct_unnest_of_one_field_takes_an_alias_and_refuses_an_unchecked_struct
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        st: Struct[Column[Literal["a"], pl.Int64]]
+        k: pl.String
+        u: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    # A struct of one field unnests to one column, which an alias can name.
+    reveal_type(df.select(pl.col("st").struct.unnest().alias("z")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'z': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(x=pl.col("st").struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.Int64}, closed=True), None]"
+    df.select(pl.col("u").struct.unnest())  # E: Column "u" is not a Struct with declared fields, cannot .struct.unnest()  [wrong-column-shape]
+    df.select(pl.col("k").struct.unnest())  # E: Column "k" is not a Struct with declared fields, cannot .struct.unnest()  [wrong-column-shape]
+    df.select(pl.col("zz").struct.unnest())  # E: Unknown column "zz"  [unknown-column]
+
+- case: a_selection_retypes_a_remainder_to_a_parametrized_type
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, IntegerType, other_columns, TemporalType, TypedDataFrame
+
+    # A remainder's type set holds single data types, so a retype to
+    # Datetime("ms") is kept exactly. The cast reads the integer kinds:
+    # a numeric remainder can hold a Decimal, which polars refuses to
+    # cast to a Datetime.
+    R = other_columns(all_of=IntegerType)
+    Times = other_columns(all_of=TemporalType)
+
+    class Schema1(Columns):
+        g: pl.String
+
+    def need_times(df: TypedDataFrame[Schema1, Times]) -> None: ...
+
+    def f(df: TypedDataFrame[Schema1, R]) -> None:
+        stamped = df.select(cs.integer().cast(pl.Datetime("ms")))
+        reveal_type(stamped)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.IntegerType]], astrolabe.frame.Datetime[Literal['ms'], None]]]"
+        reveal_type(stamped.select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+        need_times(stamped.with_columns(g=pl.lit("x")))
+        # Each integer kind implodes to a List of its own type.
+        reveal_type(df.select(cs.integer().implode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int16]], astrolabe.frame.List[polars.datatypes.classes.Int16]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int32]], astrolabe.frame.List[polars.datatypes.classes.Int32]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int64]], astrolabe.frame.List[polars.datatypes.classes.Int64]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int8]], astrolabe.frame.List[polars.datatypes.classes.Int8]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.UInt128]], astrolabe.frame.List[polars.datatypes.classes.UInt128]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.UInt16]], astrolabe.frame.List[polars.datatypes.classes.UInt16]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.UInt32]], astrolabe.frame.List[polars.datatypes.classes.UInt32]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.UInt64]], astrolabe.frame.List[polars.datatypes.classes.UInt64]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.UInt8]], astrolabe.frame.List[polars.datatypes.classes.UInt8]], astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.IntegerType], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int32 | polars.datatypes.classes.Int64 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt128 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt32 | polars.datatypes.classes.UInt64 | polars.datatypes.classes.UInt8]]]], astrolabe.frame.List[polars.datatypes.classes.Int128]]]]]]]]]]]]"
+
+- case: exclude_takes_named_columns_out_of_a_pure_selector
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.Int64
+        a: pl.Float64
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.all().exclude("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Float64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.all().exclude(["g", "a"])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.col("g"), pl.all().exclude("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'g': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.Float64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    # Polars accepts exclude only on a selector with no operation applied.
+    reveal_type((pl.all() + 1).exclude("g"))  # E: This call raises InvalidOperationError before any frame meets it: expr `[(cs.all()) + (dyn int: 1)]` is not a selector  [invalid-call-shape]  # N: Revealed type is "polars.expr.expr.Expr"
+
+- case: a_column_on_the_left_of_a_selection_names_every_output_after_itself
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        x: pl.Float64
+        y: pl.Int64
+
+    # Polars names every output after the column on the left, so two
+    # matched columns give one name twice.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class OneSchema(Columns):
+        a: pl.Float64
+
+    one: TypedDataFrame[OneSchema] = df.select(pl.col("a") + cs.by_name("x"))
+
+    class ManySchema(Columns):
+        a: Unchecked
+
+    many: TypedDataFrame[ManySchema] = df.select(pl.col("a") + cs.numeric())  # E: select would produce duplicate column "a"  [duplicate-column]
+
+- case: exclude_reads_a_pattern_and_a_data_type
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        ab: pl.Int64
+        b: pl.String
+
+    # A name that starts with "^" and ends with "$" is a pattern, and
+    # a data type class excludes every column of that type.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(cs.all().exclude(pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(cs.all().exclude("^a.*$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(cs.numeric().exclude(pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+
+- case: by_dtype_reads_a_list_of_data_types
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        c: pl.Float64
+
+    # Polars reads a list, a tuple or a set the way it reads several
+    # arguments.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(cs.by_dtype([pl.Int64, pl.String])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype((pl.Int64,))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_selector_reads_a_bare_marker_class_as_the_default_instance
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Datetime, Decimal, List, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        ln: List[pl.Null]
+        li: List[pl.Int64]
+        us: Datetime[Literal["us"], None]
+        ms: Datetime[Literal["ms"], None]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars picks the whole kind only for its own class.
+    reveal_type(df.select(cs.by_dtype(List)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ln': astrolabe.frame.List[polars.datatypes.classes.Null]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype([pl.Int64, Datetime])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'us': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(cs.all().exclude(List)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'li': astrolabe.frame.List[polars.datatypes.classes.Int64], 'us': astrolabe.frame.Datetime[Literal['us'], None], 'ms': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.all().exclude(Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'ln': astrolabe.frame.List[polars.datatypes.classes.Null], 'li': astrolabe.frame.List[polars.datatypes.classes.Int64], 'ms': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    # A polars data type with its parameters picks that one data type.
+    reveal_type(df.select(cs.by_dtype(pl.List(pl.Int64))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    # A marker with its arguments, Unchecked and Decimal raise.
+    cs.by_dtype(List[pl.Int64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    cs.by_dtype([pl.Int8, Unchecked])  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape]
+    cs.by_dtype(Decimal)  # E: Decimal is a type annotation, not a data type of polars, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    cs.all().exclude(List[pl.Int64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+
+- case: a_selector_of_one_data_type_with_parameters_picks_that_data_type_only
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Duration, Enum, Struct, Column, TypedDataFrame
+
+    class FrameSchema(Columns):
+        dus: Duration[Literal["us"]]
+        dms: Duration[Literal["ms"]]
+        e0: Enum[()]
+        ea: Enum[Literal["a"]]
+        sa: Struct[Column[Literal["a"], pl.Int64]]
+        sb: Struct[Column[Literal["b"], pl.Int64]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    reveal_type(df.select(cs.duration("ms")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dms': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype(pl.Duration("us"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dus': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype(pl.Enum([]))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'e0': astrolabe.frame.Enum[tuple[()]]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype(pl.Struct({"a": pl.Int64}))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'sa': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+    reveal_type(df.select(cs.all().exclude(pl.Duration("us"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dms': astrolabe.frame.Duration[Literal['ms']], 'e0': astrolabe.frame.Enum[tuple[()]], 'ea': astrolabe.frame.Enum[tuple[Literal['a']]], 'sa': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64]]], 'sb': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+
+- case: name_keep_takes_the_affix_off_a_selection
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Float64
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(cs.numeric().name.suffix("_x").name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float64}, closed=True), None]"
+    # On one expression it restores the root name.
+    reveal_type(df.select(pl.col("a").alias("z").name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: with_columns_adds_an_affixed_selection_where_the_names_are_new
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+
+    # No remainder name ends with "_r", so the suffixed names are new.
+    Numeric = other_columns(all_of=NumericType, without_suffix="_r")
+
+    def f(df: TypedDataFrame[Quotes, Numeric]) -> None:
+        reveal_type(df.with_columns(cs.numeric().name.suffix("_r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'bid_r': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Both[main.Numeric, astrolabe.remainder.Suffixed[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], Literal['_r']]]]"
+
+- case: with_columns_falls_back_when_an_affixed_name_can_equal_a_declared_one
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        bid: pl.Float64
+        x_r: pl.String
+
+    # A remainder column "x" gives "x_r", which overwrites the declared "x_r".
+    Numeric = other_columns(all_of=NumericType, without_suffix="_r")
+
+    def f(df: TypedDataFrame[Quotes, Numeric]) -> None:
+        df.with_columns(cs.numeric().name.suffix("_r"))  # E: The result of "with_columns" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "possible"
+
+
+- case: a_pattern_selector_picks_the_columns_it_finds
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        px_bid: pl.Float64
+        px_ask: pl.Float64
+        qty: pl.Int64
+        venue_px: pl.String
+
+    df: TypedDataFrame[Quotes]
+    reveal_type(df.select(cs.matches("^px_")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'px_bid': polars.datatypes.classes.Float64, 'px_ask': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("^px_.*$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'px_bid': polars.datatypes.classes.Float64, 'px_ask': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("qty", "^px_.*$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'px_bid': polars.datatypes.classes.Float64, 'px_ask': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(cs.matches("px")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'px_bid': polars.datatypes.classes.Float64, 'px_ask': polars.datatypes.classes.Float64, 'venue_px': polars.datatypes.classes.String}, closed=True), None]"
+    # Polars reads "\d" as every Unicode digit, so the pattern is not read.
+    reveal_type(cs.matches(r"^px_\d$"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.matches('^px_\\\\d$')"]]]"
+    reveal_type(pl.col(r"^px_\d$"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.col('^px_\\\\d$')"]]]"
+
+    Rest = other_columns()
+
+    def f(open_frame: TypedDataFrame[Quotes, Rest]) -> None:
+        reveal_type(open_frame.select(pl.col("^px_[a-z]*$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'px_bid': polars.datatypes.classes.Float64, 'px_ask': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['0[[^_a-z]>1;[a-oq-wyz]>1;_>1;p>2;x>1]|1[[^_a-z]>1;[a-oq-wyz]>1;_>1;p>1;x>1]|2[[^_a-z]>1;[a-oq-wyz]>1;_>1;p>1;x>3]|3[[^_a-z]>1;[a-oq-wyz]>1;_>4;p>1;x>1]|4F[[^_a-z]>1;[a-oq-wyz]>4;_>1;p>4;x>4]']]]]"
+
+- case: a_type_selector_can_name_single_data_types
+  main: |
+    from typing import Literal
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Datetime, Duration, other_columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Datetime[Literal["us"], None]
+        b: Datetime[Literal["ms"], Literal["UTC"]]
+        c: pl.Int64
+        d: Duration[Literal["ns"]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(cs.datetime("us", None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(cs.datetime(time_zone="UTC")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(df.select(cs.datetime(["us", "ms"], [None, "UTC"])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None], 'b': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(df.select(cs.duration("ns")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Duration[Literal['ns']]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype(pl.Datetime("us"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(cs.by_dtype(pl.Int64, pl.Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None], 'b': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']], 'c': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A unit with no zone names every zone of that unit.
+    reveal_type(cs.datetime("us"))  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.expr.Deferred[Literal["cs.datetime('us')"]]]"
+
+    R = other_columns()
+
+    class Schema1(Columns):
+        c: pl.Int64
+
+    def f(open_frame: TypedDataFrame[Schema1, R]) -> None:
+        naive_us = open_frame.select(cs.datetime("us", None))
+        reveal_type(naive_us)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]"
+        reveal_type(naive_us.select(cs.datetime()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]"
+        reveal_type(naive_us.select(cs.datetime("ms", None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+        reveal_type(open_frame.select(~cs.datetime("us", None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema1, {'c': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Except[main.R, astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]"
+
+- case: a_selection_reads_other_columns_beside_the_matched_one
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.String
+        a: pl.Int64
+        x: pl.Float64
+        y: pl.Int32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # Each matched column meets the expression, and keeps its own name.
+    reveal_type(df.select(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int64}, closed=True), None]"
+    # Two selections of one selector pair column by column.
+    reveal_type(df.select(cs.numeric() * cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    # A window, a filter and a sort key add the columns they steer by.
+    reveal_type(df.select(cs.numeric().sum().over("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(cs.numeric().filter(pl.col("a") > 0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(cs.numeric().sort_by("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.String, 'a': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.List[polars.datatypes.classes.Float64], 'y': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    df.select(cs.numeric() + pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+    df.select(cs.numeric().over("zz"))  # E: Unknown column "zz"  [unknown-column]
+    # An int variable has no fixed width, so each column keeps the type that
+    # every value that the checker tries gives, else Unchecked.
+    width: int = 2**40
+    reveal_type(df.select(cs.numeric() + width))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'x': polars.datatypes.classes.Float64, 'y': astrolabe.frame.Unchecked}, closed=True), None]"
+    # The spelling reads back.
+    added = cs.numeric() + pl.col("a")
+    reveal_type(df.select(added * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    R = other_columns()
+
+    class Schema1(Columns):
+        a: pl.Int64
+
+    def f(open_frame: TypedDataFrame[Schema1, R]) -> None:
+        # A remainder column of each numeric kind meets "a" at its own type.
+        reveal_type(open_frame.select(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema1, {'a': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Float16 | polars.datatypes.classes.Float32 | polars.datatypes.classes.Float64 | polars.datatypes.classes.UInt64]], polars.datatypes.classes.Float64], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int128 | polars.datatypes.classes.UInt128]], polars.datatypes.classes.Int128], astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Float16 | polars.datatypes.classes.Float32 | polars.datatypes.classes.Float64 | polars.datatypes.classes.Int128 | polars.datatypes.classes.UInt128 | polars.datatypes.classes.UInt64]]]], polars.datatypes.classes.Int64]]]]]"
+
+- case: a_timezone_object_is_a_call_polars_cannot_run
+  main: |
+    from datetime import timezone
+    import polars.selectors as cs
+
+    # Polars declares `time_zone` to accept a `datetime.timezone` and
+    # then raises at run time, so the call can never run.
+    cs.datetime("us", timezone.utc)  # E: polars refuses a datetime.timezone here and raises at run time. Name the zone, for example "UTC"  [invalid-call-shape]
+    cs.datetime("us", [timezone.utc])  # E: polars refuses a datetime.timezone here and raises at run time. Name the zone, for example "UTC"  [invalid-call-shape]
+    cs.datetime("us", "UTC")
+
+- case: a_substring_selector_and_its_complement_split_the_columns
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Mixed(Columns):
+        ab: pl.Int64
+        bc: pl.String
+        k: pl.Float64
+
+    p: TypedDataFrame[Mixed]
+    reveal_type(p.select(cs.contains("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ab': polars.datatypes.classes.Int64, 'bc': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(p.select(~cs.contains("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_pattern_with_alternatives_selects_each_alternative
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Mixed(Columns):
+        ab: pl.Int64
+        bc: pl.String
+        k: pl.Float64
+
+    p: TypedDataFrame[Mixed]
+    reveal_type(p.select(cs.matches("^(ab|bc)$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ab': polars.datatypes.classes.Int64, 'bc': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: a_pattern_over_an_open_frame_picks_from_the_undeclared_columns_by_each_branch
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Mixed(Columns):
+        ab: pl.Int64
+
+    # Each top-level branch picks names alone, and the undeclared columns
+    # keep the names that one branch picks.
+    def f(p: TypedDataFrame[Mixed, Rest]) -> None:
+        reveal_type(p.select(cs.matches("^ab$|^x_")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Mixed, {'ab': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['ab|x_.*']]]]"
+        # Polars reads a "]" outside a class as the character itself.
+        reveal_type(p.select(cs.matches("^a]")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.Matching[Literal['a\\].*']]]]"
+
+- case: a_selector_with_a_name_from_a_variable_gives_the_plain_frame
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Mixed(Columns):
+        ab: pl.Int64
+
+    # The data decides which columns a pattern or a name from a variable
+    # picks, as for pl.col(pattern).
+    def f(p: TypedDataFrame[Mixed], wide: TypedDataFrame[Mixed, Rest], pattern: str) -> None:
+        reveal_type(p.select(cs.matches(pattern)))  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(wide.select(cs.matches(pattern)))  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(p.select(cs.by_name(pattern)))  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(p.with_columns(cs.numeric().exclude(pattern).cast(pl.String)))  # E: The result of "with_columns" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "stated"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: a_pattern_that_polars_cannot_compile_is_an_error
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Mixed(Columns):
+        ab: pl.Int64
+
+    # Polars compiles the pattern where a frame expands the selector, and
+    # raises for a character class that the pattern does not close, or for a
+    # look-around, at every frame.
+    def f(p: TypedDataFrame[Mixed], wide: TypedDataFrame[Mixed, Rest]) -> None:
+        reveal_type(p.select(cs.matches("^a[")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"  # E: This call has no result at any frame: invalid regex in selector '^a[', and polars raises InvalidOperationError  [invalid-call-shape]
+        reveal_type(p.select(pl.col("^a[$")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"  # E: This call has no result at any frame: invalid regex in selector '^a[$', and polars raises InvalidOperationError  [invalid-call-shape]
+        p.select(pl.all().exclude("^a[$"))  # E: This call has no result at any frame: invalid regex in selector '^a[$', and polars raises InvalidOperationError  [invalid-call-shape]
+        wide.select(cs.matches("^a(?=b)"))  # E: This call has no result at any frame: invalid regex in selector '^a(?=b)', and polars raises InvalidOperationError  [invalid-call-shape]
+
+- case: a_branch_after_a_group_is_a_branch_of_the_whole_pattern
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Mixed(Columns):
+        ab: pl.Int64
+        cd: pl.String
+        x: pl.Float64
+
+    p: TypedDataFrame[Mixed]
+    # A group closes before the `|`, so the `|` splits the whole pattern.
+    reveal_type(p.select(cs.matches("^(a)b$|^cd$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ab': polars.datatypes.classes.Int64, 'cd': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: a_pattern_longer_than_the_token_limit_keeps_the_plain_frame
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import TypedDataFrame, columns
+
+    Long = columns("Long", {"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": pl.Int64, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": pl.Int64, "b": pl.Int64})
+    p: TypedDataFrame[Long]
+    # The checker reads a pattern of at most 32 tokens. A longer one costs
+    # too much to read, so the call keeps the plain frame.
+    reveal_type(p.select(cs.matches("^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(p.select(cs.matches("^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_field_read_over_the_structs_of_the_remainder_depends_on_the_caller
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Rest = other_columns()
+
+    # A caller can bring a struct column with the field x, which polars
+    # reads, or one without it, which polars refuses.
+    def f(df: TypedDataFrame[Keys, Rest]) -> None:
+        df.select(cs.struct().struct.field("x"))  # E: The result of "select" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "possible"
+        df.with_columns(cs.struct().struct.field("x"))  # E: The result of "with_columns" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "possible"
+
+- case: a_selection_beside_a_literal_reads_the_bucket_of_the_value
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        f: pl.Float32
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    class SmallSchema(Columns):
+        u: pl.UInt8
+        f: pl.Float32
+
+    class WideSchema(Columns):
+        u: pl.UInt16
+        f: pl.Float32
+
+    # A literal with no data type adapts to each picked column, also from a variable.
+    e = pl.lit(300)
+    small: TypedDataFrame[SmallSchema] = df.select(cs.numeric() + pl.lit(1))
+    wide: TypedDataFrame[WideSchema] = df.select(cs.numeric() + e)
+
+- case: a_fill_value_joins_each_matched_column
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        i: pl.Int16
+        f: pl.Float32
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    class ShiftedSchema(Columns):
+        u: pl.UInt16
+        i: pl.Int16
+        f: pl.Float32
+
+    class FilledSchema(Columns):
+        u: pl.Float64
+        i: pl.Float64
+        f: pl.Float32
+
+    class FromColumnSchema(Columns):
+        u: pl.Int16
+        i: pl.Int16
+        f: pl.Float32
+
+    class KeptSchema(Columns):
+        u: pl.UInt8
+        i: pl.Int16
+        f: pl.Float32
+
+    # The fill joins each picked column on its own, as it joins one column.
+    shifted: TypedDataFrame[ShiftedSchema] = df.select(cs.numeric().shift(1, fill_value=300))
+    filled: TypedDataFrame[FilledSchema] = df.select(cs.numeric().fill_null(1.5))
+    from_column: TypedDataFrame[FromColumnSchema] = df.select(cs.numeric().fill_null(pl.col("i")))
+    from_reducer: TypedDataFrame[FromColumnSchema] = df.select(
+        cs.numeric().shift(1, fill_value=pl.col("i").max()),
+    )
+    forward: TypedDataFrame[KeptSchema] = df.select(cs.numeric().fill_null(strategy="forward"))
+    kept: TypedDataFrame[KeptSchema] = df.select(cs.numeric().shift(1))
+    # A fill that gives a value for each row is refused at a shift.
+    df.select(cs.numeric().shift(1, fill_value=pl.col("i")))  # E: "u" has no result type at this frame's column types: 'fill_value' must be a scalar value, and polars raises ShapeError  [unsupported-dtype-op]
+
+- case: a_selection_beside_a_python_timedelta_or_decimal_reads_a_literal
+  main: |
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        d: pl.Date
+
+    df: TypedDataFrame[FrameSchema]
+    day: date
+
+    # Polars reads the value as a literal of Duration('us') or Decimal(38, 1).
+    reveal_type(df.select(cs.date() + timedelta(days=1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(cs.numeric() + Decimal("1.5")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    # A variable of the type date can hold a datetime, so the call stays plain.
+    reveal_type(df.select(cs.date() < day))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: a_selection_over_the_remainder_reads_each_form_of_selector
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def f(op: TypedDataFrame[Keys, Rest]) -> None:
+        # Every zone of a unit, and not the naive data type of that unit.
+        reveal_type(op.with_columns(cs.datetime("us", "*").dt.year()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], astrolabe.frame.AnyZone]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]], polars.datatypes.classes.Int32], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], astrolabe.frame.AnyZone]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]]]]"
+        # A selector by position picks a column that the type cannot name.
+        reveal_type(op.with_columns(cs.first().abs()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        # abs keeps the data type of each numeric column, so the remainder stays.
+        reveal_type(op.with_columns((cs.numeric() - cs.by_name("k")).abs()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+
+- case: a_selector_of_places_over_a_column_with_holes_keeps_the_plain_frame
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        u: Unchecked
+
+    df: TypedDataFrame[FrameSchema]
+    # A selector of places reads every data type of the frame, and a column
+    # of the data type Unchecked holds no one data type.
+    reveal_type(df.select(cs.by_index(0) + 1))  # N: Revealed type is "polars.dataframe.frame.DataFrame"

@@ -1,0 +1,36 @@
+---
+title: Operations
+description: The operations that the checker types, and what each one checks.
+sidebar:
+  order: 2
+---
+
+Every operation that changes the schema of a frame has a hook. Each hook computes the result schema from the schema of the input, or reports why it cannot. The [operation catalog](../../spec/operation-catalog/) of the specification gives the rule of each call.
+
+| Operation | What the checker computes and checks |
+| -- | -- |
+| `select`, `select_seq` | The columns of the expressions. Each name exists, and no two results share a name. |
+| `with_columns`, `with_columns_seq` | The columns of the frame, with each result added or replaced. |
+| `drop`, `remove` | The columns that are left. Each dropped name exists. |
+| `rename` | The new names. Each old name exists, and no two results share a name. |
+| `filter` | The same columns. The condition is a `Boolean`. |
+| `join`, `join_asof`, `join_where` | The columns of both sides, with the suffix on a right column whose name is also a left column. The keys have data types that join. |
+| `group_by(...).agg(...)` and the shorthands | The keys and one column for each aggregation. |
+| `rolling(...).agg(...)`, `group_by_dynamic(...).agg(...)` | The keys, the boundaries, the index and the aggregations. The index and each duration have a data type that the call accepts. |
+| `pivot`, `unpivot`, `melt` | The reshaped columns. |
+| `explode`, `unnest` | The inner data type of a `List` or an `Array`, and the fields of a `Struct`. |
+| `pl.concat`, `hstack`, `vstack`, `extend`, `merge_sorted` | The combined columns. The frames agree as each strategy needs. A vertical concat gives the plain frame. |
+| `with_row_index` | A `UInt32` index column first. |
+| `fill_null`, `fill_nan` | The data type of each column after the fill. |
+| `update` | The columns of the left frame. |
+| `map_columns` | The same names. Each mapped column becomes `Unchecked`. |
+| `corr` | A `Float64` column for each input column. |
+| `sum`, `mean`, `max` and the other whole-frame reducers | One row, with the data type that the reducer gives for each column. |
+| `df["a"]`, `get_column` | A `TypedSeries` with the name and the data type of the column. |
+| `pl.select` | The columns of the expressions, over no frame. |
+| `lazy()`, `collect()` | The same schema, as a `LazyFrame` or as a `DataFrame`. |
+| `pl.read_*`, `pl.scan_*`, `pl.from_*` with `schema=` | A typed frame with the given schema. |
+
+An operation that keeps the columns, for example `sort`, `head`, `tail`, `unique` or `sample`, keeps the schema.
+
+The expressions inside the operations are typed with the typing rules of Polars. See [Expressions and data types](../../guides/expressions/).

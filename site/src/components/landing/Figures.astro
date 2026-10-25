@@ -1,0 +1,73 @@
+---
+/**
+ * The figures of the hero: five constellations drawn star by star, and Polaris.
+ *
+ * Place it first inside the content column, which must have
+ * `position: relative`. The layer is centered on the column, so Polaris stays
+ * 280 pixels right of the center of the page, where the disc of `Sky.astro`
+ * turns. The layer turns at the same speed as the disc, so the figures keep
+ * their place among the stars.
+ */
+import { TURN_SECONDS, figureLayer } from '../../lib/sky';
+
+const { markup, keyframes } = figureLayer();
+const turn = `.hero-sky .sky-turn{animation-duration:${TURN_SECONDS}s}`;
+---
+
+<svg class="hero-sky" aria-hidden="true" width="1500" height="800" viewBox="0 0 1500 800" set:html={markup} />
+<style is:inline set:html={`${keyframes}\n${turn}`}></style>
+
+<style is:global>
+  .hero-sky {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 1500px;
+    height: 800px;
+    margin-left: -750px;
+    z-index: -1;
+    pointer-events: none;
+    overflow: visible;
+    -webkit-mask-image: linear-gradient(to bottom, #000 640px, transparent 1040px);
+    mask-image: linear-gradient(to bottom, #000 640px, transparent 1040px);
+  }
+
+  .hero-sky .sky-turn {
+    transform-origin: 1030px 345px;
+    animation-name: sky-turn;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+
+  .hero-sky .cg-pulse {
+    transform-origin: 1030px 345px;
+    animation: cg-pulse 6s ease-out infinite;
+  }
+
+  @keyframes cg-pulse {
+    0% {
+      transform: scale(1);
+      opacity: 0.6;
+    }
+    100% {
+      transform: scale(6);
+      opacity: 0;
+    }
+  }
+
+  @keyframes sky-turn {
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero-sky * {
+      animation: none !important;
+    }
+
+    .hero-sky .cg-line {
+      opacity: 0.22 !important;
+    }
+  }
+</style>

@@ -1,0 +1,44 @@
+---
+title: Overview
+description: What Astrolabe checks, what it does not check, and how it works.
+sidebar:
+  order: 1
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+Astrolabe is a plugin for mypy. It checks the column names and the data types of Polars frames and expressions before the code runs. A missing column or a wrong data type is a type error in your editor, not an exception at run time.
+
+## What it checks
+
+Declare the columns of a frame once. The checker then knows the schema of the frame at each step of the code, and it reports each step that Polars refuses:
+
+<Example name="start_overview" />
+
+The three errors are three different faults:
+
+- `select` reads a column that the frame does not have.
+- The subtraction mixes a `String` and a `Float64`, which Polars does not allow.
+- `filter` needs a `Boolean` condition, and `price` is a `Float64`.
+
+Each operation gives a frame with a new schema. The checker computes that schema, so each later step is checked against it:
+
+<Example name="start_overview_result" />
+
+The checker covers the operations that change a schema, for example `select`, `with_columns`, `join`, `group_by`, `pivot` and `concat`. It covers the expressions inside them, at the data types of the frame. A function can declare the columns that it needs, and accept a frame with other columns too. See [Frame operations](../../guides/operations/) and [Open frames](../../guides/open-frames/).
+
+## What it does not check
+
+A type describes the schema of a frame, not its data. The checker does not know:
+
+- the values in a column, for example nulls, ranges or duplicates,
+- the number of rows,
+- the order of the columns.
+
+For data that comes from outside the program, check the schema at run time with `check_schema`. A validation library can check the values. See [What a type guarantees](../../concepts/guarantees/).
+
+## How it works
+
+The plugin runs inside mypy. It reads the code of each expression, and it computes the result of each operation with the typing rules of Polars. mypy keeps the types and reports the errors, so the checks show wherever mypy runs: in your editor, in pre-commit hooks and in CI.
+
+At run time, Astrolabe adds nothing. A typed frame is an ordinary `pl.DataFrame`, and the code calls Polars as before. See [How the checker works](../../concepts/how-it-works/).

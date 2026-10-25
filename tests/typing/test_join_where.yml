@@ -1,0 +1,184 @@
+# .join_where(): an inner join matched by an arbitrary predicate, not a
+# key. `JoinWhereHook` (`_hooks/join.py`) reuses `_JoinResultMerger`'s
+# own `how="cross"` merge directly: confirmed empirically against real
+# polars 1.43.2 that `.join_where()`'s own result is always every column
+# from both sides, suffixed on collision, completely independent of the
+# predicates themselves -- they only ever affect row selection, never
+# the schema. The predicates are never read or validated by this hook at
+# all; real polars' own stub already checks their own shape
+# (`Expr | Iterable[Expr]`) normally.
+#
+# suffix= is a literal string, default "_right", the same as .join().
+
+- case: join_where_merges_all_columns_and_suffixes_collision
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class EastSchema(Columns):
+        id: pl.Int64
+        dur: pl.Int64
+        cores: pl.Int64
+
+    East = TypedDataFrame[EastSchema]
+
+    class WestSchema(Columns):
+        t_id: pl.Int64
+        time: pl.Int64
+        cores: pl.Int64
+
+    West = TypedDataFrame[WestSchema]
+
+    east: East
+    west: West
+
+    class ResultSchema(Columns):
+        id: pl.Int64
+        dur: pl.Int64
+        cores: pl.Int64
+        t_id: pl.Int64
+        time: pl.Int64
+        cores_right: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = east.join_where(west, pl.col("dur") < pl.col("time"))
+
+- case: join_where_multiple_predicates_do_not_affect_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class EastSchema(Columns):
+        dur: pl.Int64
+        rev: pl.Int64
+
+    East = TypedDataFrame[EastSchema]
+
+    class WestSchema(Columns):
+        time: pl.Int64
+        cost: pl.Int64
+
+    West = TypedDataFrame[WestSchema]
+
+    east: East
+    west: West
+
+    class ResultSchema(Columns):
+        dur: pl.Int64
+        rev: pl.Int64
+        time: pl.Int64
+        cost: pl.Int64
+
+    # Two AND-ed predicates narrow exactly the same as one: the schema
+    # never depends on how many predicates are given, or what they are.
+    result: TypedDataFrame[ResultSchema] = east.join_where(west, pl.col("dur") < pl.col("time"), pl.col("rev") < pl.col("cost"))
+
+- case: join_where_custom_suffix_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class EastSchema(Columns):
+        id: pl.Int64
+        cores: pl.Int64
+
+    East = TypedDataFrame[EastSchema]
+
+    class WestSchema(Columns):
+        t_id: pl.Int64
+        cores: pl.Int64
+
+    West = TypedDataFrame[WestSchema]
+
+    east: East
+    west: West
+
+    class ResultSchema(Columns):
+        id: pl.Int64
+        cores: pl.Int64
+        t_id: pl.Int64
+        cores_w: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = east.join_where(west, pl.col("id") < pl.col("t_id"), suffix="_w")
+
+- case: join_where_non_literal_suffix_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class EastSchema(Columns):
+        id: pl.Int64
+        cores: pl.Int64
+
+    East = TypedDataFrame[EastSchema]
+
+    class WestSchema(Columns):
+        t_id: pl.Int64
+        cores: pl.Int64
+
+    West = TypedDataFrame[WestSchema]
+
+    east: East
+    west: West
+    suffix_var: str = "_w"
+    reveal_type(east.join_where(west, pl.col("id") < pl.col("t_id"), suffix=suffix_var))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_where_duplicate_result_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class EastSchema(Columns):
+        cores: pl.Int64
+        cores_right: pl.Int64
+
+    # east's own "cores_right" already exists, so west's suffixed
+    # "cores" collides with it -- the same duplicate-name check every
+    # other join-family hook already applies to its own merged result.
+    East = TypedDataFrame[EastSchema]
+
+    class WestSchema(Columns):
+        cores: pl.Float64
+
+    West = TypedDataFrame[WestSchema]
+
+    east: East
+    west: West
+    reveal_type(east.join_where(west, pl.col("cores") < pl.col("cores_right")))  # E: join_where would produce duplicate column "cores_right"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_where_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    other: pl.DataFrame
+    reveal_type(df.join_where(other, pl.col("a") < pl.col("b")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_join_where_predicate_with_an_alias_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    df: TypedDataFrame[Schema]
+    # Polars reads each predicate as a join key, on either side of the
+    # comparison, and refuses an alias anywhere in it.
+    reveal_type(df.join_where(df, pl.col("a").alias("z") > pl.col("b_right")))  # E: join_where() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    df.join_where(df, pl.col("a") > pl.col("b_right"), (pl.col("a") < pl.col("a_right")).alias("p"))  # E: join_where() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+
+- case: a_declared_expression_in_a_predicate_leaves_the_join_to_the_caller
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, column
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    A = column("a", pl.Int64)
+
+    def f(df: TypedDataFrame[Schema], key: A) -> None:
+        # A caller can pass pl.col("a").alias("a"), which raises.
+        df.join_where(df, key > pl.col("b_right"))  # E: The result of "join_where" has no known schema: the caller can pass a join key of another form, which changes the join  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join_where = "possible"

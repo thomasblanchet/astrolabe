@@ -1,0 +1,1365 @@
+# pl.concat().
+#
+# how="vertical" (the default) is never narrowed to a concrete type: the
+# column order a materialized Rest binding claims in a declared
+# signature is never verified against the function body that produced
+# it. A Rest-generic function's body only has to type-check against its
+# own signature as a bare passthrough. Nothing confirms a returned Rest
+# binding lands in the order its signature claims. Polars' positional
+# stacking there cannot be soundly checked. It still reports
+# [schema-mismatch] for a necessary-but-not-sufficient, order-independent
+# check: a different number of columns, names, or dtypes across the
+# frames. Two frames with the *same* columns in a *different* order are,
+# deliberately, no longer flagged. The plugin cannot trust either frame's
+# declared order enough to say the swap is real.
+# disallow_vertical_concat (default False, so unreachable from this
+# sandboxed file, see test_disallow_vertical_concat_integration.py)
+# additionally disallows using how="vertical" at all.
+#
+# items must be a literal [...]/(...) collection. Its whole inferred
+# type otherwise widens to a common supertype, losing every frame's
+# schema.
+#
+# how="vertical_relaxed" shares "vertical"'s own order-independent
+# check and its same never-narrows soundness limit, extended to also
+# accept a promotable dtype pair (not just an exact match) as
+# compatible.
+#
+# how="diagonal"/"diagonal_relaxed" are name-based, not positional, so
+# they have no order-soundness problem and genuinely narrow: the result
+# is the union of every frame's columns, in first-seen order, with a
+# column absent from a frame filled null there (confirmed against real
+# polars 1.43.2). A name declared with the same dtype by every frame
+# that has it keeps that dtype. "diagonal" requires an exact dtype
+# match for a name declared by more than one frame; "diagonal_relaxed"
+# accepts a promotable pair instead. Falls back to the plain, erased
+# pl.DataFrame/pl.LazyFrame if a shared name's dtypes cannot be
+# reconciled.
+#
+# Dtype promotion (`vertical_relaxed`/`diagonal_relaxed` both) only
+# covers a bounded, well-defined subset of real polars 1.43.2's
+# promotion rules, each confirmed empirically: same-signedness integer
+# widening (Int8+Int16 -> Int16, Int64+Int128 -> Int128), float
+# widening (Float32+Float64 -> Float64), `Boolean` promoting to any
+# numeric type, and `String` absorbing any numeric, `Boolean`,
+# `Decimal`, `Datetime`, or `Enum` type -- confirmed with real
+# (non-empty) data, not just an inferred schema, since `Duration` looks
+# the same as those three on an empty schema but genuinely raises
+# InvalidOperationError casting to `String` with real data, so it stays
+# unmodeled. Two numbers take the supertype that the rules of polars
+# give the pair: a signed and an unsigned integer, or an integer and a
+# float, can give a third data type that neither frame holds.
+#
+# how="align"/"align_full"/"align_inner"/"align_left"/"align_right"
+# join every frame on every column name common to all of them, then
+# union the remaining columns by name -- confirmed against real polars
+# 1.43.2 that all five produce the identical result *schema* for the
+# same inputs, sharing "diagonal"'s own strict (never relaxed) union-
+# by-name logic exactly: only which rows survive differs, a row-level
+# concern this static hook does not check. Each requires at least one
+# column name common to every frame (not just pairwise): real polars
+# raises "'align' strategy requires at least one common column"
+# otherwise.
+#
+# how="horizontal_extend" (the non-deprecated, stable-behavior
+# replacement for bare how="horizontal", which stays deferred and
+# unnarrowed) concatenates every frame's own columns side by side, in
+# frame order, requiring every column name across every frame to be
+# globally unique -- real polars raises "column with name '...' has
+# more than one occurrence" otherwise. Row-count mismatches across
+# frames are tolerated at runtime (nulls fill the gap), so they place
+# no constraint on the result schema either.
+
+- case: concat_vertical_identical_schemas_is_untyped_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_explicit_how_is_equivalent_to_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    reveal_type(
+        pl.concat([left, right], how="vertical")  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    )
+
+- case: concat_vertical_three_frames_is_untyped_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    a: Frame
+    b: Frame
+    c: Frame
+    reveal_type(pl.concat([a, b, c]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_reordered_columns_is_not_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.String
+        a: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # Same names and dtypes, different declared order: no longer flagged.
+    # The plugin cannot trust either frame's declared order enough to
+    # say the swap is real, so it makes no claim at all.
+    reveal_type(pl.concat([left, right]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_mismatched_dtype_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat(  # E: pl.concat(how="vertical") requires identical schemas: frame 1 does not match frame 0  [schema-mismatch]
+        [left, right]
+    )
+
+- case: concat_vertical_unchecked_column_is_not_a_mismatch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        a: Unchecked
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # An Unchecked column reconciles with any concrete dtype, even for
+    # plain (non-relaxed) vertical concat: it is not a genuine mismatch,
+    # unlike two different concrete dtypes.
+    reveal_type(pl.concat([left, right]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_mismatched_column_count_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat(  # E: pl.concat(how="vertical") requires identical schemas: frame 1 does not match frame 0  [schema-mismatch]
+        [left, right]
+    )
+
+- case: concat_vertical_relaxed_promotable_dtype_is_not_a_mismatch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int32
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(
+        pl.concat([left, right], how="vertical_relaxed")  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    )
+
+- case: concat_vertical_relaxed_mixed_signedness_is_no_mismatch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int32
+
+    # Int32+UInt32 promotes to Int64 in real polars, the signed integer
+    # that holds both, so the relaxed concat reports no mismatch. A
+    # vertical concat never narrows: the result stays the plain frame.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.UInt32
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right], how="vertical_relaxed"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_relaxed_different_names_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat(  # E: pl.concat(how="vertical_relaxed") requires identical schemas: frame 1 does not match frame 0  [schema-mismatch]
+        [left, right], how="vertical_relaxed"
+    )
+
+- case: concat_diagonal_unions_columns_filling_missing_with_null
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        x: pl.Int64
+        y: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        y: pl.String
+        z: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class ResultSchema(Columns):
+        x: pl.Int64
+        y: pl.String
+        z: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = pl.concat([left, right], how="diagonal")
+
+- case: concat_diagonal_unchecked_shared_column_reconciles_to_the_concrete_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        x: Unchecked
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        x: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[RightSchema] = pl.concat([left, right], how="diagonal")
+
+- case: concat_diagonal_relaxed_unchecked_shared_column_stays_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        x: Unchecked
+
+    class RightSchema(Columns):
+        x: pl.Int64
+
+    class LeftPair(Columns):
+        s: Struct[Column[Literal["a"], Unchecked], Column[Literal["b"], pl.Int64]]
+
+    class RightPair(Columns):
+        s: Struct[Column[Literal["a"], pl.Int64], Column[Literal["b"], Unchecked]]
+
+    left: TypedDataFrame[LeftSchema]
+    right: TypedDataFrame[RightSchema]
+    left_pair: TypedDataFrame[LeftPair]
+    right_pair: TypedDataFrame[RightPair]
+    # The relaxed form widens to the supertype of the two sides, which the
+    # Unchecked side decides, so the column stays Unchecked.
+    reveal_type(pl.concat([left, right], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.LeftSchema, {'x': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pl.concat([right, left], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Field by field: the strict form keeps each known field, and the relaxed
+    # form keeps each Unchecked field.
+    reveal_type(pl.concat([left_pair, right_pair], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+    reveal_type(pl.concat([left_pair, right_pair], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], astrolabe.frame.Unchecked], astrolabe.frame.Column[Literal['b'], astrolabe.frame.Unchecked]]]}, closed=True), None]"
+
+- case: concat_diagonal_of_structs_of_other_numbers_of_fields
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class One(Columns):
+        s: Struct[Column[Literal["x"], Unchecked]]
+
+    class Two(Columns):
+        s: Struct[Column[Literal["x"], pl.Int64], Column[Literal["y"], pl.Int64]]
+
+    one: TypedDataFrame[One]
+    two: TypedDataFrame[Two]
+    pl.concat([one, two], how="diagonal")  # E: pl.concat(how="diagonal") column "s" does not reconcile: Struct vs. Struct  [schema-mismatch]
+    # The relaxed form joins the fields: those of the longer struct, then
+    # each field of the other that it lacks, each at the common data type.
+    reveal_type(pl.concat([one, two], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], astrolabe.frame.Unchecked], astrolabe.frame.Column[Literal['y'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+
+    class Three(Columns):
+        s: Struct[Column[Literal["y"], pl.String], Column[Literal["x"], pl.Int32]]
+
+    three: TypedDataFrame[Three]
+    reveal_type(pl.concat([two, three], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['y'], polars.datatypes.classes.String]]]}, closed=True), None]"
+
+    class Four(Columns):
+        s: Struct[Column[Literal["z"], pl.Int8]]
+
+    # A field that the longer struct lacks comes after its fields.
+    four: TypedDataFrame[Four]
+    reveal_type(pl.concat([four, two], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['y'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['z'], polars.datatypes.classes.Int8]]]}, closed=True), None]"
+
+- case: concat_diagonal_three_frames_union_in_first_seen_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class ASchema(Columns):
+        x: pl.Int64
+
+    A = TypedDataFrame[ASchema]
+
+    class BSchema(Columns):
+        y: pl.String
+
+    B = TypedDataFrame[BSchema]
+
+    class CSchema(Columns):
+        x: pl.Int64
+        z: pl.Float64
+
+    C = TypedDataFrame[CSchema]
+
+    a: A
+    b: B
+    c: C
+
+    class ResultSchema(Columns):
+        x: pl.Int64
+        y: pl.String
+        z: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = pl.concat([a, b, c], how="diagonal")
+
+- case: concat_diagonal_shared_column_different_dtype_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    # Plain "diagonal" (not relaxed) never attempts promotion, so an
+    # irreconcilable shared column is a definite mismatch, not merely
+    # unresolvable: this always raises SchemaError at runtime.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat([left, right], how="diagonal")  # E: pl.concat(how="diagonal") column "a" does not reconcile: Int64 vs. Float64  [schema-mismatch]
+
+- case: concat_diagonal_shared_column_different_parametrized_datetime_unit_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: Datetime[Literal["us"], None]
+
+    # Datetime["us"] and Datetime["ms"] are two distinct, parametrized
+    # types (astrolabe.frame.Datetime[Unit, Zone]), so this reconciles
+    # the same way any other irreconcilable dtype pair does, with no
+    # change to concat.py itself.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Datetime[Literal["ms"], None]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat([left, right], how="diagonal")  # E: pl.concat(how="diagonal") column "a" does not reconcile: Datetime vs. Datetime  [schema-mismatch]
+
+- case: concat_diagonal_shared_column_struct_with_unchecked_field_reconciles
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        a: Struct[Column[Literal["x"], Unchecked]]
+
+    # UncheckedCompatibility now recurses structurally into a container's
+    # own type arguments: a diagonal concat's schema merge reconciles a
+    # shared Struct[...] column with one Unchecked field against the
+    # other side's own concrete field dtype, the same way a bare
+    # Unchecked column already reconciled.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Struct[Column[Literal["x"], pl.Int64]]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    narrowed: TypedDataFrame[RightSchema] = pl.concat([left, right], how="diagonal")
+
+- case: concat_diagonal_shared_column_struct_with_mismatched_field_name_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: Struct[Column[Literal["x"], pl.Int64]]
+
+    # A field-name mismatch (not an Unchecked field) still correctly
+    # fails to reconcile, even after the recursive Struct-field walk:
+    # a mismatched Literal name never matches the Instance-pair or
+    # TupleType-pair shapes the recursion looks for.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Struct[Column[Literal["y"], pl.Int64]]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    pl.concat([left, right], how="diagonal")  # E: pl.concat(how="diagonal") column "a" does not reconcile: Struct vs. Struct  [schema-mismatch]
+
+- case: concat_diagonal_generic_column_dtype_falls_back_to_untyped
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Xs[T: pl.DataType](Columns):
+        x: T
+
+    # "x"'s dtype is a real, unconstrained-beyond-DataType TypeVar in
+    # a's own schema, so it is not a resolved instance to compare
+    # against b's concrete Int64 -- unlike the resolved-but-mismatched
+    # case above, this cannot be proven wrong, only unknown, so plain
+    # (non-relaxed) "diagonal" stays silent instead of reporting an
+    # error.
+    def merge_generic[T: pl.DataType](
+        a: TypedDataFrame[Xs[T]],
+        b: TypedDataFrame[Xs[pl.Int64]],
+    ) -> None:
+        reveal_type(pl.concat([a, b], how="diagonal"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_diagonal_mixed_frame_kind_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    # Mixing a TypedDataFrame and a TypedLazyFrame item already fails
+    # mypy's own type-variable solving for pl.concat's own PolarsType
+    # bound, before this hook's own mixed-kind fallback ever matters.
+    # This hook still recognizes each item as a frame in its own right,
+    # so it widens using the first one (Left, a TypedDataFrame) rather
+    # than mypy's own generic-solving fallback (the unhelpful internal
+    # _TypedFrameBase base class both kinds share).
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.Int64
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right], how="diagonal"))  # E: Value of type variable "PolarsType" of "concat" cannot be "_TypedFrameBase"  [type-var] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_diagonal_lazy_unions_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        x: pl.Int64
+
+    Left = TypedLazyFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        y: pl.String
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class ResultSchema(Columns):
+        x: pl.Int64
+        y: pl.String
+
+    result: TypedLazyFrame[ResultSchema] = pl.concat([left, right], how="diagonal")
+
+- case: concat_diagonal_relaxed_promotable_dtype_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int32
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[RightSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_diagonal_relaxed_boolean_absorbed_into_numeric_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Boolean
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[RightSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_diagonal_relaxed_string_absorbs_numeric_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[LeftSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_diagonal_relaxed_mixed_signedness_promotion_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int32
+
+    # Int32 beside UInt32 promotes to Int64, the supertype that polars
+    # measures for the pair.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.UInt32
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class ResultSchema(Columns):
+        a: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_int64_int128_diagonal_relaxed_narrows_to_int128
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int128
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[RightSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_uint64_int128_diagonal_relaxed_narrows_to_int128
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.UInt64
+
+    # A signed and an unsigned integer: polars gives Int128 for this pair.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int128
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[RightSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_string_decimal_diagonal_relaxed_narrows_to_string
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Decimal[Literal[10], Literal[2]]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[LeftSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_string_datetime_diagonal_relaxed_narrows_to_string
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Datetime[Literal["us"], None]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[LeftSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_string_enum_diagonal_relaxed_narrows_to_string
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Enum, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: Enum[Literal["x"], Literal["y"]]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    result: TypedDataFrame[LeftSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_string_duration_diagonal_relaxed_still_falls_back
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        a: pl.String
+
+    # Confirmed against real polars 1.43.2 with real (non-empty) data:
+    # casting a Duration column to String genuinely raises
+    # InvalidOperationError, unlike every other dtype String absorbs --
+    # deliberately not modeled, substitutes Unchecked for this column.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Duration
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class ResultSchema(Columns):
+        a: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = pl.concat(
+        [left, right], how="diagonal_relaxed"
+    )
+
+- case: concat_diagonal_relaxed_generic_column_dtype_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Xs[T: pl.DataType](Columns):
+        x: T
+
+    class NarrowedSchema(Columns):
+        x: Unchecked
+
+    # "x"'s dtype is a real, unconstrained-beyond-DataType TypeVar in
+    # a's own schema, so it is not a resolved instance to promote
+    # against b's concrete Int64 -- but the column's own name is still
+    # known, so only "x" itself narrows to Unchecked, not the whole
+    # result (FALLBACK_AUDIT.md B3's own relaxed half).
+    def merge_generic[T: pl.DataType](
+        a: TypedDataFrame[Xs[T]],
+        b: TypedDataFrame[Xs[pl.Int64]],
+    ) -> None:
+        narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([a, b], how="diagonal_relaxed")
+
+- case: concat_diagonal_relaxed_resolved_unpromotable_dtype_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        x: pl.Date
+
+    # Date and List(Int64) have no common data type, and polars raises
+    # for the pair. "x" becomes Unchecked, and the rest of the result
+    # keeps its types.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        x: List[pl.Int64]
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        x: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="diagonal_relaxed")
+
+- case: concat_unimplemented_how_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # how="horizontal" is mid-deprecation in real polars 1.43.2 itself
+    # (a runtime DeprecationWarning pointing at a new
+    # "horizontal_extend" name, confirmed by actually running it), so
+    # this hook does not build against a behavior already in
+    # transition -- it stays deferred, and falls back to the plain,
+    # erased pl.DataFrame/pl.LazyFrame the same as any other
+    # unrecognized shape.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(
+        pl.concat([left, right], how="horizontal")  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    )
+
+- case: concat_items_variable_falls_back_untouched
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    items = [left, right]
+    reveal_type(pl.concat(items))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_plain_dataframe_in_list_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    left: Left
+    plain: pl.DataFrame
+    reveal_type(pl.concat([left, plain]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_items_passed_twice_falls_back_untouched
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    reveal_type(
+        pl.concat([left, right], items=[left, right])  # E: "concat" gets multiple values for keyword argument "items"  [misc] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    )
+
+- case: concat_empty_items_list_errors
+  main: |
+    import polars as pl
+
+    # Real polars' own pl.concat() requires at least one item and
+    # raises ValueError: cannot concat empty list when given none.
+    reveal_type(pl.concat([]))  # E: concat([]) raises ValueError: cannot concat empty list  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_unresolved_rest_member_is_not_a_mismatch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class OtherSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Other = TypedDataFrame[OtherSchema]
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+    other: Other
+    # df's schema still has a remainder, so its columns are not fully
+    # known here. This is not treated as a proven mismatch.
+    reveal_type(pl.concat([other, df]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_unresolved_rest_member_first_is_not_a_mismatch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class OtherSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Other = TypedDataFrame[OtherSchema]
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+    other: Other
+    # Same as above, but the open frame is first this time: there is
+    # nothing to compare the rest of the list against, so this is not
+    # treated as a proven mismatch either.
+    reveal_type(pl.concat([df, other]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_vertical_lazy_is_untyped_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedLazyFrame[LeftSchema]
+    Right = TypedLazyFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right]))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: concat_align_narrows_to_the_union_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="align")
+
+- case: concat_align_full_narrows_to_the_same_union_schema_as_align
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="align_full")
+
+- case: concat_align_inner_narrows_to_the_same_union_schema_as_align
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="align_inner")
+
+- case: concat_align_left_narrows_to_the_same_union_schema_as_align
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="align_left")
+
+- case: concat_align_right_narrows_to_the_same_union_schema_as_align
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="align_right")
+
+- case: concat_align_with_no_common_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        x: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        y: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right], how="align"))  # E: concat(how="align") raises: 'align' strategy requires at least one common column  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_align_with_no_column_common_to_every_frame_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class ASchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    A = TypedDataFrame[ASchema]
+
+    class BSchema(Columns):
+        k: pl.Int64
+        y: pl.String
+
+    B = TypedDataFrame[BSchema]
+
+    class CSchema(Columns):
+        z: pl.Boolean
+
+    C = TypedDataFrame[CSchema]
+
+    a: A
+    b: B
+    c: C
+    # a and b share "k", but c shares nothing with either -- real
+    # polars requires one name common to *every* frame, not just a
+    # pairwise-shared one, so this still raises.
+    reveal_type(pl.concat([a, b, c], how="align"))  # E: concat(how="align") raises: 'align' strategy requires at least one common column  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_align_on_an_open_member_without_the_promise_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class OtherSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Other = TypedDataFrame[OtherSchema]
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+    other: Other
+    # df's remainder can hold "bar", so a caller whose frame has one
+    # combines differently from one whose frame does not. The call
+    # reports the name at risk and falls back.
+    reveal_type(pl.concat([other, df], how="align"))  # E: This concat combines columns differently for some callers: another frame's remainder can hold "bar". Exclude the names with without=/without_prefix=  [concat-collision] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_horizontal_extend_narrows_to_every_column_side_by_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="horizontal_extend")
+
+- case: concat_horizontal_extend_with_a_duplicate_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Boolean
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right], how="horizontal_extend"))  # E: concat would produce duplicate column "a"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_horizontal_extend_tolerates_mismatched_row_counts
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    # Real polars fills the shorter frame with nulls at runtime -- this
+    # places no constraint on the result schema, only its height.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="horizontal_extend")
+
+- case: concat_horizontal_bare_stays_deferred_and_unnarrowed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    # Bare how="horizontal" is deprecated in real polars (a
+    # DeprecationWarning at runtime, not a static-analysis concern) --
+    # deliberately left deferred rather than modeled.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        b: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(pl.concat([left, right], how="horizontal"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_diagonal_relaxed_promotes_an_integer_beside_a_float
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class IntSchema(Columns):
+        v: pl.Int64
+
+    class FloatSchema(Columns):
+        v: pl.Float32
+
+    class NarrowSchema(Columns):
+        v: pl.Int8
+
+    class WideSchema(Columns):
+        v: pl.Float64
+
+    class SmallSchema(Columns):
+        v: pl.Float32
+
+    ints: TypedDataFrame[IntSchema]
+    floats: TypedDataFrame[FloatSchema]
+    narrow: TypedDataFrame[NarrowSchema]
+    wide: TypedDataFrame[WideSchema] = pl.concat([ints, floats], how="diagonal_relaxed")
+    small: TypedDataFrame[SmallSchema] = pl.concat([narrow, floats], how="diagonal_relaxed")
+
+- case: a_vertical_concat_names_the_first_frame_that_does_not_match
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Values(Columns):
+        v: pl.Int64
+        k: pl.Int64
+
+    class Text(Columns):
+        v: pl.String
+
+    a: TypedDataFrame[Values]
+    b: TypedDataFrame[Values]
+    c: TypedDataFrame[Text]
+    pl.concat([a, b, c])  # E: pl.concat(how="vertical") requires identical schemas: frame 2 does not match frame 0  [schema-mismatch]
+
+- case: two_decimal_precisions_stack_as_one_type
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, List, TypedDataFrame
+
+    class A(Columns):
+        d: Decimal[Literal[10], Literal[2]]
+        l: List[Decimal[Literal[10], Literal[2]]]
+
+    class B(Columns):
+        d: Decimal[Literal[38], Literal[3]]
+        l: List[Decimal[Literal[38], Literal[3]]]
+
+    a: TypedDataFrame[A]
+    b: TypedDataFrame[B]
+    pl.concat([a, b])
+    pl.concat([a, b], how="vertical_relaxed")
+    reveal_type(pl.concat([a, b], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.A, {'d': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'l': astrolabe.frame.List[astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
+    reveal_type(pl.concat([a, b], how="diagonal_relaxed"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Decimal[Literal[38], Literal[3]], 'l': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(a.vstack(b))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.A, {'d': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'l': astrolabe.frame.List[astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
+    pl.concat([a, b], how="align")  # E: pl.concat(how="align") column "d" does not reconcile: Decimal vs. Decimal  [schema-mismatch]

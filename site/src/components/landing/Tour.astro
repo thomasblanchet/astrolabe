@@ -1,0 +1,639 @@
+---
+/**
+ * The walkthrough: seven steps over one pipeline, with the checker's view of each frame.
+ *
+ * On a wide screen, the code panel stays in view and shows the step that is
+ * at the middle of the screen. A marked line opens its note when the pointer
+ * or the keyboard focus is on it, and a click or Enter keeps the note open.
+ * On a narrow screen, each step shows its own code, with the notes under it.
+ */
+import { STEPS, chips, inlineLines, panelLines, parts, stageAt, status } from '../../lib/tour';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const first = STEPS[0];
+const firstStage = stageAt(first, -1);
+---
+
+<section id="tour" class="tour-section">
+  <p class="eyebrow">how it works</p>
+
+  <div class="tour">
+    <div class="tour-steps">
+      {
+        STEPS.map((step, index) => (
+          <div class="tour-step" data-tour-step={index} data-current={index === 0 ? 'true' : 'false'}>
+            <div class="step-head">
+              <span class="step-number">{index + 1}</span>
+              <h3>{step.title}</h3>
+            </div>
+            <p class="blurb" set:html={parts(step.blurb)} />
+            <div class="tour-inline">
+              <div class="code-card small">
+                <div class="code-bar">
+                  <span>{step.file}</span>
+                  <span>{status(step)}</span>
+                </div>
+                <div class="code-lines" set:html={inlineLines(step)} />
+              </div>
+              <ul class="inline-notes">
+                {step.notes.map((note) => (
+                  <li set:html={parts(note.text)} />
+                ))}
+              </ul>
+            </div>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="tour-panel">
+      <div class="tour-pop" id="tour-pop" role="note" aria-live="polite"><p></p></div>
+      <div class="panel-stack">
+        <div class="code-card">
+          <div class="code-bar">
+            <span data-file>{first.file}</span>
+            <span data-status>{status(first)}</span>
+          </div>
+          <div class="code-lines panel" data-lines set:html={panelLines(first)} />
+        </div>
+        <div class={firstStage === null ? 'schema empty' : 'schema'} data-schema>
+          <p class="schema-label" data-schema-label>{firstStage?.label ?? ''}</p>
+          <div class="chips" data-chips set:html={chips(firstStage)} />
+        </div>
+        <p class="counter" data-counter>Step 1 of {STEPS.length}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="further">
+    <div class="further-copy">
+      <p class="further-title">Want to go further?</p>
+      <p>Learn the full Astrolabe type grammar and the Polars operations it supports.</p>
+    </div>
+    <a class="button primary" href={`${base}docs/`}>Read the documentation →</a>
+  </div>
+</section>
+
+<script>
+  import { STEPS, chips, panelLines, parts, range, stageAt, status, type Stage } from '../../lib/tour';
+
+  const section = document.querySelector<HTMLElement>('#tour')!;
+  const panel = section.querySelector<HTMLElement>('.tour-panel')!;
+  const pop = section.querySelector<HTMLElement>('.tour-pop')!;
+  const lines = section.querySelector<HTMLElement>('[data-lines]')!;
+  const file = section.querySelector<HTMLElement>('[data-file]')!;
+  const statusLabel = section.querySelector<HTMLElement>('[data-status]')!;
+  const schema = section.querySelector<HTMLElement>('[data-schema]')!;
+  const schemaLabel = section.querySelector<HTMLElement>('[data-schema-label]')!;
+  const chipRow = section.querySelector<HTMLElement>('[data-chips]')!;
+  const counter = section.querySelector<HTMLElement>('[data-counter]')!;
+  const blocks = [...section.querySelectorAll<HTMLElement>('[data-tour-step]')];
+
+  let step = 0;
+  let hover: number | null = null;
+  let pinned: number | null = null;
+  let top = 0;
+  let shown: Stage | null | undefined = stageAt(STEPS[0], -1);
+
+  function active(): number {
+    const chosen = pinned ?? hover;
+    return chosen === null || chosen >= STEPS[step].notes.length ? -1 : chosen;
+  }
+
+  function lineOf(target: EventTarget | null): HTMLElement | null {
+    return target instanceof Element ? target.closest<HTMLElement>('[data-line]') : null;
+  }
+
+  function topOf(owner: number): number {
+    const first = range(STEPS[step], STEPS[step].notes[owner])[0];
+    const line = lines.querySelector(`[data-line="${first}"]`);
+    if (line === null) return top;
+    return line.getBoundingClientRect().top - panel.getBoundingClientRect().top - 8;
+  }
+
+  function renderActive(): void {
+    const current = STEPS[step];
+    const index = active();
+    const span = index < 0 ? null : range(current, current.notes[index]);
+    lines.querySelectorAll<HTMLElement>('[data-line]').forEach((element) => {
+      const at = Number(element.dataset.line);
+      const lit = span !== null && at >= span[0] && at <= span[1];
+      element.classList.toggle('lit', lit);
+      element.classList.toggle('quiet', span !== null && !lit);
+    });
+    pop.style.top = `${top}px`;
+    pop.classList.toggle('open', index >= 0);
+    if (index >= 0) pop.querySelector('p')!.innerHTML = parts(current.notes[index].text);
+    const stage = stageAt(current, index);
+    if (stage !== shown) {
+      shown = stage;
+      chipRow.innerHTML = chips(stage);
+      schemaLabel.textContent = stage?.label ?? '';
+      schema.classList.toggle('empty', stage === null);
+    }
+  }
+
+  function renderStep(): void {
+    const current = STEPS[step];
+    file.textContent = current.file;
+    statusLabel.textContent = status(current);
+    lines.innerHTML = panelLines(current);
+    counter.textContent = `Step ${step + 1} of ${STEPS.length}`;
+    blocks.forEach((block, index) => {
+      block.dataset.current = index === step ? 'true' : 'false';
+    });
+    renderActive();
+  }
+
+  function enter(owner: number): void {
+    if (pinned !== null) return;
+    if (owner < 0) {
+      if (hover !== null) {
+        hover = null;
+        renderActive();
+      }
+      return;
+    }
+    if (owner !== hover) {
+      hover = owner;
+      top = topOf(owner);
+      renderActive();
+    }
+  }
+
+  function pin(owner: number): void {
+    if (owner < 0 || pinned === owner) {
+      pinned = null;
+      renderActive();
+      return;
+    }
+    pinned = owner;
+    hover = owner;
+    top = topOf(owner);
+    renderActive();
+  }
+
+  function leave(): void {
+    if (pinned === null && hover !== null) {
+      hover = null;
+      renderActive();
+    }
+  }
+
+  lines.addEventListener('mouseover', (event) => {
+    const line = lineOf(event.target);
+    if (line !== null) enter(Number(line.dataset.owner));
+  });
+  lines.addEventListener('mouseleave', leave);
+  lines.addEventListener('click', (event) => {
+    const line = lineOf(event.target);
+    if (line !== null) pin(Number(line.dataset.owner));
+  });
+  lines.addEventListener('focusin', (event) => {
+    const line = lineOf(event.target);
+    if (line !== null) enter(Number(line.dataset.owner));
+  });
+  lines.addEventListener('focusout', (event) => {
+    if (lineOf(event.relatedTarget) === null) leave();
+  });
+  lines.addEventListener('keydown', (event) => {
+    const line = lineOf(event.target);
+    if (line === null) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      pin(Number(line.dataset.owner));
+    } else if (event.key === 'Escape') {
+      pinned = null;
+      hover = null;
+      renderActive();
+    }
+  });
+
+  let frame: number | null = null;
+
+  function pickStep(): void {
+    frame = null;
+    const middle = window.innerHeight * 0.45;
+    let best = step;
+    let bestDistance = Infinity;
+    blocks.forEach((block, index) => {
+      const box = block.getBoundingClientRect();
+      const distance = Math.abs(box.top + box.height / 2 - middle);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    });
+    if (best !== step) {
+      step = best;
+      hover = null;
+      pinned = null;
+      renderStep();
+    }
+  }
+
+  function schedule(): void {
+    if (frame === null) frame = requestAnimationFrame(pickStep);
+  }
+
+  document.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule);
+  pickStep();
+</script>
+
+<style is:global>
+  .tour-section {
+    padding: 0 0 96px;
+  }
+
+  .tour-section > .eyebrow {
+    margin-bottom: 8px;
+  }
+
+  .tour {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  .tour-step {
+    min-height: min(75vh, 680px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    opacity: 0.4;
+    transition: opacity 0.35s;
+  }
+
+  .tour-step[data-current='true'] {
+    opacity: 1;
+  }
+
+  .step-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 28px;
+    height: 28px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    border: 1px solid rgba(212, 175, 55, 0.45);
+    color: var(--gold);
+    transition:
+      background 0.3s,
+      color 0.3s;
+  }
+
+  .tour-step[data-current='true'] .step-number {
+    background: var(--gold);
+    border-color: var(--gold);
+    color: var(--navy);
+  }
+
+  .step-head h3 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 24px;
+    color: var(--star);
+  }
+
+  .blurb {
+    margin: 0;
+    max-width: 30rem;
+  }
+
+  .tour-inline {
+    display: none;
+    margin-top: 18px;
+  }
+
+  .tour-panel {
+    position: sticky;
+    top: 96px;
+  }
+
+  .panel-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .tour-pop {
+    position: absolute;
+    right: calc(100% + 18px);
+    width: min(330px, 34vw);
+    padding: 14px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--gold);
+    background: var(--navy-pop);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition:
+      top 0.2s ease-out,
+      opacity 0.2s;
+  }
+
+  .tour-pop.open {
+    opacity: 1;
+  }
+
+  .tour-pop::after {
+    content: '';
+    position: absolute;
+    top: 14px;
+    right: -7px;
+    width: 12px;
+    height: 12px;
+    background: var(--navy-pop);
+    border-top: 1px solid var(--gold);
+    border-right: 1px solid var(--gold);
+    transform: rotate(45deg);
+  }
+
+  .tour-pop p {
+    margin: 0;
+    color: #e6e4dd;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .code-card {
+    border: 1px solid rgba(212, 175, 55, 0.22);
+    border-radius: 10px;
+    background: var(--navy-panel);
+    overflow: hidden;
+  }
+
+  .code-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.15);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .code-card.small .code-bar {
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+
+  .code-lines {
+    padding: 14px 0;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--code-plain);
+    font-variant-ligatures: none;
+  }
+
+  .code-lines.panel {
+    padding: 20px 0;
+    font-size: 14px;
+    min-height: 300px;
+  }
+
+  .tl {
+    padding: 0 20px 0 calc(20px + 4ch);
+    text-indent: -4ch;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    min-height: 1.7em;
+    transition:
+      opacity 0.35s,
+      background 0.35s,
+      box-shadow 0.35s;
+  }
+
+  .tl.hinted {
+    box-shadow: inset 2px 0 0 rgba(212, 175, 55, 0.28);
+    cursor: help;
+  }
+
+  .tl.hinted:focus-visible {
+    outline: 1px solid var(--gold-bright);
+    outline-offset: -1px;
+  }
+
+  .tl.quiet {
+    opacity: 0.5;
+  }
+
+  .tl.lit {
+    background: rgba(212, 175, 55, 0.1);
+    box-shadow: inset 3px 0 0 var(--gold);
+  }
+
+  .tl.err {
+    background: rgba(232, 131, 107, 0.12);
+  }
+
+  .tk-plain {
+    color: var(--code-plain);
+  }
+
+  .tk-keyword {
+    color: var(--code-keyword);
+  }
+
+  .tk-string {
+    color: var(--code-string);
+  }
+
+  .tk-number {
+    color: var(--code-number);
+  }
+
+  .tk-comment {
+    color: var(--code-comment);
+    font-style: italic;
+  }
+
+  .tk-call {
+    color: var(--code-call);
+  }
+
+  .tk-type {
+    color: var(--code-type);
+  }
+
+  .tk-error {
+    color: var(--code-error);
+  }
+
+  .schema {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 180px;
+    overflow: hidden;
+    padding: 16px 18px;
+    border-radius: 10px;
+    border: 1px dashed rgba(212, 175, 55, 0.35);
+    transition: opacity 0.25s;
+  }
+
+  .schema.empty {
+    opacity: 0;
+  }
+
+  .schema-label {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chip {
+    display: inline-flex;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  .chip-name {
+    color: var(--star);
+  }
+
+  .chip-type {
+    color: var(--muted);
+  }
+
+  .chip.added {
+    border-color: var(--gold);
+    background: rgba(212, 175, 55, 0.14);
+    animation: chip-in 0.5s ease-out;
+  }
+
+  .chip.removed {
+    border: 1px dashed rgba(232, 131, 107, 0.5);
+    opacity: 0.45;
+    animation: chip-out 0.5s ease-out;
+  }
+
+  .chip.removed .chip-name {
+    color: var(--code-error);
+    text-decoration: line-through;
+  }
+
+  @keyframes chip-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes chip-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0.45;
+    }
+  }
+
+  .counter {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .inline-notes {
+    margin: 14px 0 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 15px;
+  }
+
+  .further {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 48px;
+    padding: 24px 28px;
+    border-radius: 10px;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    background: var(--navy-raised);
+  }
+
+  .further-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 40rem;
+  }
+
+  .further-copy p {
+    margin: 0;
+  }
+
+  .further-title {
+    font-family: var(--font-serif);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--star);
+  }
+
+  @media (max-width: 900px) {
+    .tour {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tour-panel {
+      display: none;
+    }
+
+    .tour-step {
+      min-height: 0;
+      padding: 28px 0;
+      opacity: 1;
+    }
+
+    .tour-inline {
+      display: block;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chip.added,
+    .chip.removed {
+      animation: none;
+    }
+  }
+</style>

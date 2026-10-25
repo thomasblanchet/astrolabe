@@ -1,0 +1,42 @@
+---
+title: 7. Make the checker stricter
+description: Choose which results the checker accepts without a proof.
+sidebar:
+  order: 7
+  label: Make the checker stricter
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+Some results have no proof. The checker knows the name of a column but not its data type, or it cannot know the columns of a frame at all. One setting decides which of these results are errors.
+
+## A result without a proof
+
+`map_elements` runs a Python function on each value. The checker cannot read the function, so it cannot know the data type of the result:
+
+<Example name="tut_strict_default" />
+
+The column `price` keeps its name, with the data type `Unchecked`. Every other check still applies: the other columns keep their data types, and a later step that reads `price` passes.
+
+## Make it an error
+
+The setting `allow_unproven` sets a level. A stricter level reports more of these results. At the level `stated`, the same line is an error:
+
+```toml title="pyproject.toml"
+[tool.astrolabe]
+allow_unproven = "stated"
+```
+
+<Example name="tut_strict_stated" />
+
+The note names two ways to let the line pass: a less strict level, or an override for one operation.
+
+## Give the checker the proof
+
+Here, the better fix is to state the data type. `return_dtype=` names it, and the column is typed again:
+
+<Example name="tut_strict_fixed" />
+
+The default level is `omitted`. A new project can start at a stricter level, and an existing codebase can start at the default. See [Configuration](../../reference/configuration/) for each level, and [Adopting in an existing codebase](../../guides/adopting/).
+
+This is the end of the tutorial. The [Guides](../../guides/schemas/) explain each topic in more detail.

@@ -1,0 +1,60 @@
+---
+title: Frame operations
+description: What the checker computes for the operations that change the columns of a frame.
+sidebar:
+  order: 3
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+Each operation gives a frame with a new schema. The checker computes that schema from the schema of the input and the arguments of the call, with the rules of Polars. If Polars refuses the call, the checker reports it.
+
+An operation that keeps the columns, for example `sort`, `head`, `unique` or `filter`, keeps the schema.
+
+## Choose and name columns
+
+`select`, `with_columns`, `drop` and `rename` choose the columns and their names:
+
+<Example name="ops_columns" />
+
+A name that the frame does not have is an error. An operation that gives two columns with one name is an error too, because Polars refuses such a frame.
+
+## Join
+
+A join keeps the columns of both sides. Polars adds the suffix `_right` to a right column whose name is also a left column, and the checker does the same:
+
+<Example name="ops_join" />
+
+The keys of the two sides must have data types that Polars can join. A `String` key and an `Int64` key are an error. `join_asof` and `join_where` are checked too.
+
+## Group and aggregate
+
+`group_by(...).agg(...)` keeps the keys and one column for each aggregation. The shorthands, for example `len()`, `sum()` and `max()`, give their own columns:
+
+<Example name="ops_group_by" />
+
+`rolling(...).agg(...)` and `group_by_dynamic(...).agg(...)` group the rows into windows along an index column. The checker checks that the index has a data type that the call accepts.
+
+## Reshape
+
+`unpivot` turns columns into rows. `with_row_index` adds a row number:
+
+<Example name="ops_reshape" />
+
+`pivot` turns rows into columns. `explode` needs a `List` or an `Array` column, and `unnest` needs a `Struct` column:
+
+<Example name="ops_explode" />
+
+## Combine frames
+
+`pl.concat` with `how="diagonal"` lines up the columns by name. A shared column must have one data type in every frame:
+
+<Example name="ops_concat" />
+
+A vertical concat stacks the frames by the position of their columns. A type does not hold the order of the columns, so the checker gives the plain frame. The setting `disallow_vertical_concat` makes each vertical concat an error. `hstack`, `vstack`, `extend` and `merge_sorted` are checked too.
+
+## Fill and reduce
+
+`fill_null` and `fill_nan` give each column the data type that Polars gives after the fill. A fill value of another data type can widen a column: `fill_null(0.5)` turns an `Int64` column into a `Float64` column. The whole-frame reducers, for example `sum()` and `mean()`, give one row, with the data type that the reducer gives for each column.
+
+See [Operations](../../reference/operations/) for the full list.

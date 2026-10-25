@@ -1,0 +1,100 @@
+# The dtype and name markers' own syntax checks, reported at the
+# annotation before any hook runs.
+
+- case: list_marker_needs_one_argument
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int64, pl.String]  # E: List[...] requires exactly 1 type argument: List[dtype]  [marker-arity]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+- case: array_marker_needs_a_dtype_and_a_size
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Array[pl.Int64]  # E: Array[...] requires exactly 2 type arguments: Array[dtype, size]  [marker-arity]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    class OtherSchema(Columns):
+        a: Array[pl.Int64, Literal[-1]]  # E: Array[...] size argument must be a non-negative integer literal  [marker-arg]
+
+    Other = TypedDataFrame[OtherSchema]
+
+- case: struct_marker_fields_must_be_columns
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: Struct[pl.Int64]  # E: Struct[...] arguments must be Column[...]  [marker-arg]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    class OtherSchema(Columns):
+        s: Struct[Column[Literal["a"], pl.Int64], Column[Literal["a"], pl.String]]  # E: Struct[...] would produce duplicate column "a"  [duplicate-column]
+
+    Other = TypedDataFrame[OtherSchema]
+
+- case: suffixed_and_prefixed_markers_check_their_arguments
+  main: |
+    # A malformed remainder marker is refused twice: once by its own
+    # check, once by the frame, which then sees no remainder at all.
+    import polars as pl
+    from astrolabe import Columns, other_columns, Prefixed, Suffixed, TypedDataFrame
+
+    Rest = other_columns()
+
+    class ASchema(Columns):
+        a: pl.Int64
+
+    A = TypedDataFrame[ASchema, Suffixed[Rest]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg] # E: Suffixed[...] requires exactly 2 type arguments: Suffixed[name_expr, suffix]  [marker-arity]
+    B = TypedDataFrame[ASchema, Suffixed[Rest, str]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg] # E: Suffixed[...] suffix argument must be a string literal, e.g. Suffixed[..., Literal["_right"]]  [marker-arg]
+    C = TypedDataFrame[ASchema, Prefixed[Rest]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg] # E: Prefixed[...] requires exactly 2 type arguments: Prefixed[prefix, name_expr]  [marker-arity]
+    D = TypedDataFrame[ASchema, Prefixed[str, Rest]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg] # E: Prefixed[...] prefix argument must be a string literal, e.g. Prefixed[Literal["pre_"], ...]  [marker-arg]
+
+- case: a_frame_class_with_no_argument_is_the_plain_frame
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, TypedLazyFrame
+
+    # A frame class alone names no columns. Polars runs a call on any
+    # frame, so no schema follows from the bare class, and the checker
+    # does not track it.
+    def f(df: TypedDataFrame, lf: TypedLazyFrame, kind: type[TypedDataFrame]) -> None:
+        reveal_type(df)  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(lf)  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+        reveal_type(kind)  # N: Revealed type is "type[polars.dataframe.frame.DataFrame]"
+        reveal_type(df.select(pl.col("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: array_marker_with_an_unresolved_size_is_left_to_mypy
+  main: |
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Array[pl.Int64, Width]  # E: Name "Width" is not defined  [name-defined]
+
+    Frame = TypedDataFrame[FrameSchema]  # E: TypedDataFrame[...]/TypedLazyFrame[...] takes a schema class, then an optional remainder: declare the columns in a class that inherits Columns, or with columns("Name", {...}) for names that are not identifiers  [marker-arg]
+
+- case: remainder_filter_markers_check_their_selector_argument
+  main: |
+    import polars as pl
+    from astrolabe import Both, Columns, Except, Minus, Only, Retyped, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        bid: pl.Float64
+
+    Rest = other_columns()
+    a: TypedDataFrame[Quotes, Only[Rest, pl.String]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+    b: TypedDataFrame[Quotes, Except[Rest, pl.String]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+    c: TypedDataFrame[Quotes, Minus[Rest, pl.String]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+    d: TypedDataFrame[Quotes, Retyped[Rest, int]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+    e: TypedDataFrame[Quotes, Both[Rest, int]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]

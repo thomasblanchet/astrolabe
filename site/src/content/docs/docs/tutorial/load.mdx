@@ -1,0 +1,39 @@
+---
+title: 1. Load data with a schema
+description: Pass a schema to the reader, and the frame has typed columns from its first line.
+sidebar:
+  order: 1
+  label: Load data with a schema
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+## Read a file with a schema
+
+Polars reads a CSV file with `pl.read_csv`. Give it the schema of the file, as you do for any Polars program. The checker reads that schema, so `trades` is a typed frame from the start:
+
+<Example name="tut_load_schema" />
+
+Nothing in this code comes from Astrolabe. The type of `trades` is `TypedDataFrame`, with three columns. Each later step is checked against them.
+
+## A wrong name is an error
+
+The next line reads a column with a typo:
+
+<Example name="tut_load_typo" />
+
+Polars raises `ColumnNotFoundError` when this line runs. The checker reports it before the code runs, at the line of the typo.
+
+## Without a schema, the frame is plain
+
+If the reader gets no schema, Polars finds the data types from the data when the code runs. The checker cannot know them, so the result is the plain frame `pl.DataFrame`, which it does not track:
+
+<Example name="tut_load_plain" />
+
+The typo on `prcie` passes, because the checker does not know the columns of `raw`. Give each reader a schema with `schema={...}`. For a frame that comes without a schema, check it at run time with `check_schema`: see [Check the data at run time](../runtime/).
+
+:::note
+Write the schema as a dict in the call. The checker reads a dict literal. It does not follow a dict that a variable holds.
+:::
+
+Next: [2. Transform the frame](../transform/).

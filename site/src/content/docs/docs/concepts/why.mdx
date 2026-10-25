@@ -1,0 +1,30 @@
+---
+title: Why type frames statically
+description: Why a frame needs a type, and what a check before the code runs gives that a check at run time does not.
+sidebar:
+  order: 1
+---
+
+Code that uses Polars names its columns with strings: `pl.col("price")`, `select("symbol")`, `join(on="symbol")`. For a type checker without a plugin, a frame is one type, `pl.DataFrame`, whatever columns it holds. So mypy accepts a misspelled column, a column that an earlier step dropped, and a filter on a column of the wrong data type. Polars finds each of these faults only when the line runs.
+
+## Faults that come late
+
+A fault that only a run finds comes late, and sometimes it does not come at all:
+
+- A pipeline that runs for an hour fails at its last step.
+- A branch that handles a rare case runs once a month, and fails then.
+- A refactor renames a column in one function, and a caller three modules away still reads the old name.
+
+Tests find some of these faults, if a test runs each path with data that has each shape.
+
+## What a runtime check gives
+
+A validation library checks a frame against a schema at run time. This check is valuable where data enters the program: a file can always differ from what the code expects. But a runtime check sees only the frames that reach it, on the paths that run. It says nothing about the steps between two checks, and each check costs time on each run.
+
+## What a static check gives
+
+Astrolabe gives each frame a type that states its columns. The checker computes the type of each step from the step before it, with the rules of Polars. So it checks every step and every path, before the code runs, at no cost to the run.
+
+The type of a frame is also documentation that cannot go stale. A function that declares the columns it reads tells each reader, person or coding agent, what it needs. A change that breaks a caller is an error at the caller.
+
+The two kinds of check work together. Check the data once at the boundary, with `check_schema` or a validation library. The checker then proves that the code agrees with the data from there on. See [What a type guarantees](../guarantees/).

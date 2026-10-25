@@ -1,0 +1,130 @@
+# Architectural guarantee: an astrolabe plugin hook never makes a call
+# LESS strict than bare mypy would already make it. Every hook this
+# project registers falls into one of two shapes, and both compose with
+# mypy's own normal checking rather than replacing it:
+#
+# - `get_method_hook`/`get_function_hook` (every frame/Expr/function
+#   hook in this project: SelectHook, PivotHook, ConcatHook, and so on)
+#   run AFTER mypy has already checked the call against the real polars
+#   stub's own declared signature (argument count, argument types,
+#   keyword validity). The hook only gets to override the call's own
+#   RESULT type; it never sees, and cannot suppress, an error mypy's
+#   normal argument-checking already reported. Confirmed against mypy's
+#   own plugin protocol, not assumed.
+# - `get_method_signature_hook`/`get_function_signature_hook` (the Yoda
+#   dunder hooks in `typed_expr_yoda.py`, and the Rest-generic function
+#   signature hook in `generics/inference.py`) run BEFORE checking and
+#   can, in principle, change what a call accepts. Both are narrowly and
+#   conditionally scoped: the Yoda hook widens only the one operand
+#   position it confirms is actually a `TypedExpr`, leaving every other
+#   argument's own real stub type unchanged; the Rest-generic hook only
+#   substitutes `Rest`'s own binding, leaving every other parameter's
+#   own declared type unchanged. Neither loosens checking for a
+#   plain call that does not touch astrolabe's own type-level
+#   constructs.
+#
+# Each case below deliberately combines a call shape a hook narrows or
+# falls back on successfully with an unrelated, genuine mypy stub error
+# in the same call, and asserts both the hook's own result AND the real
+# error appear together. If a future change to any of these hook
+# mechanisms ever caused a real mypy error to go missing here, that
+# would mean a hook is now suppressing checking it has no business
+# suppressing.
+
+- case: method_hook_success_still_reports_an_unrelated_stub_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # name="idx" is exactly what WithRowIndexHook needs to narrow
+    # precisely. offset expects int; "not_an_int" is a real, unrelated
+    # error against polars' own with_row_index() stub, nothing to do
+    # with astrolabe's own logic.
+    reveal_type(df.with_row_index(name="idx", offset="not_an_int"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'idx': polars.datatypes.classes.UInt32, 'a': polars.datatypes.classes.Int64}, closed=True), None]" # E: Argument "offset" to "with_row_index" of "DataFrame" has incompatible type "str"; expected "int"  [arg-type]
+
+- case: method_hook_fallback_still_reports_an_unrelated_stub_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name_var: str = "idx"
+    # A non-Final name makes WithRowIndexHook fall back to the plain,
+    # erased pl.DataFrame -- but offset's own real stub error still
+    # fires independently, the hook falling back does not hide it.
+    reveal_type(df.with_row_index(name=name_var, offset="not_an_int"))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "offset" to "with_row_index" of "DataFrame" has incompatible type "str"; expected "int"  [arg-type]
+
+- case: function_hook_success_still_reports_an_unrelated_stub_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    class Frame2Schema(Columns):
+        b: pl.String
+
+    Frame2 = TypedDataFrame[Frame2Schema]
+
+    df: Frame
+    df2: Frame2
+    # how="diagonal" narrows precisely via ConcatHook. rechunk expects
+    # bool; "nope" is a real, unrelated error against pl.concat()'s own
+    # stub.
+    reveal_type(pl.concat([df, df2], how="diagonal", rechunk="nope"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]" # E: Argument "rechunk" to "concat" has incompatible type "str"; expected "bool"  [arg-type]
+
+- case: yoda_signature_hook_only_widens_for_a_confirmed_typed_expr_operand
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # Literal on the left, a typed expression on the right: mypy tries
+    # the reflected dunder on the right operand, and the reflected
+    # hook reads the literal from the operand's type.
+    reveal_type(5 + pl.col("a"))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["5 + pl.col('a')"]]]"
+    # The right operand here is an ordinary str, so int.__add__'s own
+    # declared signature applies: this must still be an ordinary mypy
+    # error.
+    reveal_type(5 + "not_a_number")  # N: Revealed type is "int" # E: Unsupported operand types for + ("int" and "str")  [operator]
+
+- case: rest_generic_signature_hook_does_not_relax_unrelated_parameters
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    def transform(
+        df: TypedDataFrame[DfSchema, Rest],
+        multiplier: int,
+    ) -> None:
+        pass
+
+    df: TypedDataFrame[DfSchema, Rest]
+    # The frame parameter matches its own declared type.
+    # multiplier="oops" is a real, unrelated error against transform's
+    # own plain parameter, nothing to do with the remainder.
+    transform(df, multiplier="oops")  # E: Argument "multiplier" to "transform" has incompatible type "str"; expected "int"  [arg-type]

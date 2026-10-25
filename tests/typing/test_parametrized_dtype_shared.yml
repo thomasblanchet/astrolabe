@@ -1,0 +1,467 @@
+# Datetime[Unit, Zone], Duration[Unit], Decimal[Precision, Scale],
+# Enum[*Categories]: the DType-level grammar needed to declare a
+# parametrized dtype column. Real polars' own pl.Datetime/pl.Duration/
+# pl.Decimal/pl.Enum constructors take real arguments
+# (time_unit/time_zone/precision/scale/categories), unlike List/Array/
+# Struct, which have no real polars constructor argument to mirror at
+# all. Written before the corresponding get_type_analyze_hooks exist.
+# These tests are expected to fail (red) until type_analysis.py
+# implements them.
+#
+# Categorical is deliberately not covered here, and never will be: its
+# own real parametrization is a runtime-registered Categories object
+# with no compile-time literal encoding, so it stays a bare,
+# unparametrized marker permanently, unlike Enum's own plain
+# string-literal categories.
+
+- case: datetime_dtype_column_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: Datetime[Literal["us"], None]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: Datetime[Literal["us"], None]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("bar")
+
+- case: datetime_dtype_column_with_zone_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Datetime[Literal["us"], Literal["UTC"]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.select("bar")
+
+- case: datetime_dtype_requires_exactly_two_type_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    x: Column[  # E: Datetime[...] requires exactly 2 type arguments: Datetime[unit, zone]  [marker-arity]
+        Literal["bar"], Datetime[Literal["us"]]
+    ]
+
+- case: datetime_dtype_unit_must_be_a_string_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    x: Column[  # E: Datetime[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
+        Literal["bar"], Datetime[str, None]
+    ]
+
+- case: datetime_dtype_unit_rejects_an_unrecognized_value
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    x: Column[  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
+        Literal["bar"], Datetime[Literal["seconds"], None]
+    ]
+
+- case: datetime_dtype_zone_rejects_a_non_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    x: Column[  # E: Datetime[...] zone argument must be None, a string literal such as Literal["UTC"], or AnyZone for every zone of the unit  [marker-arg]
+        Literal["bar"], Datetime[Literal["us"], str]
+    ]
+
+- case: datetime_dtype_zone_rejects_an_unrecognized_value
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    # Real polars raises ComputeError: unable to parse time zone the
+    # moment a column of this dtype is materialized, confirmed
+    # empirically -- not deferred to any later operation.
+    x: Column[  # E: Zone 'Not/AZone' is not a recognized IANA time zone name  [marker-arg]
+        Literal["bar"], Datetime[Literal["us"], Literal["Not/AZone"]]
+    ]
+
+- case: datetime_dtype_zone_accepts_a_real_iana_name
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Datetime
+
+    x: Column[Literal["bar"], Datetime[Literal["us"], Literal["America/New_York"]]]
+
+- case: duration_dtype_column_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Duration, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: Duration[Literal["ms"]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: Duration[Literal["ms"]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("bar")
+
+- case: duration_dtype_requires_exactly_one_type_argument
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Duration
+
+    x: Column[  # E: Duration[...] requires exactly 1 type argument: Duration[unit]  [marker-arity]
+        Literal["bar"], Duration[Literal["ms"], Literal["us"]]
+    ]
+
+- case: duration_dtype_unit_must_be_a_string_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Duration
+
+    x: Column[  # E: Duration[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
+        Literal["bar"], Duration[str]
+    ]
+
+- case: duration_dtype_unit_rejects_an_unrecognized_value
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Duration
+
+    x: Column[  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
+        Literal["bar"], Duration[Literal["seconds"]]
+    ]
+
+- case: decimal_dtype_column_with_precision_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: Decimal[Literal[38], Literal[2]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: Decimal[Literal[38], Literal[2]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("bar")
+
+- case: decimal_dtype_column_with_no_precision_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Decimal[None, Literal[2]]
+
+    # Real polars' own Decimal.__init__ substitutes 38 unconditionally
+    # when precision is omitted, so an omitted Precision resolves to
+    # Literal[38], not None -- Decimal[None, ...] and
+    # Decimal[Literal[38], ...] are the identical runtime object, and
+    # narrow identically here.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: Decimal[Literal[38], Literal[2]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("bar")
+
+- case: decimal_dtype_requires_exactly_two_type_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    x: Column[  # E: Decimal[...] requires exactly 2 type arguments: Decimal[precision, scale]  [marker-arity]
+        Literal["bar"], Decimal[Literal[38]]
+    ]
+
+- case: decimal_dtype_precision_rejects_a_non_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    x: Column[  # E: Decimal[...] precision argument must be None or a literal int, e.g. Literal[38]  [marker-arg]
+        Literal["bar"], Decimal[str, Literal[2]]
+    ]
+
+- case: decimal_dtype_precision_rejects_a_negative_value
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Real polars raises OverflowError the moment a column of this dtype
+    # is materialized, confirmed empirically, with no data involved.
+    x: Column[  # E: Decimal[...] precision argument must be non-negative  [marker-arg]
+        Literal["bar"], Decimal[Literal[-1], Literal[2]]
+    ]
+
+- case: decimal_dtype_scale_rejects_a_negative_value
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Real polars raises OverflowError the moment a column of this dtype
+    # is materialized, confirmed empirically, with no data involved.
+    x: Column[  # E: Decimal[...] scale argument must be non-negative  [marker-arg]
+        Literal["bar"], Decimal[Literal[5], Literal[-1]]
+    ]
+
+- case: decimal_dtype_scale_rejects_exceeding_precision
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Real polars raises InvalidOperationError: scale must be less than
+    # or equal to precision, confirmed empirically, the moment a column
+    # of this dtype is materialized.
+    x: Column[  # E: Decimal[...] scale must not exceed precision  [marker-arg]
+        Literal["bar"], Decimal[Literal[2], Literal[5]]
+    ]
+
+- case: decimal_dtype_scale_within_omitted_precision_declares_cleanly
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Precision omitted (None) resolves to Literal[38], real polars' own
+    # implicit default (Stage 17) -- this Scale is well within it, so
+    # the cross-check runs and passes, matching
+    # decimal_dtype_column_with_no_precision_declares_and_narrows above,
+    # which already covers the narrowing side of this shape.
+    x: Column[Literal["bar"], Decimal[None, Literal[2]]]
+
+- case: decimal_dtype_scale_exceeding_omitted_precision_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Confirmed empirically: real polars raises InvalidOperationError at
+    # schema materialization for a Decimal whose Scale exceeds its own
+    # implicit precision of 38, the same "reject impossible values"
+    # class as every other Decimal Precision/Scale check in this file.
+    # Before Stage 17, an omitted Precision resolved to None, so this
+    # cross-check never ran at all for this shape.
+    x: Column[  # E: Decimal[...] scale must not exceed precision  [marker-arg]
+        Literal["bar"], Decimal[None, Literal[40]]
+    ]
+
+- case: decimal_dtype_precision_bare_int_does_not_double_report
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # A bare int (not wrapped in Literal[...]) is already rejected by
+    # mypy's own parser with [valid-type] -- found while fixing
+    # ArrayTypeHook's identical shape argument: this hook's own
+    # precision/scale checks must not report a second, redundant error
+    # on top of mypy's own placeholder for the already-invalid argument.
+    x: Column[  # E: Invalid type: try using Literal[5] instead?  [valid-type]
+        Literal["bar"], Decimal[5, Literal[2]]
+    ]
+
+- case: decimal_dtype_scale_bare_int_does_not_double_report
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    x: Column[  # E: Invalid type: try using Literal[2] instead?  [valid-type]
+        Literal["bar"], Decimal[Literal[5], 2]
+    ]
+
+- case: a_bool_literal_is_not_a_width_a_precision_or_a_scale
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, Decimal
+
+    # mypy keeps Literal[True] apart from Literal[1], so a bool literal
+    # names no data type that the checker can match.
+    class Trades(Columns):
+        a: Array[pl.Int64, Literal[True]]  # E: Array[...] size argument must be a non-negative integer literal  [marker-arg]
+        p: Decimal[Literal[True], Literal[0]]  # E: Decimal[...] precision argument must be None or a literal int, e.g. Literal[38]  [marker-arg]
+        s: Decimal[Literal[10], Literal[False]]  # E: Decimal[...] scale argument must be a literal int, e.g. Literal[2]  [marker-arg]
+
+- case: decimal_dtype_scale_rejects_a_non_int_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Decimal
+
+    # Confirmed empirically: once this hook reports its own error and
+    # returns mypy's error placeholder, mypy's own separate Scale: int
+    # bound-check on the original, unresolved annotation does not also
+    # fire -- this is the one diagnostic reported, not two.
+    x: Column[  # E: Decimal[...] scale argument must be a literal int, e.g. Literal[2]  [marker-arg]
+        Literal["bar"], Decimal[Literal[5], str]
+    ]
+
+- case: enum_dtype_column_declares_and_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Enum, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: Enum[Literal["a"], Literal["b"]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: Enum[Literal["a"], Literal["b"]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("bar")
+
+- case: enum_with_no_categories_is_written_with_empty_brackets
+  main: |
+    import polars as pl
+    from astrolabe import Columns, Enum, TypedDataFrame
+
+    class Empty(Columns):
+        e: Enum[()]
+
+    df: TypedDataFrame[Empty]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Empty, {'e': astrolabe.frame.Enum[tuple[()]]}, closed=True), None]"
+
+- case: a_bare_enum_names_no_categories
+  main: |
+    import polars as pl
+    from astrolabe import Columns, Enum
+
+    class Bare(Columns):
+        e: Enum  # E: Enum needs its categories: Enum[category, ...], or Enum[()] for none  [marker-arity]
+
+- case: enum_dtype_argument_must_be_a_string_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Enum
+
+    x: Column[  # E: Enum[...] arguments must be string literals, e.g. Literal["a"]  [marker-arg]
+        Literal["bar"], Enum[Literal["a"], int]
+    ]
+
+- case: enum_declaration_with_duplicate_category_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Enum
+
+    # Real polars raises unconditionally for a duplicate Enum category
+    # (ValueError: Enum categories must be unique), and the crash is not
+    # deferred to first use: mypy's own eager __class_getitem__
+    # evaluation means the mere act of writing this annotation would
+    # crash the import, with no data and no operation involved at all.
+    x: Column[  # E: Enum[...] arguments must all be different, found duplicate 'a'  [marker-arg]
+        Literal["bar"], Enum[Literal["a"], Literal["a"]]
+    ]
+
+- case: a_datetime_selector_with_no_zone_picks_every_zone_of_its_unit
+  main: |
+    from typing import Literal
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        naive: Datetime[Literal["us"], None]
+        zoned: Datetime[Literal["us"], Literal["UTC"]]
+        coarse: Datetime[Literal["ms"], None]
+        n: pl.Int64
+
+    # `cs.datetime("us")` names no zone, which takes every zone of that
+    # unit, the naive columns included. One partial rendering per unit
+    # states it, so the unit still tells one column from another.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class UsSchema(Columns):
+        naive: Datetime[Literal["us"], None]
+        zoned: Datetime[Literal["us"], Literal["UTC"]]
+
+    picked: TypedDataFrame[UsSchema] = df.select(cs.datetime("us"))
+    listed: TypedDataFrame[UsSchema] = df.select(cs.datetime("us", ["*", None]))
+
+    # `"*"` alone takes every named zone and leaves the naive columns
+    # out, which is the whole unit met with the negation of the naive
+    # data type.
+    class StarredSchema(Columns):
+        zoned: Datetime[Literal["us"], Literal["UTC"]]
+
+    starred: TypedDataFrame[StarredSchema] = df.select(cs.datetime("us", "*"))
+
+    class NaiveSchema(Columns):
+        naive: Datetime[Literal["us"], None]
+
+    one: TypedDataFrame[NaiveSchema] = df.select(cs.datetime("us", None))
+
+- case: any_zone_states_the_requirement_one_unit_holds
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import AnyZone, Columns, Datetime, TypedDataFrame, other_columns
+
+    # `AnyZone` fills a zone slot with every zone of the unit. A
+    # remainder of one zone proves it, and a remainder of every
+    # `Datetime` does not, because another unit is still allowed.
+    UsAnyZone = Datetime[Literal["us"], AnyZone]
+    UsNaive = Datetime[Literal["us"], None]
+
+    Us = other_columns(all_of=UsAnyZone)
+    Naive = other_columns(all_of=UsNaive)
+    Every = other_columns(all_of=pl.Datetime)
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def takes_us(df: TypedDataFrame[Keys, Us]) -> None: ...
+
+    def passes(df: TypedDataFrame[Keys, Naive]) -> None:
+        takes_us(df)
+
+    def refused(df: TypedDataFrame[Keys, Every]) -> None:
+        takes_us(df)  # E: The argument's own remainder does not prove the requirements of "Us". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"

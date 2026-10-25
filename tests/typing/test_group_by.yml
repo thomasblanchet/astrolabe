@@ -1,0 +1,2179 @@
+# .group_by()/.agg(): grouping a frame and aggregating each group.
+#
+# The keys come first in the result, under their names, or under the
+# keyword that names a key. agg evaluates each argument in the
+# aggregation context: an expression that gives one value per row gives
+# a list for each group, and an expression that gives one value gives
+# that value for each group. A keyword of agg names its output. A
+# group_by() with no key aggregates the whole frame.
+
+- case: group_by_agg_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+        baz: pl.Float64
+        qux: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(
+        pl.col("v").sum().alias("bar"), pl.col("v").mean().alias("baz"), pl.len().alias("qux")
+    )
+
+- case: group_by_with_list_literal_key_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        j: pl.Int64
+        v: pl.Int64
+
+    # Real polars flattens a single list literal passed to group_by()'s
+    # own *by identically to writing out separate positional arguments.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        j: pl.Int64
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by(["k", "j"]).agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_final_str_key_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A Final-declared string variable names the group key the same
+    # way the equivalent inline string literal does (see
+    # group_by_agg_narrows_precisely, above).
+    NAME: Final = "k"
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by(NAME).agg(pl.col("v").sum().alias("bar"))
+
+- case: agg_sum_on_a_narrow_integer_widens_to_int64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int8
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum().alias("bar"))
+
+- case: agg_sum_of_an_object_column_gives_an_object
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Object
+
+    # Polars sums an `Object` column in each group to an `Object`.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Object
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_agg_sum_does_not_upcast_int32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_agg_sum_of_bool_is_uint32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_agg_min_max_first_last_are_unchanged
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Boolean
+        baz: pl.Boolean
+        qux: pl.Boolean
+        quux: pl.Boolean
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(
+        pl.col("v").min().alias("bar"),
+        pl.col("v").max().alias("baz"),
+        pl.col("v").first().alias("qux"),
+        pl.col("v").last().alias("quux"),
+    )
+
+- case: group_by_agg_multi_key_preserves_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k1: pl.String
+        k2: pl.Int64
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k1: pl.String
+        k2: pl.Int64
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k1", "k2").agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_agg_named_agg_keyword_wins_over_inner_alias
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        baz: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(baz=pl.col("v").count().alias("bar"))
+
+- case: group_by_missing_key_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: group_by_with_pl_col_valued_named_by_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # named_by's own value must be a literal string, the same scope
+    # *by already has -- a pl.col(...) expression stays unresolved.
+    reveal_type(df.group_by(named_by=pl.col("k")))  # N: Revealed type is "polars.dataframe.group_by.GroupBy"
+
+- case: group_by_with_keyword_renamed_key_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        group: pl.String
+        total: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by(group="k").agg(total=pl.col("v").sum())
+
+- case: group_by_positional_and_keyword_keys_combine_in_call_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        j: pl.Boolean
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        group: pl.Boolean
+        total: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k", group="j").agg(total=pl.col("v").sum())
+
+- case: group_by_with_unknown_named_by_source_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by(group="missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: group_by_with_no_keys_is_a_real_global_aggregation_and_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        total: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by().agg(
+        total=pl.col("v").sum(),
+    )
+
+- case: group_by_non_literal_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    key = "k"
+    reveal_type(df.group_by(key))  # N: Revealed type is "polars.dataframe.group_by.GroupBy"
+
+- case: agg_missing_source_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k").agg(  # E: Unknown column "missing"  [unknown-column]
+        pl.col("missing").sum().alias("bar")
+    )
+
+- case: agg_duplicate_output_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k").agg(  # E: agg would produce duplicate column "x"  [duplicate-column]
+        pl.col("v").sum().alias("x"), pl.col("v").min().alias("x")
+    )
+
+- case: agg_output_collides_with_group_key_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k").agg(  # E: agg would produce duplicate column "k"  [duplicate-column]
+        pl.col("v").sum().alias("k")
+    )
+
+- case: agg_repeated_group_key_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k", "k").agg(  # E: agg would produce duplicate column "k"  [duplicate-column]
+        pl.col("v").sum().alias("total")
+    )
+
+- case: agg_mode_narrows_to_list_of_source_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").mode().alias("bar"))
+
+- case: agg_bare_non_reducing_column_narrows_to_list_of_source_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v"))
+
+- case: agg_std_with_ddof_keyword_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").std(ddof=0).alias("bar"))
+
+- case: agg_std_with_ddof_positional_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # ddof is the one reducer argument in this whole family that is not
+    # keyword-only in polars' own signature, so this checks the
+    # positional form is recognized too, not just the keyword form.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").std(0).alias("bar"))
+
+- case: agg_var_with_ddof_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").var(ddof=0).alias("bar"))
+
+- case: agg_mean_float32_source_stays_float32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Float32
+
+    # Confirmed against real polars 1.43.2: mean/median/std/var are
+    # the identity on a Float32 source, unlike every other numeric or
+    # Boolean source, which they always promote to Float64.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").mean().alias("bar"))
+
+- case: agg_median_float32_source_stays_float32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Float32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").median().alias("bar"))
+
+- case: agg_std_float32_source_stays_float32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Float32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").std().alias("bar"))
+
+- case: agg_var_float32_source_stays_float32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Float32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").var().alias("bar"))
+
+- case: agg_mean_float64_source_stays_float64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Float64
+
+    # A Float64 source is unaffected by the Float32-preserving rule
+    # above -- it was already Float64 either way.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").mean().alias("bar"))
+
+- case: agg_first_with_ignore_nulls_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").first(ignore_nulls=True).alias("bar"))
+
+- case: agg_last_with_ignore_nulls_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").last(ignore_nulls=True).alias("bar"))
+
+- case: agg_mode_with_maintain_order_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").mode(maintain_order=True).alias("bar"))
+
+- case: agg_reducer_with_real_call_arg_error_keeps_its_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # sum() takes no arguments at all in polars' own signature, so this
+    # is a real, separate mypy error, and polars refuses the call too. The
+    # call keeps the type of its stub, and the outer alias keeps the name
+    # of the column under Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum(1).alias("bar"))  # E: Too many arguments for "sum" of "Expr"  [call-arg]
+
+- case: agg_reducer_with_no_alias_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.group_by("k").agg(pl.col("v").sum(1).alias()))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Too many arguments for "sum" of "Expr"  [call-arg] # E: Missing positional argument "name" in call to "alias" of "Expr"  [call-arg]
+
+- case: agg_reducer_with_final_str_alias_names_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    # A Final-declared string variable names the alias the same way the
+    # equivalent inline string literal does (see
+    # agg_reducer_with_real_call_arg_error_keeps_its_name, above).
+    ALIAS: Final = "bar"
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum(1).alias(ALIAS))  # E: Too many arguments for "sum" of "Expr"  [call-arg]
+
+- case: agg_bare_len_with_no_alias_defaults_to_len
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        len: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.len())
+
+- case: agg_all_any_reduce_to_scalar_boolean_not_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        all: pl.Boolean
+        any: pl.Boolean
+
+    # all()/any() are
+    # real reducers, collapsing to a scalar Boolean per group -- before
+    # this stage, neither was registered as a reducer at all, so both
+    # fell through to the "non-reducing expression" default and
+    # collected into List[Boolean] per group instead.
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").all().alias("all"), pl.col("v").any().alias("any"))
+
+- case: agg_all_on_unchecked_source_narrows_to_boolean_silently
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: pl.Boolean
+
+    # An Unchecked source is genuinely unknowable, not known to be the
+    # wrong family, so the family check passes silently -- all()'s own
+    # fixed Boolean rule applies unconditionally either way.
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").all())
+
+- case: agg_all_on_wrong_family_substitutes_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.group_by("k").agg(pl.col("v").all()))  # E: "v" has no result type at this frame's column types: casting from String to Boolean not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: agg_variable_holding_bare_column_narrows_to_list_of_source_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # Tier 4 Milestone 4: `.agg()` now recognizes a `TypedExpr` argument
+    # by its own mypy-inferred type (via ctx.api.get_expression_type),
+    # not just by AST shape -- so a variable holding a bare column, not
+    # visible as `pl.col(...)` in the call's own raw AST, now narrows
+    # too, the same "cannot see through a variable" motivating bug
+    # Tier 4 as a whole exists to fix. Falls back to List[D] the same
+    # as a bare `pl.col(name)` argument would.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    some_expr = pl.col("v")
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(some_expr)
+
+- case: agg_bare_int_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # A bare literal, with no pl.lit(...) wrapper and no .alias(...),
+    # is an aggregation too: df.group_by("k").agg(1) gives a literal
+    # column, as polars does.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        literal: pl.Int32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(1)
+
+- case: agg_final_int_bare_literal_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A Final-declared variable's own tracked value narrows a bare
+    # .agg() argument the same as the equivalent inline literal would
+    # (see agg_bare_int_literal_narrows, above).
+    NAME: Final = 1
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        literal: pl.Int32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(NAME)
+
+- case: agg_bare_float_literal_narrows_to_scalar_not_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # A float literal's own deferred marker is FloatLiteral, not
+    # Literal[<value>] (see test_typed_expr_lit.yml's
+    # bare_lit_float_narrows_to_typed_expr_with_float_literal_marker):
+    # is_literal must still recognize it as a literal, the same as any
+    # other bare literal, so this stays a scalar Float64, not
+    # List[Float64].
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        literal: pl.Float64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.lit(0.5))
+
+- case: agg_non_final_bool_bare_argument_narrows_to_scalar_not_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # A bare, non-Final scalar with no column reference is exactly as
+    # broadcastable as a literal or a Final variable (is_literal
+    # tracks "no column reference", not "compile-time known value"),
+    # so this stays a scalar Boolean, not List[Boolean].
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    flag: bool = True
+
+    class ResultSchema(Columns):
+        k: pl.String
+        literal: pl.Boolean
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(flag)
+
+- case: agg_non_final_int_bare_argument_narrows_to_scalar_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    value: int = 1
+
+    class ResultSchema(Columns):
+        k: pl.String
+        literal: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(value)
+
+- case: agg_alias_with_non_literal_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    alias_name = "renamed"
+    reveal_type(df.group_by("k").agg(pl.col("v").sum().alias(alias_name)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: agg_bare_column_with_non_literal_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    col_name = "v"
+    reveal_type(df.group_by("k").agg(pl.col(col_name)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: agg_unique_narrows_to_list_of_source_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # .unique() is now registered (Stage 8), a pure identity for every
+    # dtype, confirmed empirically. It is not one of ReducerDtype's own
+    # reducer names, so .agg() collects it into List[D] the same way it
+    # already does for any other non-reducing expression.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(pl.col("v").unique())
+
+- case: agg_sum_on_string_source_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.String
+
+    # sum() has no result at String: real polars raises
+    # InvalidOperationError for a String source inside .agg().
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k").agg(pl.col("v").sum())  # E: "v" has no result type at this frame's column types: `sum` operation not supported for dtype `String`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: agg_sum_on_list_source_lifts_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    # Polars refuses `sum` over a `List`, so the call is an error and the
+    # output keeps its name under the marker.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum())  # E: "v" has no result type at this frame's column types: `sum` operation not supported for dtype `List(Int64)`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: agg_mean_median_std_var_on_string_source_narrows_unchanged
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.String
+
+    # mean/median/std/var succeed for a non-numeric source inside
+    # .agg(), leaving its dtype unchanged, confirmed against real
+    # polars 1.43.2 -- unlike sum(), which raises.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedMeanSchema(Columns):
+        k: pl.String
+        m: pl.String
+
+    narrowed_mean: TypedDataFrame[NarrowedMeanSchema] = df.group_by("k").agg(pl.col("v").mean().alias("m"))
+    narrowed_median: TypedDataFrame[NarrowedMeanSchema] = df.group_by("k").agg(pl.col("v").median().alias("m"))
+    narrowed_std: TypedDataFrame[NarrowedMeanSchema] = df.group_by("k").agg(pl.col("v").std().alias("m"))
+    narrowed_var: TypedDataFrame[NarrowedMeanSchema] = df.group_by("k").agg(pl.col("v").var().alias("m"))
+
+- case: agg_reducer_receiver_computed_expression_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # Tier 4 Slice 2: a reducer's receiver can now be a computed
+    # expression, not just a bare pl.col(name). v + 1 (literal Int32)
+    # widens to Int64 (same signedness); sum() on Int64 is the SumRule's
+    # identity case (no further upcast); the output name is "v", the
+    # leftmost leaf's name (not the literal).
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg((pl.col("v") + 1).sum())
+
+- case: agg_reducer_receiver_comparison_sum_is_uint32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: pl.UInt32
+
+    # A comparison's receiver resolves to Boolean; sum() on Boolean is
+    # the SumRule's Boolean case, UInt32. "v" wins the output name (the
+    # non-literal operand), not the literal "10".
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg((pl.col("v") < 10).sum())
+
+- case: agg_reducer_receiver_boolean_logic_sum_is_uint32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        flag1: pl.Boolean
+        flag2: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        flag1: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg((pl.col("flag1") & pl.col("flag2")).sum())
+
+- case: agg_reducer_receiver_negated_column_sum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # Proves .agg() wiring composes with Tier 4 Slice 3's unary
+    # negation with no changes needed in this file: -v preserves v's
+    # own name and Int64 dtype; sum() on Int64 is the identity case.
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg((-pl.col("v")).sum())
+
+- case: agg_bare_computed_expression_with_no_reducer_narrows_to_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v") + 1)
+
+- case: agg_bare_computed_expression_with_alias_narrows_to_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        total: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg((pl.col("v") + 1).alias("total"))
+
+- case: agg_reducer_receiver_method_call_sum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # `* 1` (not yet a TypedExpr hook) on the receiver keeps this
+    # exercising MethodCallExprResolver's own direct-Expr-method
+    # matching (matches/receiver's own namespace=None branch) and
+    # AggHook's own reducer-on-computed-expression path directly,
+    # since a plain `pl.col("v").abs().sum()` here would narrow via
+    # the new TypedExpr/Reducer path instead: abs() preserves v's own
+    # name and Int64 dtype; sum() on Int64 is the identity case.
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg((pl.col("v") * 1).abs().sum())
+
+- case: agg_reducer_receiver_list_first_inner_dtype_sum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        l: pl.Int64
+
+    # Proves .agg() wiring composes with Tier 6's new inner-dtype
+    # extraction with no changes needed in this file: list.first()
+    # narrows "l" from List[Int64] to Int64, then sum() on Int64 is
+    # the identity case.
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("l").list.first().sum())
+
+- case: agg_reducer_receiver_list_sum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        l: pl.Int64
+
+    # list.sum() reads the scalar sum at the element, Int64 here, and
+    # max() keeps that scalar as the aggregation's one value per key.
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("l").list.sum().max())
+
+- case: agg_bare_literal_narrows_unwrapped_not_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        x: pl.Int32
+
+    # A bare literal is a scalar constant, not a per-row value to
+    # collect -- confirmed against real polars 1.43.2 that
+    # pl.lit(1) stays Int32 in .agg(), unlike a bare column or
+    # computed expression referencing one (see
+    # agg_bare_method_call_with_no_reducer_narrows_to_list below),
+    # which really does collect into List[D].
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.lit(1).alias("x"))
+
+- case: agg_bare_method_call_with_no_reducer_narrows_to_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").round(2))
+
+- case: agg_bare_negation_with_no_reducer_narrows_to_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # A negation of a column gives one value for each row, so the
+    # aggregation context collects it into a `List`, as it collects the
+    # column itself. The negation reads a column, so it is not a literal.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(-pl.col("v"))
+
+- case: agg_computed_reducer_receiver_source_column_unknown_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.group_by("k").agg(  # E: Unknown column "missing"  [unknown-column]
+        (pl.col("missing") + 1).sum()
+    )
+
+- case: agg_computed_reducer_receiver_and_named_agg_keyword_wins
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        baz: pl.Int64
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(baz=(pl.col("v") + 1).sum())
+
+- case: agg_reducer_receiver_variable_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # Tier 4 Milestone 4: `.sum()` (and every other agg-style reducer
+    # method) is now a real TypedExpr hook, so `source.sum()`'s own
+    # static type is TypedExpr, recognized by `.agg()`'s own
+    # get_expression_type-based check regardless of `source` being a
+    # variable, not a `pl.col(...)` call visible in the argument's own
+    # raw AST.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    source = pl.col("v")
+    narrowed: TypedDataFrame[FrameSchema] = df.group_by("k").agg(source.sum())
+
+- case: agg_branch_merged_union_variable_narrows_to_list_not_scalar
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # Reassigning an arithmetic variable in each branch of an if/else
+    # merges to a union under --allow-redefinition. Each variant
+    # materializes on its own and the outputs agree, so the answer is
+    # the elementwise result imploded into a list per key.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    flag: bool
+    if flag:
+        w = pl.col("v") + 1
+    else:
+        w = pl.col("v") + 2
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: List[pl.Int64]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(w)
+
+- case: agg_branch_union_variable_gives_one_frame_for_each_branch
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # The two branches answer Int64 and Float64, so the call gives one
+    # frame for each branch.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    flag: bool
+    if flag:
+        w = pl.col("v") + 1
+    else:
+        w = pl.col("v") + 1.5
+
+    reveal_type(df.group_by("k").agg(w))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+
+- case: agg_reducer_receiver_is_an_aliased_column_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        x: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(pl.col("v").alias("x").sum())
+
+- case: agg_reducer_column_with_non_literal_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    col_name = "v"
+    reveal_type(df.group_by("k").agg(pl.col(col_name).sum()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: agg_reducer_on_generic_column_dtype_narrows_v_to_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Keyed[T: pl.DataType](Columns):
+        k: pl.String
+        v: T
+
+    # T is a real, unconstrained-beyond-DataType TypeVar for the "v"
+    # column's own dtype, never a remainder. This is
+    # supported syntax (Column[name, dtype] analyzes dtype like any
+    # other type expression), but the resulting source dtype is not a
+    # resolved instance inside this still-generic function body: "v"'s
+    # own name is known, so it narrows to Unchecked, keeping "k" typed.
+    def summarize[T: pl.DataType](
+        df: TypedDataFrame[Keyed[T]],
+    ) -> None:
+        reveal_type(df.group_by("k").agg(pl.col("v").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: agg_unrecognized_shape_with_alias_substitutes_unchecked_keeping_key_typed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def get_expr() -> pl.Expr:
+        return pl.col("v")
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        total: Unchecked
+
+    # get_expr() returns bare, untyped pl.Expr, so neither the
+    # TypedExpr/Reducer path nor the AST-walking fallback recognizes
+    # this shape at all -- but the outermost .alias("total") still
+    # gives a name to substitute Unchecked under, keeping "k" typed
+    # instead of losing the whole call.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(get_expr().sum().alias("total"))
+
+- case: agg_unrecognized_shape_with_keyword_name_substitutes_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def get_expr() -> pl.Expr:
+        return pl.col("v")
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        total: Unchecked
+
+    # The call-site keyword names the result the same way an outermost
+    # .alias(...) would, with no .alias(...) call needed at all.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(total=get_expr().sum())
+
+- case: agg_unrecognized_shape_with_no_recoverable_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def get_expr() -> pl.Expr:
+        return pl.col("v")
+
+    df: Frame
+    # No .alias(...) and no call-site keyword: no name is recoverable
+    # at all, so the whole call still falls back, the same floor
+    # .select()/.with_columns() already have.
+    reveal_type(df.group_by("k").agg(get_expr().sum()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: agg_unrecognized_shape_keeps_sibling_aggregations_typed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+        w: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def get_expr() -> pl.Expr:
+        return pl.col("w")
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        v_sum: pl.Int64
+        total: Unchecked
+
+    # Only the one unrecognized argument substitutes Unchecked; a real,
+    # successfully-resolved sibling aggregation stays fully typed.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(
+        pl.col("v").sum().alias("v_sum"),
+        get_expr().sum().alias("total"),
+    )
+
+- case: agg_unrecognized_shape_salvaged_name_colliding_with_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def get_expr() -> pl.Expr:
+        return pl.col("v")
+
+    df: Frame
+    # The salvaged name "k" collides with the group key, so the
+    # assembled result still has a duplicate name -- the same
+    # duplicate-name check every other .agg() result already goes
+    # through, unaffected by where the colliding name came from.
+    reveal_type(df.group_by("k").agg(get_expr().sum().alias("k")))  # E: agg would produce duplicate column "k"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: agg_over_an_opaque_member_keeps_the_name_under_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # rolling_map's output is decided by the function it takes, so the
+    # column is given back under Unchecked; a reducer over it stays
+    # Unchecked, and the bare expression is listed by the context.
+    reveal_type(df.group_by("k").agg(pl.col("l").rolling_map(lambda s: s.sum(), 2).sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'l': astrolabe.frame.Unchecked}, closed=True), None]"
+    x = pl.col("l").rolling_map(lambda s: s.sum(), 2)
+    reveal_type(df.group_by("k").agg(x))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(x.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'l': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: agg_reducer_receiver_is_a_list_reverse_method_lifts_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # list.reverse() keeps List[Int64], and polars refuses `sum` over
+    # a `List`, so the call is an error and the output keeps its name
+    # under the marker.
+    reveal_type(df.group_by("k").agg(pl.col("l").list.reverse().sum()))  # E: "l" has no result type at this frame's column types: `sum` operation not supported for dtype `List(Int64)`, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'l': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: agg_variable_holding_list_reverse_expression_narrows_to_list_of_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # list.reverse() is now a real TypedExpr (Stage 8), so x's own
+    # static type is TypedExpr[..., UnaryOp["list.reverse", ...]], not
+    # plain Expr. A bare, non-reducing TypedExpr collects into List[D]
+    # inside .agg(), the same as any other non-reducing column, where D
+    # is x's own resolved List[Int64] -- so this becomes List[List[Int64]].
+    x = pl.col("l").list.reverse()
+
+    class NarrowedSchema(Columns):
+        k: pl.String
+        l: List[List[pl.Int64]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.group_by("k").agg(x)
+
+- case: agg_reducer_receiver_int128_sum_keeps_int128
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.Int128
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg(pl.col("v").sum())
+
+- case: agg_reducer_receiver_duration_sum_narrows_unchanged
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Duration, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: Duration[Literal["us"]]
+
+    # Duration.sum() was already correct before this stage -- kept as a
+    # control confirming it is still unaffected by the widened gate.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg(pl.col("v").sum())
+
+- case: agg_reducer_receiver_duration_var_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Duration, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: Duration[Literal["us"]]
+
+    # In the .agg() context var() has no result at Duration, where
+    # real polars raises InvalidOperationError, unlike every other
+    # reducer, which tolerates it.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").var())  # E: "v" has no result type at this frame's column types: operation `var` is not supported for `Duration(time_unit='us')`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: agg_reducer_receiver_unchecked_var_narrows_unchanged
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: Unchecked
+
+    # An Unchecked source is genuinely unknowable, not known to be
+    # Duration -- var()'s own widened family gate must not reject it.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    result: TypedDataFrame[FrameSchema] = df.group_by("k").agg(pl.col("v").var())
+
+- case: agg_reducer_receiver_string_sum_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: pl.String
+
+    # polars refuses sum() at String: the error names the column, and
+    # the output stays under its name as Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").sum())  # E: "v" has no result type at this frame's column types: `sum` operation not supported for dtype `String`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: group_by_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.group_by("k"))  # N: Revealed type is "polars.dataframe.group_by.GroupBy"
+
+- case: group_by_agg_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        bar: pl.Int64
+
+    result: TypedLazyFrame[ResultSchema] = lf.group_by("k").agg(pl.col("v").sum().alias("bar"))
+
+- case: group_by_missing_key_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    lf.group_by("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: agg_substitutes_unchecked_for_one_unresolvable_aggregation_keeping_siblings_typed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        k: pl.String
+        payload: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        total: Unchecked
+        known: pl.UInt32
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(
+        pl.col("payload").sum().alias("total"), pl.col("k").count().alias("known")
+    )
+
+
+- case: group_by_over_a_remainder_keeps_what_the_selections_pick
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, other_columns, TypedDataFrame
+
+    R = other_columns()
+    Num = other_columns(all_of=NumericType)
+
+    class DfSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    class NumSchema(Columns):
+        k: pl.String
+
+    def f(
+        df: TypedDataFrame[DfSchema, R],
+        num: TypedDataFrame[NumSchema, Num],
+    ) -> None:
+        # A named aggregation keeps no remainder column.
+        reveal_type(df.group_by("k").agg(pl.col("v").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+        # Every remainder column becomes a List of its own type, a list of several types.
+        reveal_type(df.group_by("k").agg(pl.all()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'v': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), astrolabe.remainder.Retyped[main.R, astrolabe.frame.List[astrolabe.frame.Unchecked]]]"
+        # The count of distinct values is a UInt32 at every numeric kind.
+        reveal_type(num.group_by("k").agg(cs.numeric().n_unique()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Num, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], polars.datatypes.classes.UInt32]]"
+        # A String remainder column has no sum, so the selection fails for some callers.
+        df.group_by("k").agg(pl.all().sum())  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op]
+        # The remainder can hold a key that is not declared.
+        df.group_by("x")  # E: The result of "group_by" has no known schema: the undeclared columns of the frame can hold the name, or not  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] group_by = "possible"
+
+- case: the_group_by_shorthands_read_every_non_key_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        i: pl.Int64
+        f: pl.Float64
+
+    # Each shorthand is `.agg(pl.all().member())`, so the group keys
+    # come first and every other column is read through one selection.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class MeanSchema(Columns):
+        k: pl.String
+        i: pl.Float64
+        f: pl.Float64
+
+    averaged: TypedDataFrame[MeanSchema] = df.group_by("k").mean()
+
+    class SumSchema(Columns):
+        k: pl.String
+        i: pl.Int64
+        f: pl.Float64
+
+    summed: TypedDataFrame[SumSchema] = df.group_by("k").sum()
+    kept: TypedDataFrame[SumSchema] = df.group_by("k").head(2)
+
+    class AllSchema(Columns):
+        k: pl.String
+        i: List[pl.Int64]
+        f: List[pl.Float64]
+
+    listed: TypedDataFrame[AllSchema] = df.group_by("k").all()
+
+    class CountedSchema(Columns):
+        k: pl.String
+        len: pl.UInt32
+
+    counted: TypedDataFrame[CountedSchema] = df.group_by("k").len()
+
+    class UniqueSchema(Columns):
+        k: pl.String
+        i: pl.UInt32
+        f: pl.UInt32
+
+    unique: TypedDataFrame[UniqueSchema] = df.group_by("k").n_unique()
+
+- case: a_group_by_shorthand_refuses_a_column_outside_the_reducer
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        s: pl.String
+
+    # Polars raises for `sum` over a String column, so the shorthand
+    # reports it, as `agg(pl.all().sum())` does, and the column is `Unchecked`.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.group_by("k").sum())  # E: "s" has no result type at this frame's column types: `sum` operation not supported for dtype `String`, and polars raises InvalidOperationError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 's': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Polars refuses to build an integer that no data type holds.
+    reveal_type(df.group_by("k").quantile(2**127))  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The mean of a String column answers inside `agg`, so the shorthand keeps it.
+    reveal_type(df.group_by("k").mean())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.group_by("k").median())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 's': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: a_counting_shorthand_needs_its_name_free_of_the_keys
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class HasLen(Columns):
+        k: pl.String
+        len: pl.Int64
+
+    # `.len()` keeps only the keys and its new column, so a column
+    # named `len` that is not a key is dropped and does not clash.
+    # Only a key with that name makes polars raise.
+    class Counted(Columns):
+        k: pl.String
+        len: pl.UInt32
+
+    taken: TypedDataFrame[HasLen]
+    counted: TypedDataFrame[Counted] = taken.group_by("k").len()
+    # The clash is reported once, and the call keeps the plain frame.
+    reveal_type(taken.group_by("len").len())  # E: len would produce duplicate column "len"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+    Open = other_columns()
+
+    class Keys(Columns):
+        k: pl.String
+
+    class KeysCounted(Columns):
+        k: pl.String
+        len: pl.UInt32
+
+    # The result holds no undeclared column, so an open frame gives a
+    # closed result.
+    def f(df: TypedDataFrame[Keys, Open]) -> None:
+        reveal_type(df.group_by("k").len())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'len': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+- case: a_counting_shorthand_takes_the_name_that_the_call_gives
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Frame(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # `.len(name=...)` runs `.agg(pl.len().alias(name))`, so the count
+    # column takes that name. `.count()` names it `count`.
+    df: TypedDataFrame[Frame]
+    reveal_type(df.group_by("k").len(name="n"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'n': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.group_by("k").len(name=None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'len': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.group_by("k").count())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'count': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.group_by("k").len(name="k"))  # E: len would produce duplicate column "k"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_shorthand_over_a_remainder_retypes_what_it_keeps
+  main: |
+    import polars as pl
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.String
+        n: pl.Int64
+
+    # Every remainder column is numeric, so the reducer answers at
+    # each one and the remainder keeps its names under the answer.
+    Numbers = other_columns(all_of=NumericType)
+
+    def f(df: TypedDataFrame[Keys, Numbers]) -> None:
+        reveal_type(df.group_by("k").sum())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]], polars.datatypes.classes.Int64], astrolabe.remainder.Except[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]]]]]"
+
+- case: a_counting_shorthand_with_no_key_over_a_frame_with_no_declared_column
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, other_columns
+
+    NoLen = other_columns(without=["len"])
+    bare: TypedDataFrame[NoLen]
+    reveal_type(bare.group_by().len())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'len': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+- case: a_group_by_written_by_hand_with_its_columns_is_read
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+    from astrolabe.frame import Column, TypedGroupBy
+
+    def f(gb: TypedGroupBy[tuple[Column[Literal["g"], pl.String]], tuple[Column[Literal["g"], pl.String], Column[Literal["a"], pl.Int64]], None]) -> None:
+        reveal_type(gb.agg(pl.col("a").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.String, 'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    # A tuple must hold Column[...] items.
+    def g(gb: TypedGroupBy[tuple[int], tuple[int], None]) -> None: ...  # E: TypedGroupBy[...] takes a tuple of Column[...] for the keys, a tuple of Column[...] for the declared columns, and the remainder  [marker-arg]
+
+# An eager `group_by().agg()` runs no pass of the optimizer, and a lazy
+# `agg` simplifies the expressions: `l & True` is `l` there, and the
+# negation of a literal folds into a literal.
+- case: an_eager_agg_runs_no_optimizer
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, TypedLazyFrame
+
+    class Lists(Columns):
+        g: pl.Int64
+        l: List[pl.Int16]
+
+    df: TypedDataFrame[Lists]
+    lf: TypedLazyFrame[Lists]
+    df.group_by("g").agg(pl.col("l") & True)  # E: "l" has no result type at this frame's column types: bitand is not defined for List(Int16), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    reveal_type(lf.group_by("g").agg(pl.col("l") & True))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'l': astrolabe.frame.List[astrolabe.frame.List[polars.datatypes.classes.Int16]]}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(-pl.lit(2**31)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(lf.group_by("g").agg(-pl.lit(2**31)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'literal': astrolabe.frame.Planned[polars.datatypes.classes.Int32, polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: min_by_in_agg_over_one_value_for_each_group_reads_past_the_end
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        x: pl.Int64
+        k: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    df.group_by("g").agg(pl.col("x").first().max_by(pl.col("k")))  # E: "x" has no result type at this frame's column types: min_by reads past the end of an input, and polars crashes  [unsupported-dtype-op]
+    df.group_by("g").agg(pl.col("x").max_by(pl.col("k").sum()))  # E: "x" has no result type at this frame's column types: min_by reads past the end of an input, and polars crashes  [unsupported-dtype-op]
+    reveal_type(df.group_by("g").agg(pl.col("x").max_by(pl.col("k"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_quantile_column_decides_the_type_of_an_integer_in_agg
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        i: pl.Int8
+        f: pl.Float32
+        q: pl.Float64
+
+    df: TypedDataFrame[Rows]
+    reveal_type(df.group_by("g").agg(pl.col("i").quantile(pl.col("q").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'i': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(pl.col("f").quantile(pl.col("q").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(pl.col("i").quantile(1.5)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'i': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").quantile(pl.col("q").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: an_over_key_in_agg_must_be_elementwise_at_every_node
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        x: pl.Int64
+        k: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    df.group_by("g").agg(pl.col("x").over(pl.col("k").sort()))  # E: "x" has no result type at this frame's column types: window expression with non-elementwise `partition_by` not allowed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    reveal_type(df.group_by("g").agg(pl.col("x").over(pl.col("k") + 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: cumulative_eval_gives_a_list_for_each_group_in_agg
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        x: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    reveal_type(df.group_by("g").agg(pl.col("x").first().cumulative_eval(pl.element().sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(lf.group_by("g").agg(pl.col("x").first().cumulative_eval(pl.element().sum())))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.Planned[astrolabe.frame.List[polars.datatypes.classes.Int64], polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: sort_by_over_a_rebuilt_list_by_one_value_for_each_group_panics
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        x: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    df.group_by("g").agg(pl.col("x").cum_sum().sort_by(pl.col("x").first()))  # E: "x" has no result type at this frame's column types: sort_by reads the key of one value for each group as a list, and polars panics  [unsupported-dtype-op]
+    reveal_type(df.group_by("g").agg(pl.col("x").cum_sum().sort_by(pl.col("x"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+# A rolling group-by gives its keys, its index column, then the aggregations. Over windows
+# that overlap, polars builds the list of each window at the type of its data.
+- case: a_rolling_group_by_gives_the_keys_the_index_then_the_aggregations
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        i: pl.Int64
+        k: pl.String
+        x: pl.Float64
+        t: pl.String
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    reveal_type(df.rolling("i", period="2i").agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.rolling("i", period="2i", group_by="k").agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'i': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.rolling("i", period="2i").agg(pl.all()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'k': astrolabe.frame.List[polars.datatypes.classes.String], 'x': astrolabe.frame.List[polars.datatypes.classes.Float64], 't': astrolabe.frame.List[polars.datatypes.classes.String]}, closed=True), None]"
+    reveal_type(df.rolling("i", period="2i").agg(pl.col("t").rolling_mean(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 't': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(lf.rolling("i", period="2i").agg(pl.col("t").rolling_mean(2)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'i': polars.datatypes.classes.Int64, 't': astrolabe.frame.Planned[astrolabe.frame.List[polars.datatypes.classes.Float64], astrolabe.frame.List[polars.datatypes.classes.String]]}, closed=True), None]"
+    df.group_by("k").agg(pl.col("t").rolling_mean(2))  # E: "t" has no result type at this frame's column types: cannot build list with different dtypes, and polars panics  [unsupported-dtype-op]
+    df.rolling("i", period="2i").agg(pl.col("x").sum().alias("i"))  # E: agg would produce duplicate column "i"  [duplicate-column]
+
+# A dynamic group-by gives its keys, the bounds of each window where the call asks for them,
+# its index column, then the aggregations. Over a `Date` index, the bounds are `Datetime`.
+- case: a_dynamic_group_by_gives_the_bounds_then_the_index
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        d: pl.Date
+        i: pl.Int32
+        x: pl.Float64
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    reveal_type(df.group_by_dynamic("d", every="2d", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'_lower_boundary': astrolabe.frame.Datetime[Literal['us'], None], '_upper_boundary': astrolabe.frame.Datetime[Literal['us'], None], 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(lf.group_by_dynamic("d", every="2d", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'_lower_boundary': astrolabe.frame.Planned[astrolabe.frame.Datetime[Literal['us'], None], polars.datatypes.classes.Date], '_upper_boundary': astrolabe.frame.Planned[astrolabe.frame.Datetime[Literal['us'], None], polars.datatypes.classes.Date], 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.group_by_dynamic("i", every="2i", period="3i").agg(pl.col("x").rolling_mean(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int32, 'x': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(df.group_by_dynamic("i", every="2i", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'_lower_boundary': polars.datatypes.classes.Int32, '_upper_boundary': polars.datatypes.classes.Int32, 'i': polars.datatypes.classes.Int32, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(lf.rolling("i", period="2i").sum())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'i': polars.datatypes.classes.Int32, 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+
+# Polars refuses an index of another type than the call reads, and a duration whose unit
+# does not fit the index.
+- case: the_index_and_the_durations_of_a_window_group_by_are_checked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        i: pl.Int64
+        u: pl.UInt32
+        s: pl.Int8
+        d: pl.Date
+        x: pl.Float64
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    df.rolling("s", period="2i")  # E: Column "s" is not Int32, Int64, UInt32, UInt64, Date or Datetime, cannot .rolling()  [wrong-column-shape]
+    df.group_by_dynamic("u", every="2i")  # E: Column "u" is not Int32, Int64, Date or Datetime, cannot .group_by_dynamic()  [wrong-column-shape]
+    df.rolling("i", period="2d")  # E: rolling() with period='2d' raises InvalidOperationError: polars reads a count of rows, as '2i', over an integer index  [invalid-call-shape]
+    df.group_by_dynamic("d", every="2i")  # E: group_by_dynamic() with every='2i' raises InvalidOperationError: polars reads a span of time, as '2d', over a temporal index  [invalid-call-shape]
+    df.rolling("i", period="2x")  # E: rolling() with period='2x' raises InvalidOperationError: polars reads a number and a unit, as '2i' or '1d'  [invalid-call-shape]
+    df.rolling("zz", period="2i")  # E: Unknown column "zz"  [unknown-column]
+    lf.rolling("i", period="2i").head(2)  # E: head() raises InvalidOperationError: polars explodes the index, which holds one value for each window  [invalid-call-shape]
+
+# The checks of the index and of the durations read the data type of the index, so an
+# Unchecked index skips them. An index that only the undeclared columns can hold gives no
+# known schema.
+- case: a_window_group_by_reads_an_index_of_no_known_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+
+    R = other_columns()
+
+    class Rows(Columns):
+        w: Unchecked
+        x: pl.Float64
+
+    def f(df: TypedDataFrame[Rows], wide: TypedDataFrame[Rows, R]) -> None:
+        reveal_type(df.rolling("w", period="2i").agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'w': astrolabe.frame.Unchecked, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+        wide.rolling("z", period="2i")  # E: The result of "rolling" has no known schema: the undeclared columns of the frame can hold the name, or not  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] rolling = "possible"

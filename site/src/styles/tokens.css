@@ -1,0 +1,113 @@
+/* The design tokens of the whole site.
+ *
+ * The landing page and the documentation read the same tokens, so the two
+ * parts of the site stay one design. The dark theme is the default. The
+ * light theme changes the surfaces and the text only: code panels stay dark
+ * in both themes, so the colors of code are the same everywhere.
+ */
+
+@import '@fontsource/instrument-sans/400.css';
+@import '@fontsource/instrument-sans/500.css';
+@import '@fontsource/instrument-sans/600.css';
+@import '@fontsource/spectral/500.css';
+@import '@fontsource/spectral/600.css';
+@import '@fontsource/spectral/500-italic.css';
+@import '@fontsource/spectral/600-italic.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
+:root {
+  --font-serif: 'Spectral', Georgia, serif;
+  --font-sans: 'Instrument Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* The night sky. */
+  --navy: #0b1020;
+  --navy-panel: #10162a;
+  --navy-raised: rgba(16, 22, 42, 0.85);
+  --navy-pop: #161d36;
+  --star: #f5f3ec;
+  --gold: #d4af37;
+  --gold-bright: #f0c75e;
+  --gold-hover: #ffe08a;
+
+  /* Colors of code: the same in every theme. */
+  --code-plain: #c9cddc;
+  --code-keyword: #e8a15c;
+  --code-string: #7fd9a8;
+  --code-number: #f0c75e;
+  --code-comment: #9298ad;
+  --code-call: #8fc3ff;
+  --code-type: #c4b5fd;
+  --code-error: #f0a08a;
+  --code-note: #a9c7ee;
+  --code-line-number: #4a5068;
+
+  /* The dark theme. */
+  --bg: #0b1020;
+  --bg-raised: rgba(16, 22, 42, 0.85);
+  --field: rgba(255, 255, 255, 0.03);
+  --text: #c9cddc;
+  --text-soft: #b3b8c9;
+  --heading: #f5f3ec;
+  --muted: #9298ad;
+  --faint: #5b6178;
+  --accent: #d4af37;
+  --accent-text: #f0c75e;
+  --accent-tint: rgba(212, 175, 55, 0.09);
+  --line: rgba(212, 175, 55, 0.16);
+  --line-soft: rgba(212, 175, 55, 0.09);
+  --line-strong: rgba(212, 175, 55, 0.32);
+  --link: #f0c75e;
+  --link-line: rgba(240, 199, 94, 0.45);
+  --inline-code: #8fc3ff;
+  --inline-code-bg: rgba(143, 195, 255, 0.1);
+  --panel-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+  --note: #8fc3ff;
+  --note-bg: rgba(143, 195, 255, 0.06);
+  --tip: #7fd9a8;
+  --tip-bg: rgba(127, 217, 168, 0.06);
+  --caution: #f0c75e;
+  --caution-bg: rgba(240, 199, 94, 0.07);
+  --danger: #f0a08a;
+  --danger-bg: rgba(240, 160, 138, 0.07);
+}
+
+/* The light theme: chart paper with navy ink. */
+:root[data-theme='light'] {
+  --bg: #f7f4ec;
+  --bg-raised: #fffdf7;
+  --field: #fffdf7;
+  --text: #3a4060;
+  --text-soft: #4a5070;
+  --heading: #0b1020;
+  --muted: #5f6580;
+  --faint: #a4a9bb;
+  --accent: #b8921f;
+  --accent-text: #7d5f0c;
+  --accent-tint: rgba(184, 146, 31, 0.1);
+  --line: rgba(125, 95, 12, 0.2);
+  --line-soft: rgba(125, 95, 12, 0.11);
+  --line-strong: rgba(125, 95, 12, 0.38);
+  --link: #7d5f0c;
+  --link-line: rgba(125, 95, 12, 0.45);
+  --inline-code: #2c5a96;
+  --inline-code-bg: rgba(44, 90, 150, 0.08);
+  --panel-shadow: 0 14px 34px rgba(11, 16, 32, 0.16);
+  --note: #2c5a96;
+  --note-bg: rgba(44, 90, 150, 0.06);
+  --tip: #1f6e47;
+  --tip-bg: rgba(31, 110, 71, 0.06);
+  --caution: #7d5f0c;
+  --caution-bg: rgba(184, 146, 31, 0.09);
+  --danger: #a8402a;
+  --danger-bg: rgba(168, 64, 42, 0.06);
+}
+
+/* Code shows each character as typed: a ligature turns == or -> into one glyph. */
+code,
+kbd,
+pre,
+samp {
+  font-variant-ligatures: none;
+}

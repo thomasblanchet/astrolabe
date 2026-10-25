@@ -1,0 +1,350 @@
+---
+/**
+ * The home of the documentation: a band of still sky, the search, and a card for each section.
+ *
+ * The big search box opens the same search dialog as the header.
+ */
+import Example from './Example.astro';
+import { tileUri } from '../../lib/sky';
+import { MYPY, POLARS, PYTHON } from '../../lib/versions';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const docs = `${base}docs/`;
+
+const CARDS = [
+  {
+    label: 'Start here',
+    title: 'Set up the checker',
+    blurb: 'Install the plugin and type your first frame.',
+    links: [
+      ['Install and set up', 'start/install/'],
+      ['Quickstart', 'start/quickstart/'],
+    ],
+  },
+  {
+    label: 'Tutorial',
+    title: 'Follow one pipeline',
+    blurb: 'Load, transform and check a pipeline over trades data.',
+    links: [
+      ['Load data with a schema', 'tutorial/load/'],
+      ['Write a function that accepts other columns', 'tutorial/functions/'],
+    ],
+  },
+  {
+    label: 'Guides',
+    title: 'Learn the types',
+    blurb: 'Schemas, operations, open frames and expression types.',
+    links: [
+      ['Schemas', 'guides/schemas/'],
+      ['Open frames', 'guides/open-frames/'],
+      ['Declare expression types', 'guides/expression-types/'],
+    ],
+  },
+  {
+    label: 'Reference',
+    title: 'Look up a detail',
+    blurb: 'Every operation, error code and setting.',
+    links: [
+      ['Error codes', 'reference/error-codes/'],
+      ['Configuration', 'reference/configuration/'],
+      ['Operations', 'reference/operations/'],
+    ],
+  },
+];
+---
+
+<div class="docs-home not-content">
+  <section class="hero">
+    <div class="sky" style={`background-image:url("${tileUri()}")`} aria-hidden="true"></div>
+    <svg class="pole" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+      {[0, 1, 2].map((k) => <circle class="pulse" cx="60" cy="60" r="7" fill="none" stroke="#f0c75e" stroke-width="0.9" style={`animation-delay:${-2 * k}s`} />)}
+      <circle cx="60" cy="60" r="9" fill="#f5f3ec" opacity="0.14"></circle>
+      <circle cx="60" cy="60" r="2.8" fill="#f5f3ec"></circle>
+    </svg>
+    <div class="hero-in">
+      <p class="eyebrow">Documentation</p>
+      <h1>Type-check the columns of your Polars frames</h1>
+      <p class="lead">Astrolabe is a mypy plugin. It checks the column names and the data types of Polars frames and expressions before the code runs.</p>
+      <button class="big-search" type="button" data-docs-search>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+        <span>Search the docs</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+  </section>
+
+  <div class="body">
+    <div class="cards">
+      {
+        CARDS.map((card) => (
+          <div class="card">
+            <p class="eyebrow">{card.label}</p>
+            <h2>{card.title}</h2>
+            <p>{card.blurb}</p>
+            <ul>
+              {card.links.map(([text, href]) => (
+                <li>
+                  <a href={`${docs}${href}`}>{text}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+
+    <div class="requirements">
+      <div>
+        <p class="eyebrow">Requirements</p>
+        <h2>Set up in one command</h2>
+        <p>
+          Astrolabe needs Python {PYTHON} or later, mypy {MYPY} or later and Polars {POLARS}. Install the package, then run
+          <code class="docs-ic">astrolabe init</code> in your project.
+        </p>
+        <p><a href={`${docs}start/install/`}>Install and set up</a></p>
+      </div>
+      <Example name="home_quick_look" />
+    </div>
+  </div>
+</div>
+
+<script>
+  // The search closes on any click outside its dialog, so this click must stop here.
+  document.querySelector('[data-docs-search]')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    document.querySelector<HTMLButtonElement>('site-search button[data-open-modal]')?.click();
+  });
+</script>
+
+<style>
+  /* A splash page has no title of its own here, so its title panel stays empty. */
+  :global(.content-panel:not(:has(h1, .docs-home))) {
+    display: none;
+  }
+
+  :global(.content-panel:has(.docs-home)) {
+    padding: 0;
+    border: none;
+  }
+
+  :global(.content-panel:has(.docs-home) .sl-container) {
+    max-width: none;
+    padding: 0;
+  }
+
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line-soft);
+  }
+
+  .sky {
+    position: absolute;
+    inset: 0;
+    background-repeat: repeat;
+    background-size: 1400px 1000px;
+    -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent);
+    mask-image: linear-gradient(to bottom, #000 40%, transparent);
+  }
+
+  :global(:root[data-theme='light']) .sky,
+  :global(:root[data-theme='light']) .pole {
+    display: none;
+  }
+
+  .pole {
+    position: absolute;
+    right: 15%;
+    top: 84px;
+    overflow: visible;
+  }
+
+  .pulse {
+    transform-origin: center;
+    transform-box: fill-box;
+    animation: pulse 6s ease-out infinite;
+  }
+
+  @keyframes pulse {
+    0% {
+      transform: scale(1);
+      opacity: 0.6;
+    }
+    100% {
+      transform: scale(6);
+      opacity: 0;
+    }
+  }
+
+  .hero-in {
+    position: relative;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 76px 24px 64px;
+  }
+
+  .eyebrow {
+    margin: 0 0 14px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-text);
+  }
+
+  h1 {
+    margin: 0 0 16px;
+    max-width: 760px;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: clamp(2.5rem, 5vw, 3.375rem);
+    line-height: 1.08;
+    color: var(--heading);
+  }
+
+  .lead {
+    margin: 0 0 28px;
+    max-width: 640px;
+    font-size: 20px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .big-search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: min(560px, 100%);
+    height: 50px;
+    padding: 0 12px 0 16px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--field);
+    color: var(--muted);
+    font: inherit;
+    font-size: 16px;
+    cursor: pointer;
+  }
+
+  .big-search:hover {
+    border-color: var(--line-strong);
+  }
+
+  .big-search kbd {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1;
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+
+  .body {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 48px 24px 72px;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 18px;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 24px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: var(--bg-raised);
+  }
+
+  .card .eyebrow {
+    margin: 0;
+  }
+
+  .card h2 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 22px;
+    line-height: 1.25;
+    color: var(--heading);
+  }
+
+  .card p {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .card ul {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 15px;
+  }
+
+  .card a,
+  .requirements a {
+    color: var(--link);
+    text-decoration: underline;
+    text-decoration-color: var(--link-line);
+    text-underline-offset: 3px;
+  }
+
+  .requirements {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 48px;
+    align-items: center;
+    margin-top: 64px;
+  }
+
+  .requirements h2 {
+    margin: 0 0 14px;
+    font-family: var(--font-serif);
+    font-weight: 600;
+    font-size: 29px;
+    line-height: 1.2;
+    color: var(--heading);
+  }
+
+  .requirements p {
+    margin: 0 0 18px;
+    line-height: 1.7;
+  }
+
+  .docs-ic {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--inline-code-bg);
+    color: var(--inline-code);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 50rem) {
+    .requirements {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .pole {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pulse {
+      animation: none;
+    }
+  }
+</style>

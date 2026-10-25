@@ -1,0 +1,306 @@
+# Joins over remainders: a join is allowed when the same columns are
+# renamed for every caller. The declared halves are compared exactly;
+# the remainder half is proven from the slots' records and the
+# declarations' promises, and a join that cannot rule a rename out is
+# an error at the join, never a silent erasure.
+
+- case: join_open_left_to_known_right_with_the_promise_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class SectorsSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    Sectors = TypedDataFrame[SectorsSchema]
+    NoSector = other_columns(without=["sector"])
+
+    class DfSchema(Columns):
+        symbol: pl.String
+
+    # The right frame is fully known, so only one pairing needs a
+    # promise: the left remainder must not hold a right name. The
+    # caller's own extra columns come back untouched.
+    df: TypedDataFrame[DfSchema, NoSector]
+    ref: Sectors
+    reveal_type(df.join(ref, on="symbol"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'sector': polars.datatypes.classes.String}, closed=True), main.NoSector]"
+
+- case: join_open_left_without_the_promise_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class SectorsSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    Sectors = TypedDataFrame[SectorsSchema]
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        symbol: pl.String
+
+    # A caller whose frame holds "sector" gets a renamed column; one
+    # whose frame lacks it does not. No single type covers both, so
+    # the join reports which name is at risk.
+    df: TypedDataFrame[DfSchema, Rest]
+    ref: Sectors
+    df.join(ref, on="symbol")  # E: This join renames columns for some callers but not others: the remainder can hold "sector". Exclude the names with without=/without_prefix=, or make the overlap total with within=  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: join_open_left_with_a_prefix_promise_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class RefSchema(Columns):
+        symbol: pl.String
+        sec_sector: pl.String
+        sec_country: pl.String
+
+    Ref = TypedDataFrame[RefSchema]
+    NoSecPrefix = other_columns(without_prefix="sec_")
+
+    class DfSchema(Columns):
+        symbol: pl.String
+
+    # One namespace promise covers the whole reference table, however
+    # wide: every right name begins with the excluded prefix.
+    df: TypedDataFrame[DfSchema, NoSecPrefix]
+    ref: Ref
+    reveal_type(df.join(ref, on="symbol"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'sec_sector': polars.datatypes.classes.String, 'sec_country': polars.datatypes.classes.String}, closed=True), main.NoSecPrefix]"
+
+- case: semi_and_anti_joins_pass_the_remainder_through
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class SectorsSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    Sectors = TypedDataFrame[SectorsSchema]
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        symbol: pl.String
+
+    # Semi and anti joins take no columns from the right frame, so
+    # nothing can collide and no promise applies.
+    df: TypedDataFrame[DfSchema, Rest]
+    ref: Sectors
+    reveal_type(df.join(ref, on="symbol", how="semi"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'symbol': polars.datatypes.classes.String}, closed=True), main.Rest]"
+    reveal_type(df.join(ref, on="symbol", how="anti"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'symbol': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: join_two_open_frames_with_the_three_promises_narrows_to_the_union
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # Each without= names the other side's declared columns, and
+    # disjoint_from= closes the remainder-remainder pairing. The
+    # result's remainder is the union of the two.
+    L = other_columns(without=["sector"])
+    R = other_columns(without=["price"], disjoint_from=L)
+
+    class LeftSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    reveal_type(left.join(right, on="symbol"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64, 'sector': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
+
+- case: join_two_open_frames_without_disjointness_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    L = other_columns(without=["sector"])
+    R = other_columns(without=["price"])
+
+    class LeftSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    # Both name promises hold, but the two remainders can still share
+    # a name, and a shared hidden pair collides at run time.
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    left.join(right, on="symbol")  # E: This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: join_two_open_frames_with_disjoint_prefix_promises_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # No disjoint_from= at all: the two only_prefix= declarations
+    # already prove the remainders share no name, from the records
+    # alone.
+    L = other_columns(only_prefix="a_")
+    R = other_columns(only_prefix="b_")
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, L]
+    right: TypedDataFrame[LeftSchema, R]
+    reveal_type(left.join(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.LeftSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
+
+- case: join_of_closed_frames_is_unaffected_by_the_remainder_rule
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Int64, 'v_right': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: join_two_open_frames_with_the_promise_on_the_left_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # The disjointness promise can sit on either side's declaration:
+    # here the receiver's own remainder declares it.
+    R = other_columns(without=["price"])
+    L = other_columns(without=["sector"], disjoint_from=R)
+
+    class LeftSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    reveal_type(left.join(right, on="symbol"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64, 'sector': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
+
+- case: containment_join_suffixes_the_whole_right_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # The everything-collides shape: within= makes every right column
+    # certain to be renamed, and without_suffix= makes every renamed
+    # name land on free ground.
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+
+    class SnapshotSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    Snapshot = TypedDataFrame[SnapshotSchema, L]
+    Previous = TypedDataFrame[SnapshotSchema, R]
+
+    current: Snapshot
+    previous: Previous
+    reveal_type(current.join(previous, on="symbol", suffix="_prev"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64, 'price_prev': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Both[main.L, astrolabe.remainder.Suffixed[main.R, Literal['_prev']]]]"
+
+- case: containment_join_without_the_suffix_promise_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # Without without_suffix=, a left frame holding both "price" and
+    # "price_prev" makes real polars raise, because the renamed right
+    # "price" lands on a taken name.
+    L = other_columns()
+    R = other_columns(within=L)
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+
+    current: TypedDataFrame[CurrentSchema, L]
+    previous: TypedDataFrame[CurrentSchema, R]
+    current.join(previous, on="symbol", suffix="_prev")  # E: This join renames every right column with "_prev", but the left frame can already hold a name ending in it, and real polars raises rather than suffixing twice. Declare without_suffix="_prev" on the left remainder  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: containment_proven_by_the_right_record_alone
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # R's only= requirement proves every possible right remainder
+    # name is a left declared name, so the containment holds with no
+    # within= promise at all: a promise replaced by a fact.
+    L = other_columns(without_suffix="_x")
+    R = other_columns(only=["price"])
+
+    class CurrentSchema(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    current: TypedDataFrame[CurrentSchema, L]
+
+    class PreviousSchema(Columns):
+        symbol: pl.String
+
+    previous: TypedDataFrame[PreviousSchema, R]
+    reveal_type(current.join(previous, on="symbol", suffix="_x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.CurrentSchema, {'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Both[main.L, astrolabe.remainder.Suffixed[main.R, Literal['_x']]]]"
+
+- case: join_asof_shares_the_join_remainder_rule
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class QuotesSchema(Columns):
+        time: pl.Int64
+        bid: pl.Float64
+
+    Quotes = TypedDataFrame[QuotesSchema]
+    NoBid = other_columns(without=["bid"])
+    Rest = other_columns()
+
+    class TradesSchema(Columns):
+        time: pl.Int64
+
+    # The same rule as .join(): with the promise the remainder passes
+    # through; without it the join reports the name at risk.
+    trades: TypedDataFrame[TradesSchema, NoBid]
+    quotes: Quotes
+    reveal_type(trades.join_asof(quotes, on="time"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'time': polars.datatypes.classes.Int64, 'bid': polars.datatypes.classes.Float64}, closed=True), main.NoBid]"
+
+    open_trades: TypedDataFrame[TradesSchema, Rest]
+    open_trades.join_asof(quotes, on="time")  # E: This join renames columns for some callers but not others: the remainder can hold "bid". Exclude the names with without=/without_prefix=, or make the overlap total with within=  [join-rename] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join_asof = "possible"
+
+- case: join_where_shares_the_join_remainder_rule
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # join_where keeps every column from both sides, so the promise
+    # must cover every right name.
+    NoRight = other_columns(without=["bid", "x2"])
+
+    class EastSchema(Columns):
+        x: pl.Int64
+
+    east: TypedDataFrame[EastSchema, NoRight]
+
+    class WestSchema(Columns):
+        bid: pl.Float64
+        x2: pl.Int64
+
+    west: TypedDataFrame[WestSchema]
+    reveal_type(east.join_where(west, pl.col("x") < pl.col("x2")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.Int64, 'bid': polars.datatypes.classes.Float64, 'x2': polars.datatypes.classes.Int64}, closed=True), main.NoRight]"

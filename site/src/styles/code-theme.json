@@ -1,0 +1,44 @@
+{
+  "name": "astrolabe-night",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#10162a",
+    "editor.foreground": "#c9cddc",
+    "editorLineNumber.foreground": "#4a5068",
+    "editor.selectionBackground": "#2a3150",
+    "terminal.background": "#10162a",
+    "terminal.foreground": "#c9cddc"
+  },
+  "tokenColors": [
+    { "scope": ["comment", "punctuation.definition.comment"], "settings": { "foreground": "#9298ad", "fontStyle": "italic" } },
+    { "scope": ["string", "string.quoted", "punctuation.definition.string"], "settings": { "foreground": "#7fd9a8" } },
+    { "scope": ["constant.numeric"], "settings": { "foreground": "#f0c75e" } },
+    {
+      "scope": [
+        "keyword",
+        "keyword.control",
+        "keyword.operator.logical",
+        "storage.type",
+        "storage.modifier",
+        "constant.language",
+        "constant.language.boolean"
+      ],
+      "settings": { "foreground": "#e8a15c" }
+    },
+    {
+      "scope": ["entity.name.function", "meta.function-call.generic", "support.function", "variable.function"],
+      "settings": { "foreground": "#8fc3ff" }
+    },
+    {
+      "scope": ["entity.name.type", "entity.name.class", "entity.other.inherited-class", "support.type", "support.class"],
+      "settings": { "foreground": "#c4b5fd" }
+    },
+    {
+      "scope": ["entity.name.section", "entity.other.attribute-name.table", "support.type.property-name.table", "punctuation.definition.table"],
+      "settings": { "foreground": "#d4af37" }
+    },
+    { "scope": ["support.type.property-name", "entity.other.attribute-name", "variable.other.key"], "settings": { "foreground": "#c9cddc" } },
+    { "scope": ["entity.name.command", "support.function.builtin.shell"], "settings": { "foreground": "#f5f3ec" } },
+    { "scope": ["keyword.operator", "punctuation"], "settings": { "foreground": "#c9cddc" } }
+  ]
+}

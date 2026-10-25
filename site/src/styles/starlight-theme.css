@@ -1,0 +1,450 @@
+/* The theme of the documentation, on top of Starlight.
+ *
+ * The colors come from tokens.css, the same file that the landing page
+ * reads. Starlight keeps its own styles in a cascade layer, so a rule here
+ * wins over a rule of Starlight without `!important`.
+ *
+ * Starlight switches the theme with the `data-theme` attribute of the root
+ * element. tokens.css changes the tokens on that attribute, so each mapping
+ * below holds in both themes.
+ */
+
+@import './tokens.css';
+
+:root {
+  --sl-font: var(--font-sans);
+  --sl-font-mono: var(--font-mono);
+
+  --sl-color-white: var(--heading);
+  --sl-color-gray-1: #e7e5df;
+  --sl-color-gray-2: var(--text);
+  --sl-color-gray-3: var(--muted);
+  --sl-color-gray-4: #6b7086;
+  --sl-color-gray-5: #2a3150;
+  --sl-color-gray-6: #121931;
+  --sl-color-black: var(--bg);
+
+  --sl-color-accent-low: #3a2f10;
+  --sl-color-accent: var(--accent);
+  --sl-color-accent-high: var(--accent-text);
+
+  --sl-color-text: var(--text);
+  --sl-color-text-accent: var(--accent-text);
+  --sl-color-text-invert: var(--bg);
+  --sl-color-bg: var(--bg);
+  --sl-color-bg-nav: var(--bg);
+  --sl-color-bg-sidebar: var(--bg);
+  --sl-color-bg-inline-code: var(--inline-code-bg);
+  --sl-color-bg-accent: var(--accent);
+  --sl-color-hairline-light: var(--line);
+  --sl-color-hairline: var(--line-soft);
+  --sl-color-hairline-shade: var(--line-soft);
+  --sl-color-backdrop-overlay: rgba(5, 8, 18, 0.72);
+
+  --sl-text-body: 1.0625rem;
+  --sl-text-h1: 2.875rem;
+  --sl-text-h2: 1.8125rem;
+  --sl-text-h3: 1.125rem;
+  --sl-text-h4: 1rem;
+  --sl-line-height: 1.7;
+
+  --sl-nav-height: 4rem;
+  --sl-nav-pad-x: 1.75rem;
+  --sl-content-width: 47.5rem;
+  --sl-content-pad-x: 2rem;
+}
+
+:root[data-theme='light'] {
+  --sl-color-gray-1: #1d2238;
+  --sl-color-gray-4: #8d92a6;
+  --sl-color-gray-5: #d9d3c2;
+  --sl-color-gray-6: #ece6d6;
+  --sl-color-gray-7: #f2eee3;
+  --sl-color-accent-low: #f1e6c4;
+  --sl-color-backdrop-overlay: rgba(11, 16, 32, 0.35);
+}
+
+/* The header. */
+
+header.header {
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+site-search button[data-open-modal] {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--muted);
+}
+
+site-search button[data-open-modal]:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+site-search kbd {
+  border: 1px solid var(--line);
+  background: none;
+  font-family: var(--font-mono);
+}
+
+.social-icons::after {
+  border-inline-end-color: var(--line);
+}
+
+/* The sidebar. */
+
+.sidebar-pane {
+  border-inline-end: 1px solid var(--line-soft);
+}
+
+.sidebar-content .top-level > li > details > summary .large {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+
+.sidebar-content a {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-soft);
+  border-radius: 6px;
+}
+
+.sidebar-content a:hover {
+  color: var(--heading);
+}
+
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--accent-tint);
+  color: var(--heading);
+  font-weight: 500;
+}
+
+/* The current page carries a small Polaris: a ring and a dot. */
+.sidebar-content a[aria-current='page']::before {
+  content: '';
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent) 0 1.8px, transparent 2.2px);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.sidebar-content .sl-badge {
+  margin-inline-start: auto;
+}
+
+/* The content. */
+
+.sl-markdown-content {
+  font-size: 1.0625rem;
+  line-height: 1.7;
+}
+
+.sl-markdown-content h2 {
+  margin-top: 3.25rem;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.8125rem;
+  line-height: 1.2;
+  color: var(--heading);
+}
+
+.sl-markdown-content h3 {
+  margin-top: 2.1rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 1.125rem;
+  line-height: 1.4;
+  color: var(--heading);
+}
+
+.sl-markdown-content h4 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--heading);
+}
+
+.sl-markdown-content h2 code,
+.sl-markdown-content h3 code {
+  font-size: 0.8em;
+}
+
+.sl-markdown-content a {
+  color: var(--link);
+  text-decoration-color: var(--link-line);
+  text-underline-offset: 3px;
+}
+
+.sl-markdown-content a:hover {
+  text-decoration-color: var(--link);
+}
+
+.sl-markdown-content :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--inline-code-bg);
+  color: var(--inline-code);
+}
+
+.sl-markdown-content a > code {
+  color: inherit;
+}
+
+.sl-markdown-content strong {
+  color: var(--heading);
+}
+
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15.5px;
+  line-height: 1.55;
+}
+
+.sl-markdown-content th {
+  padding: 10px 14px;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.sl-markdown-content td {
+  padding: 11px 14px;
+  vertical-align: top;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.sl-markdown-content tr:nth-child(2n) {
+  background: none;
+}
+
+.sl-markdown-content tbody tr:hover td {
+  background: var(--accent-tint);
+}
+
+.sl-markdown-content blockquote {
+  border-inline-start: 2px solid var(--line-strong);
+  color: var(--text-soft);
+}
+
+.sl-markdown-content hr {
+  border-color: var(--line-soft);
+}
+
+/* The page title area. */
+
+.content-panel:first-of-type {
+  padding-top: 2.75rem;
+}
+
+/* On this page: a graduated rule, with the current section on the long tick. */
+
+starlight-toc nav h2 {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+starlight-toc nav > ul {
+  position: relative;
+  margin-left: 4px;
+  padding: 2px 0;
+  border-left: 1px solid var(--line);
+}
+
+starlight-toc nav > ul::before {
+  content: '';
+  position: absolute;
+  left: -4px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 9px);
+}
+
+starlight-toc a {
+  position: relative;
+  padding-inline-start: 18px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+starlight-toc a::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  width: 8px;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+starlight-toc ul ul a {
+  padding-inline-start: 30px;
+  font-size: 13px;
+}
+
+starlight-toc a:hover {
+  color: var(--heading);
+}
+
+starlight-toc a[aria-current='true'] {
+  color: var(--accent-text);
+}
+
+starlight-toc a[aria-current='true']::before {
+  left: -5px;
+  width: 16px;
+  height: 1.5px;
+  background: var(--accent);
+}
+
+/* Previous and next. */
+
+.pagination-links a {
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-raised);
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.pagination-links a:hover {
+  border-color: var(--line-strong);
+}
+
+.pagination-links a svg {
+  display: none;
+}
+
+.pagination-links .link-title {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--heading);
+}
+
+.sl-container .meta {
+  font-size: 13.5px;
+  color: var(--muted);
+}
+
+/* Callouts: a hairline on the left in the color of the kind. */
+
+.starlight-aside {
+  border: 1px solid var(--line-soft);
+  border-inline-start: 2px solid var(--a);
+  border-radius: 8px;
+  background: var(--a-bg);
+  color: var(--text);
+  font-size: 16px;
+}
+
+.starlight-aside__title {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--a);
+}
+
+.starlight-aside__icon {
+  color: var(--a);
+}
+
+.starlight-aside--note {
+  --a: var(--note);
+  --a-bg: var(--note-bg);
+}
+
+.starlight-aside--tip {
+  --a: var(--tip);
+  --a-bg: var(--tip-bg);
+}
+
+.starlight-aside--caution {
+  --a: var(--caution);
+  --a-bg: var(--caution-bg);
+}
+
+.starlight-aside--danger {
+  --a: var(--danger);
+  --a-bg: var(--danger-bg);
+}
+
+/* Tabs: the same pill as the install card of the landing page. */
+
+starlight-tabs [role='tablist'] {
+  border-bottom: 1px solid var(--line);
+}
+
+starlight-tabs .tab > [role='tab'] {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+
+starlight-tabs .tab [role='tab'][aria-selected='true'] {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+
+/* Badges. */
+
+.sl-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line-strong);
+  background: none;
+  color: var(--accent-text);
+}
+
+/* Expressive Code: the code panels of plain code blocks. */
+
+.expressive-code .frame {
+  box-shadow: var(--panel-shadow);
+}
+
+.expressive-code pre,
+.expressive-code code {
+  font-variant-ligatures: none;
+}

@@ -1,0 +1,203 @@
+# Cases that pin how the checker reads the [tool.astrolabe] settings, and
+# the reasons that the gate sees. Each case writes its own pyproject.toml
+# through `files:`. The file then replaces the one that pytest-mypy-plugins
+# writes, and must register the plugin again.
+
+- case: settings_level_none_reports_each_stated_reason
+  main: |
+    import polars as pl
+    from typing import Literal
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+        b: List[pl.Int64]
+        s: Struct[Column[Literal["x"], pl.Int64]]
+
+    df: TypedDataFrame[A]
+    e: pl.Expr
+    name: str = "a"
+    mapping: dict[str, str] = {}
+    cols: list[str] = []
+    # The level "none" reports an expression that is not typed.
+    df.select(pl.col(name))  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"
+    # An alias with a name that is not a literal keeps the reason of the plain expression.
+    df.select(e.alias(name))  # E: The result of "select" has no known schema: an expression is not typed  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"
+    # A rename with a mapping that is not a literal has a dynamic name.
+    df.rename(mapping)  # E: The result of "rename" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] rename = "stated"
+    # A rename with no argument gets one error. The gate adds no second error.
+    df.rename()  # E: Missing positional argument "mapping" in call to "rename" of "TypedDataFrame"  [call-arg]
+    # An explode of a name that is not a literal has a dynamic name.
+    df.explode(name)  # E: The result of "explode" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] explode = "stated"
+    # An unnest of names that are not literals has a dynamic name.
+    df.unnest(cols)  # E: The result of "unnest" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] unnest = "stated"
+    # An unpivot with an `on` name that is not a literal has a dynamic name.
+    df.unpivot(name, index="a")  # E: The result of "unpivot" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] unpivot = "stated"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: settings_override_of_one_operation_sets_its_level
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    df: TypedDataFrame[A]
+    name: str = "a"
+    mapping: dict[str, str] = {}
+    # The override sets the level "none" for select. The gate reports the expression that is not typed.
+    df.select(pl.col(name))  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped]  # N: set [tool.astrolabe.allow_unproven_overrides] select = "stated" to allow this
+    # The override does not change the level of rename. The default level lets the dynamic name pass.
+    df.rename(mapping)
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe.allow_unproven_overrides]
+        select = "none"
+
+- case: settings_level_possible_lets_a_drop_of_a_name_in_the_remainder_pass
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class A(Columns):
+        a: pl.Int64
+
+    Rest = other_columns()
+    df: TypedDataFrame[A, Rest]
+    # The remainder can hold the name "z". The level "possible" lets the drop pass, and the result stays typed.
+    reveal_type(df.drop("z"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.A, {'a': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['z']]]"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "possible"
+
+- case: settings_report_checker_gaps_reports_only_an_unexplained_unchecked_answer
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Vw[T: pl.DataType](Columns):
+        v: T
+        w: pl.Int64
+
+    class U(Columns):
+        u: Unchecked
+        w: pl.Int64
+
+    class L(Columns):
+        t: pl.Int64
+        k: pl.Int64
+
+    class B(Columns):
+        a: pl.Int64
+        arr: pl.Array
+
+    def f[T: pl.DataType](df: TypedDataFrame[Vw[T]]) -> None:
+        # A type variable stands for every data type of its bound, and the sum depends on it.
+        # That is not a gap.
+        df.select((pl.col("v") + pl.col("w")).alias("bad"))
+        # Polars cannot write the tree of a cumulative sum of columns, so the checker does not
+        # model it. The setting reports this gap.
+        df.select(pl.cum_sum_horizontal("w", "w").alias("bad"))  # E: Column "bad" of "select" is Unchecked: the checker does not model this case  [implicitly-unchecked] # N: set report_checker_gaps = false in [tool.astrolabe] to allow this
+
+    u: TypedDataFrame[U]
+    # A column that the user declares Unchecked makes the answer Unchecked. That is not a gap.
+    reveal_type(u.select(pl.col("u") + pl.col("w")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(u.select(pl.col("u").alias("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(u.select(pl.col("u").first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(u.select(pl.col("u") + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    value: int = 1
+    # A bare integer gets its own reason where the checker reads it. That is not a gap.
+    reveal_type(u.select(pl.lit(value)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+    b: TypedDataFrame[B]
+    # An array with no width gives a stack of arrays with no width. That is not a gap.
+    reveal_type(b.select(pl.concat_arr("arr", "a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'arr': polars.datatypes.classes.Array}, closed=True), None]"
+    left: TypedDataFrame[L]
+    right: TypedDataFrame[L]
+    # A missing `on` key gets one error. The checker reports no gap after it.
+    left.join_asof(right, on="missing")  # E: Unknown column "missing" in left frame  [unknown-column]
+    # A missing `by` key gets one error. The checker reports no gap after it.
+    left.join_asof(right, on="t", by="missing")  # E: Unknown column "missing" in left frame  [unknown-column]
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        report_checker_gaps = true
+
+- case: settings_disallow_vertical_concat_reports_a_vertical_concat
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    x: TypedDataFrame[A]
+    # The setting disallow_vertical_concat reports a vertical concat.
+    pl.concat([x, x])  # E: pl.concat(how="vertical") is disallowed: column order cannot be verified for a schema derived through a Rest-generic function (set disallow_vertical_concat = false in [tool.astrolabe] to allow it as an untyped result instead)  [vertical-concat-disallowed]
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        disallow_vertical_concat = true
+
+- case: settings_override_of_the_inferred_fallback_reports_an_erased_variant
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def untyped_helper() -> pl.Expr:
+        return pl.col("x")
+
+    def maybe_untyped(flag: bool) -> InferredExpr:
+        if flag:
+            return infer(pl.col("a"))
+        return infer(untyped_helper())
+
+    # The override for expr is true. The erased variant is an error, although the general value is false.
+    reveal_type(maybe_untyped(True))  # E: One of this function's infer(...) variants is untyped, so its whole return type falls back to the plain, erased type instead of InferredExpr's own union (set disallow_implicit_inferred_fallback = false in [tool.astrolabe] to allow this, or set [tool.astrolabe.disallow_implicit_inferred_fallback_overrides] expr = false to allow just this placeholder)  [implicitly-inferred-fallback] # N: Revealed type is "polars.expr.expr.Expr"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        disallow_implicit_inferred_fallback = false
+
+        [tool.astrolabe.disallow_implicit_inferred_fallback_overrides]
+        expr = true

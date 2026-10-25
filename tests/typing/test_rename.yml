@@ -1,0 +1,267 @@
+# .rename(): renaming columns in a frame. Written before the corresponding
+# get_method_hook implementation exists. This test is expected to fail
+# (red) until plugin.py implements it.
+#
+# Only the dict-literal mapping form of rename() is statically checked.
+# The callable form (`rename(lambda name: ...)`) cannot be introspected,
+# so it falls back to the plain, erased pl.DataFrame/pl.LazyFrame, the
+# same "cannot see it statically, so do not narrow and do not error"
+# discipline as
+# select/drop's non-literal arguments -- never to "schema unchanged",
+# since a real rename() call would actually replace the renamed
+# column's old name.
+
+- case: rename_single_column_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class RenamedSchema(Columns):
+        foo: pl.String
+        baz: pl.Int64
+
+    renamed: TypedDataFrame[RenamedSchema] = df.rename({"bar": "baz"})
+
+- case: rename_final_str_key_and_value_narrow_like_inline_literals
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # Final-declared string variables for both the mapping key and
+    # value narrow the same way the equivalent inline string literals
+    # do (see rename_single_column_narrows_precisely, above).
+    OLD: Final = "bar"
+    NEW: Final = "baz"
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class RenamedSchema(Columns):
+        foo: pl.String
+        baz: pl.Int64
+
+    renamed: TypedDataFrame[RenamedSchema] = df.rename({OLD: NEW})
+
+- case: rename_multiple_columns_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class RenamedSchema(Columns):
+        qux: pl.String
+        baz: pl.Int64
+
+    renamed: TypedDataFrame[RenamedSchema] = df.rename({"foo": "qux", "bar": "baz"})
+
+- case: rename_swap_is_allowed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class SwappedSchema(Columns):
+        bar: pl.String
+        foo: pl.Int64
+
+    swapped: TypedDataFrame[SwappedSchema] = df.rename({"foo": "bar", "bar": "foo"})
+
+- case: rename_unknown_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.rename({"missing": "baz"})  # E: Unknown column "missing"  [unknown-column]
+
+- case: rename_of_a_column_that_the_undeclared_columns_can_hold_is_unproven
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    # The undeclared columns can hold "missing", so polars raises only where
+    # they do not.
+    def f(df: TypedDataFrame[FrameSchema, Rest]) -> None:
+        reveal_type(df.rename({"missing": "baz"}))  # E: Column "missing" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] rename = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: rename_collision_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.rename({"bar": "foo"})  # E: Rename would produce duplicate column "foo"  [duplicate-column]
+
+- case: rename_with_callable_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.rename(str.upper))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: rename_with_no_arguments_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # Polars requires the mapping, and the call takes the parameters of polars.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.rename()  # E: Missing positional argument "mapping" in call to "rename" of "TypedDataFrame"  [call-arg]
+
+- case: rename_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class RenamedSchema(Columns):
+        foo: pl.String
+        baz: pl.Int64
+
+    renamed: TypedLazyFrame[RenamedSchema] = lf.rename({"bar": "baz"})
+
+- case: rename_unknown_column_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    lf.rename({"missing": "baz"})  # E: Unknown column "missing"  [unknown-column]
+
+- case: rename_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.rename({"a": "b"}))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: rename_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.rename({"a": "b"}))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: rename_frees_the_old_name_for_with_row_index
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns(without=["kk"])
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # Real polars accepts this and gives
+    # Schema({'k': UInt32, 'kk': Int64, ...}), measured against polars
+    # 1.43.2. Renaming "k" away frees the name exactly as dropping it
+    # does, so the result records that the remainder still lacks it and
+    # a new column can take the name back.
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.rename({"k": "kk"}).with_row_index("k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.UInt32, 'kk': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['k']]]"
+
+- case: rename_of_a_swap_frees_nothing_and_keeps_a_bare_rest
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # Both names stay declared, only on different columns, so no name
+    # is freed and no `Minus` node is minted.
+    df: TypedDataFrame[DfSchema, Rest]
+
+    class RenamedSchema(Columns):
+        b: pl.Int64
+        a: pl.String
+
+    renamed: TypedDataFrame[RenamedSchema, Rest] = df.rename({"a": "b", "b": "a"})
+
+- case: rename_reports_each_error_of_a_mapping
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Values(Columns):
+        v: pl.Int64
+        k: pl.Int64
+
+    a: TypedDataFrame[Values]
+    a.rename({"v": "k"})  # E: Rename would produce duplicate column "k"  [duplicate-column]
+    a.rename({"zz": "q"})  # E: Unknown column "zz"  [unknown-column]
+    a.rename()  # E: Missing positional argument "mapping" in call to "rename" of "TypedDataFrame"  [call-arg]

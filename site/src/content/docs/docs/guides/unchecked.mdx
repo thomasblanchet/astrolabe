@@ -1,0 +1,32 @@
+---
+title: Python functions and Unchecked
+description: A Python function hides the data type of its result. Keep the name, and state the data type when you can.
+sidebar:
+  order: 10
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+The checker cannot read the body of a Python function that Polars runs on the data. So it cannot know the data type that such a function gives.
+
+## Unchecked keeps the name
+
+`Unchecked` is the data type of a column whose name the checker knows and whose data type it does not:
+
+<Example name="unchecked_map" />
+
+Every later operation accepts an `Unchecked` column. So a program that runs one function in Python keeps every other check: the other columns keep their data types, and a later read of a missing name is still an error.
+
+These members give `Unchecked`: `map_elements`, `map_batches`, `pl.map_batches`, `pl.map_groups`, `pl.fold`, `pl.reduce`, `pl.cum_fold` and `pl.cum_reduce` without `return_dtype=`, `rolling_map`, and the `map_columns` of a frame.
+
+## State the data type
+
+`return_dtype=` names the data type of the result. The column is typed again:
+
+<Example name="unchecked_typed" />
+
+## Make it an error
+
+At the level `stated` or a stricter one, a member without its `return_dtype=` is an error, and a note names the setting that lets it pass. See [Make the checker stricter](../../tutorial/strictness/) and [Configuration](../../reference/configuration/).
+
+A `Columns` class can declare a column as `Unchecked`. `check_schema` then checks that the column is present, and does not check its data type.

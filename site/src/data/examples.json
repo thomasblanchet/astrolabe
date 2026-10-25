@@ -1,0 +1,3382 @@
+{
+ "decl_malformed": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import column, typed_expr",
+   "",
+   "NoRead = typed_expr(gives=pl.Int64, named=\"n\")",
+   "Pair = typed_expr(column(\"price\", pl.Float64), column(\"quantity\", pl.Int64), gives=pl.Float64)"
+  ],
+  "messages": [
+   {
+    "line": 5,
+    "severity": "error",
+    "text": "Malformed declaration: no column is read. Read one, name a typed_agg, or use typed_lit",
+    "code": "malformed-declaration"
+   },
+   {
+    "line": 6,
+    "severity": "error",
+    "text": "Malformed declaration: named= is required with two or more reads",
+    "code": "malformed-declaration"
+   }
+  ],
+  "results": []
+ },
+ "err_columns_not_closed": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Loose(Columns, closed=False):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "loose: TypedDataFrame[Loose]"
+  ],
+  "messages": [
+   {
+    "line": 6,
+    "severity": "error",
+    "text": "Columns subclass \"Loose\" must not use closed=False. Declare a remainder with other_columns() and write it as the frame's second argument, for example TypedDataFrame[Loose, Rest]",
+    "code": "columns-not-closed"
+   }
+  ],
+  "results": []
+ },
+ "err_concat_collision": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, other_columns",
+   "",
+   "",
+   "class Keys(Columns):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "class Priced(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def stack(left: TypedDataFrame[Keys, Rest], right: TypedDataFrame[Priced]) -> None:",
+   "    pl.concat([left, right], how=\"diagonal\")"
+  ],
+  "messages": [
+   {
+    "line": 19,
+    "severity": "error",
+    "text": "This concat combines columns differently for some callers: another frame's remainder can hold \"price\". Exclude the names with without=/without_prefix=",
+    "code": "concat-collision"
+   },
+   {
+    "line": 19,
+    "severity": "note",
+    "text": "set allow_unproven = \"possible\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = \"possible\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "err_duplicate_column": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "trades.select(\"price\", pl.col(\"quantity\").alias(\"price\"))"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "select would produce duplicate column \"price\"",
+    "code": "duplicate-column"
+   }
+  ],
+  "results": []
+ },
+ "err_frame_type_not_closed": {
+  "file": "boundary.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, check_schema, other_columns",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "raw = pl.read_parquet(\"trades.parquet\")",
+   "trades = check_schema(raw, TypedDataFrame[Trades, Rest])"
+  ],
+  "messages": [
+   {
+    "line": 14,
+    "severity": "error",
+    "text": "check_schema() needs a closed frame type, and this frame type has undeclared columns. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]",
+    "code": "frame-type-not-closed"
+   }
+  ],
+  "results": []
+ },
+ "err_inferred_fallback": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import InferredExpr, infer",
+   "",
+   "",
+   "def scaled(price: pl.Expr, factor: float) -> InferredExpr:",
+   "    return infer(price * factor)",
+   "",
+   "",
+   "scaled(pl.col(\"price\"), 2.0)"
+  ],
+  "messages": [
+   {
+    "line": 10,
+    "severity": "error",
+    "text": "One of this function's infer(...) variants is untyped, so its whole return type falls back to the plain, erased type instead of InferredExpr's own union (set disallow_implicit_inferred_fallback = false in [tool.astrolabe] to allow this, or set [tool.astrolabe.disallow_implicit_inferred_fallback_overrides] expr = false to allow just this placeholder)",
+    "code": "implicitly-inferred-fallback"
+   }
+  ],
+  "results": []
+ },
+ "err_invalid_call_shape": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "trades.explode([])"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "explode() with no columns to explode always raises",
+    "code": "invalid-call-shape"
+   }
+  ],
+  "results": []
+ },
+ "err_marker_arg": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Keys(Columns):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "frame: TypedDataFrame[Keys, int]"
+  ],
+  "messages": [
+   {
+    "line": 10,
+    "severity": "error",
+    "text": "TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]",
+    "code": "marker-arg"
+   }
+  ],
+  "results": []
+ },
+ "err_marker_arity": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, Prefixed, TypedDataFrame, other_columns",
+   "",
+   "",
+   "class Keys(Columns):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "Rest = other_columns()",
+   "frame: TypedDataFrame[Keys, Prefixed[Rest]]"
+  ],
+  "messages": [
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]",
+    "code": "marker-arg"
+   },
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "Prefixed[...] requires exactly 2 type arguments: Prefixed[prefix, name_expr]",
+    "code": "marker-arity"
+   }
+  ],
+  "results": []
+ },
+ "err_schema_mismatch": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "",
+   "",
+   "class Quotes(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "quotes: TypedDataFrame[Quotes]",
+   "trades.vstack(quotes)"
+  ],
+  "messages": [
+   {
+    "line": 16,
+    "severity": "error",
+    "text": ".vstack() requires an identical schema",
+    "code": "schema-mismatch"
+   }
+  ],
+  "results": []
+ },
+ "err_vertical_concat": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "pl.concat([trades, trades])"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "pl.concat(how=\"vertical\") is disallowed: column order cannot be verified for a schema derived through a Rest-generic function (set disallow_vertical_concat = false in [tool.astrolabe] to allow it as an untyped result instead)",
+    "code": "vertical-concat-disallowed"
+   }
+  ],
+  "results": []
+ },
+ "err_wrong_dtype": {
+  "file": "example.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, other_columns",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Rounded(Columns):",
+   "    symbol: pl.String",
+   "    quantity: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def total(df: TypedDataFrame[Trades, Rest]) -> None: ...",
+   "",
+   "",
+   "rounded: TypedDataFrame[Rounded]",
+   "total(rounded)"
+  ],
+  "messages": [
+   {
+    "line": 23,
+    "severity": "error",
+    "text": "Column \"quantity\" has the wrong dtype",
+    "code": "wrong-dtype"
+   }
+  ],
+  "results": []
+ },
+ "expr_aggregations": {
+  "file": "expressions.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "one_row = trades.select(pl.col(\"quantity\").sum())",
+   "broadcast = trades.with_columns(total=pl.col(\"quantity\").sum())",
+   "per_symbol = trades.group_by(\"symbol\").agg(pl.col(\"quantity\").sum())"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "one_row",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'quantity': Int64}, closed=True), None]"
+   },
+   {
+    "label": "broadcast",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "total",
+        "Int64",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'total': Int64}, closed=True), None]"
+   },
+   {
+    "label": "per_symbol",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "expr_errors": {
+  "file": "expressions.py",
+  "start": 1,
+  "lines": [
+   "from typing import Literal",
+   "",
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, Datetime, TypedDataFrame",
+   "",
+   "",
+   "class Fills(Columns):",
+   "    symbol: pl.String",
+   "    time: Datetime[Literal[\"us\"], None]",
+   "",
+   "",
+   "fills: TypedDataFrame[Fills]",
+   "fills.select(pl.col(\"symbol\").round(2))",
+   "fills.select(pl.col(\"time\").cast(pl.Boolean))",
+   "fills.select(pl.col(\"symbol\") + pl.col(\"time\"))"
+  ],
+  "messages": [
+   {
+    "line": 14,
+    "severity": "error",
+    "text": "\"symbol\" has no result type at this frame's column types: round does not accept String, and polars raises InvalidOperationError",
+    "code": "unsupported-dtype-op"
+   },
+   {
+    "line": 15,
+    "severity": "error",
+    "text": "This expression cannot cast from Datetime(time_unit='us', time_zone=None) to Boolean",
+    "code": "invalid-cast"
+   },
+   {
+    "line": 16,
+    "severity": "error",
+    "text": "\"symbol\" has no result type at this frame's column types: Plus not allowed on String and Datetime(time_unit='us', time_zone=None), and polars raises InvalidOperationError",
+    "code": "unsupported-dtype-op"
+   }
+  ],
+  "results": []
+ },
+ "expr_types": {
+  "file": "expressions.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "summary = trades.select(",
+   "    pl.col(\"price\") * 2,",
+   "    pl.col(\"symbol\").str.len_chars(),",
+   "    pl.when(pl.col(\"quantity\") > 0).then(pl.col(\"price\")).otherwise(0).alias(\"buy_price\"),",
+   ")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "summary",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "symbol",
+        "UInt32",
+        ""
+       ],
+       [
+        "buy_price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price': Float64, 'symbol': UInt32, 'buy_price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_agg": {
+  "file": "totals.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Quantity = column(\"quantity\", pl.Int64)",
+   "TotalQuantity = typed_agg(Quantity, gives=pl.Int64)",
+   "",
+   "",
+   "def total_quantity(quantity: Quantity) -> TotalQuantity:",
+   "    return quantity.sum()",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades.select(total_quantity(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'quantity': Int64}, closed=True), None]"
+   },
+   {
+    "label": "trades.group_by(\"symbol\").agg(total_quantity(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_any_column": {
+  "file": "scores.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "class Readings(Columns):",
+   "    temp: pl.Float32",
+   "",
+   "",
+   "Standardised = typed_expr(some_column(FloatType), gives=same)",
+   "",
+   "",
+   "def zscore(e: Standardised) -> Standardised:",
+   "    return (e - e.mean()) / e.std()",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "readings: TypedDataFrame[Readings]",
+   "zscore(pl.col(\"price\").alias(\"z\"))"
+  ],
+  "messages": [
+   {
+    "line": 19,
+    "severity": "error",
+    "text": "Argument \"e\" does not match its declared type: it must give back the one column it uses, under the same name",
+    "code": "expression-fit"
+   }
+  ],
+  "results": [
+   {
+    "label": "trades.select(zscore(pl.col(\"price\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price': Float64}, closed=True), None]"
+   },
+   {
+    "label": "readings.select(zscore(pl.col(\"temp\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "temp",
+        "Float32",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Readings, {'temp': Float32}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_column": {
+  "file": "pricing.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Price = column(\"price\", pl.Float64)",
+   "",
+   "",
+   "def discounted(price: Price) -> Price:",
+   "    return price * 0.9",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "discounted(pl.col(\"quantity\"))",
+   "discounted(pl.col(\"price\").cast(pl.String))",
+   "discounted(pl.col(\"price\").sum())"
+  ],
+  "messages": [
+   {
+    "line": 15,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: it uses column \"quantity\", which the declared type does not allow",
+    "code": "expression-fit"
+   },
+   {
+    "line": 16,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: it makes a String column, but the declared type is Float64",
+    "code": "expression-fit"
+   },
+   {
+    "line": 17,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: it combines rows into one value, but the declared type works row by row",
+    "code": "expression-fit"
+   }
+  ],
+  "results": [
+   {
+    "label": "trades.select(discounted(pl.col(\"price\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_frame": {
+  "file": "pricing.py",
+  "start": 1,
+  "lines": [
+   "class Sizes(Columns):",
+   "    price: pl.Int32",
+   "",
+   "",
+   "Price = column(\"price\", pl.Float64)",
+   "",
+   "",
+   "def discounted(price: Price) -> Price:",
+   "    return price * 0.9",
+   "",
+   "",
+   "sizes: TypedDataFrame[Sizes]",
+   "sizes.select(discounted(pl.col(\"price\")))"
+  ],
+  "messages": [
+   {
+    "line": 13,
+    "severity": "error",
+    "text": "\"price\" has no result type at this frame's column types: the declaration gives no result at the data types of this frame",
+    "code": "unsupported-dtype-op"
+   }
+  ],
+  "results": []
+ },
+ "exprtypes_new_column": {
+  "file": "flags.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Quantity = column(\"quantity\", pl.Int64)",
+   "BuyFlag = typed_expr(Quantity, gives=pl.Boolean, named=\"is_buy\")",
+   "",
+   "",
+   "def buy_flag(quantity: Quantity) -> BuyFlag:",
+   "    return (quantity > 0).alias(\"is_buy\")",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades.with_columns(buy_flag(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "is_buy",
+        "Boolean",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'quantity': Int64, 'is_buy': Boolean}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_plain": {
+  "file": "pricing.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "def discounted(price: pl.Expr) -> pl.Expr:",
+   "    return price * 0.9",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades.select(discounted(pl.col(\"price\")))",
+    "frames": [],
+    "revealed": "DataFrame"
+   }
+  ]
+ },
+ "exprtypes_region": {
+  "file": "flags.py",
+  "start": 1,
+  "lines": [
+   "class Small(Columns):",
+   "    quantity: pl.Int8",
+   "",
+   "",
+   "class Texts(Columns):",
+   "    quantity: pl.String",
+   "",
+   "",
+   "Quantity = column(\"quantity\", NumericType)",
+   "BuyFlag = typed_expr(Quantity, gives=pl.Boolean, named=\"is_buy\")",
+   "",
+   "",
+   "def buy_flag(quantity: Quantity) -> BuyFlag:",
+   "    return (quantity > 0).alias(\"is_buy\")",
+   "",
+   "",
+   "small: TypedDataFrame[Small]",
+   "texts: TypedDataFrame[Texts]",
+   "texts.select(buy_flag(pl.col(\"quantity\")))"
+  ],
+  "messages": [
+   {
+    "line": 19,
+    "severity": "error",
+    "text": "\"is_buy\" has no result type at this frame's column types: the declaration gives no result at the data types of this frame",
+    "code": "unsupported-dtype-op"
+   }
+  ],
+  "results": [
+   {
+    "label": "small.select(buy_flag(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "is_buy",
+        "Boolean",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'is_buy': Boolean}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_rows": {
+  "file": "totals.py",
+  "start": 1,
+  "lines": [
+   "class Small(Columns):",
+   "    quantity: pl.Int8",
+   "",
+   "",
+   "class Wide(Columns):",
+   "    quantity: pl.Int32",
+   "",
+   "",
+   "Quantity = column(\"quantity\", {pl.Int8, pl.Int16, pl.Int32, pl.Int64})",
+   "SameType = typed_agg(Quantity, gives=same)",
+   "Total = typed_agg(",
+   "    row(column(\"quantity\", {pl.Int8, pl.Int16}), gives=pl.Int64),",
+   "    row(column(\"quantity\", {pl.Int32, pl.Int64}), gives=same),",
+   ")",
+   "",
+   "",
+   "def wrong_total(quantity: Quantity) -> SameType:",
+   "    return quantity.sum()",
+   "",
+   "",
+   "def total(quantity: Quantity) -> Total:",
+   "    return quantity.sum()",
+   "",
+   "",
+   "small: TypedDataFrame[Small]",
+   "wide: TypedDataFrame[Wide]"
+  ],
+  "messages": [
+   {
+    "line": 18,
+    "severity": "error",
+    "text": "This expression does not match its declared type: it makes an Int64 column, but the declared type is Int16",
+    "code": "expression-fit"
+   }
+  ],
+  "results": [
+   {
+    "label": "small.select(total(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'quantity': Int64}, closed=True), None]"
+   },
+   {
+    "label": "wide.select(total(pl.col(\"quantity\")))",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "quantity",
+        "Int32",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Wide, {'quantity': Int32}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_rule": {
+  "file": "flags.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Flagged(Trades):",
+   "    flag: pl.Boolean",
+   "",
+   "",
+   "Rest = other_columns()",
+   "FlagRule = typed_expr(Trades, gives=pl.Boolean, named=\"flag\")",
+   "",
+   "",
+   "def flagged(",
+   "    df: TypedDataFrame[Trades, Rest],",
+   "    rule: FlagRule,",
+   ") -> TypedDataFrame[Flagged, InferredRemainder]:",
+   "    return infer(df.with_columns(rule))",
+   "",
+   "",
+   "class Blotter(Trades):",
+   "    venue: pl.String",
+   "",
+   "",
+   "blotter: TypedDataFrame[Blotter]",
+   "large = (pl.col(\"price\") * pl.col(\"quantity\") > 1e6).alias(\"flag\")",
+   "result = flagged(blotter, large)",
+   "flagged(blotter, (pl.col(\"venue\") == \"X\").alias(\"flag\"))",
+   "flagged(blotter, pl.lit(True).alias(\"flag\"))"
+  ],
+  "messages": [
+   {
+    "line": 29,
+    "severity": "error",
+    "text": "Argument \"rule\" does not match its declared type: it uses column \"venue\", which the declared type does not allow",
+    "code": "expression-fit"
+   },
+   {
+    "line": 30,
+    "severity": "error",
+    "text": "Argument \"rule\" does not match its declared type: it is a fixed value, but the declared type works row by row",
+    "code": "expression-fit"
+   }
+  ],
+  "results": [
+   {
+    "label": "result",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "flag",
+        "Boolean",
+        "add"
+       ],
+       [
+        "venue",
+        "String",
+        "rem"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'flag': Boolean, 'venue': String}, closed=True), None]"
+   }
+  ]
+ },
+ "exprtypes_values": {
+  "file": "flags.py",
+  "start": 1,
+  "lines": [
+   "Price = column(\"price\", pl.Float64)",
+   "Expensive = typed_expr(Price, gives=pl.Boolean, named=\"expensive\")",
+   "",
+   "rule: Expensive = (pl.col(\"price\") > 100.0).alias(\"expensive\")",
+   "wrong: Expensive = pl.col(\"price\").alias(\"expensive\")",
+   "",
+   "",
+   "def expensive(price: Price) -> Expensive:",
+   "    return (price > 100.0).alias(\"expensive\")",
+   "",
+   "",
+   "plain: pl.Expr",
+   "expensive(plain)"
+  ],
+  "messages": [
+   {
+    "line": 5,
+    "severity": "error",
+    "text": "This expression does not match its declared type: it makes a Float64 column, but the declared type is Boolean",
+    "code": "expression-fit"
+   },
+   {
+    "line": 13,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: this value is not a typed expression, so its columns and types are unknown",
+    "code": "expression-fit"
+   },
+   {
+    "line": 13,
+    "severity": "note",
+    "text": "set allow_unproven = \"asserted\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = \"asserted\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "home_quick_look": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "trades.select(\"venue\")"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "Unknown column \"venue\"",
+    "code": "unknown-column"
+   }
+  ],
+  "results": []
+ },
+ "inferred_expr": {
+  "file": "prices.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, InferredExpr, TypedDataFrame, infer",
+   "",
+   "",
+   "class Quotes(Columns):",
+   "    price_usd: pl.Float64",
+   "    price_eur: pl.Float32",
+   "",
+   "",
+   "def price(currency: str) -> InferredExpr:",
+   "    if currency == \"USD\":",
+   "        return infer(pl.col(\"price_usd\"))",
+   "    return infer(pl.col(\"price_eur\").cast(pl.Float64))",
+   "",
+   "",
+   "quotes: TypedDataFrame[Quotes]",
+   "in_euros = quotes.select(price(\"EUR\"))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "in_euros",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price_usd",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     },
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price_eur",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price_usd': Float64}, closed=True), None] | TypedDataFrame[TypedDict({'price_eur': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "inferred_misuse": {
+  "file": "prices.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import InferredDataFrame, infer",
+   "",
+   "",
+   "def doubled(price: pl.Expr) -> pl.Expr:",
+   "    return infer(price * 2)",
+   "",
+   "",
+   "def frame() -> InferredDataFrame:",
+   "    return infer(pl.col(\"price\"))",
+   "",
+   "",
+   "frame()"
+  ],
+  "messages": [
+   {
+    "line": 7,
+    "severity": "error",
+    "text": "infer() has no effect here: the enclosing function's return type is not InferredExpr/InferredDataFrame/InferredLazyFrame",
+    "code": "infer-misuse"
+   },
+   {
+    "line": 14,
+    "severity": "error",
+    "text": "infer(...) variant is an expression, which is not a valid variant of InferredDataFrame",
+    "code": "wrong-inferred-variant"
+   }
+  ],
+  "results": []
+ },
+ "lazy_planned": {
+  "file": "lazy.py",
+  "start": 1,
+  "lines": [
+   "from typing import Literal",
+   "",
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, Decimal, TypedLazyFrame",
+   "",
+   "",
+   "class Lots(Columns):",
+   "    price: Decimal[Literal[10], Literal[2]]",
+   "",
+   "",
+   "lots: TypedLazyFrame[Lots]",
+   "running = lots.with_columns(total=pl.col(\"price\").cum_sum())"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "running",
+    "frames": [
+     {
+      "kind": "TypedLazyFrame",
+      "columns": [
+       [
+        "price",
+        "Decimal[Literal[10], Literal[2]]",
+        ""
+       ],
+       [
+        "total",
+        "Planned[Decimal[Literal[38], Literal[2]], Decimal[Literal[10], Literal[2]]]",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedLazyFrame[TypedDict({'price': Decimal[Literal[10], Literal[2]], 'total': Planned[Decimal[Literal[38], Literal[2]], Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
+   },
+   {
+    "label": "running.collect()",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price",
+        "Decimal[Literal[10], Literal[2]]",
+        ""
+       ],
+       [
+        "total",
+        "Decimal[Literal[38], Literal[2]]",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price': Decimal[Literal[10], Literal[2]], 'total': Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+   }
+  ]
+ },
+ "lazy_scan": {
+  "file": "lazy.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "trades = pl.scan_csv(\"trades.csv\", schema={\"symbol\": pl.String, \"price\": pl.Float64})",
+   "large = trades.filter(pl.col(\"price\") > 100).collect()"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "large",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "loading_elevate": {
+  "file": "load.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "raw = pl.read_csv(\"trades.csv\")",
+   "picked = raw.select(\"symbol\", pl.col(\"price\").cast(pl.Float64))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "picked",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "Unchecked",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': Unchecked, 'price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "loading_readers": {
+  "file": "load.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "lazy = pl.scan_csv(\"trades.csv\", schema={\"symbol\": pl.String, \"price\": pl.Float64})",
+   "rows = pl.from_dicts(",
+   "    [{\"symbol\": \"A\", \"price\": 1.0}], schema={\"symbol\": pl.String, \"price\": pl.Float64}",
+   ")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "lazy",
+    "frames": [
+     {
+      "kind": "TypedLazyFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedLazyFrame[TypedDict({'symbol': String, 'price': Float64}, closed=True), None]"
+   },
+   {
+    "label": "rows",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "loading_variable": {
+  "file": "load.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "schema = {\"symbol\": pl.String, \"price\": pl.Float64}",
+   "trades = pl.read_csv(\"trades.csv\", schema=schema)"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades",
+    "frames": [],
+    "revealed": "DataFrame"
+   }
+  ]
+ },
+ "open_frames_call": {
+  "file": "notional.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class WithNotional(Trades):",
+   "    notional: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def add_notional(",
+   "    df: TypedDataFrame[Trades, Rest],",
+   ") -> TypedDataFrame[WithNotional, InferredRemainder]:",
+   "    return infer(df.with_columns(notional=pl.col(\"price\") * pl.col(\"quantity\")))",
+   "",
+   "",
+   "class Blotter(Trades):",
+   "    venue: pl.String",
+   "",
+   "",
+   "blotter: TypedDataFrame[Blotter]",
+   "result = add_notional(blotter)"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "result",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "notional",
+        "Float64",
+        "add"
+       ],
+       [
+        "venue",
+        "String",
+        "rem"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'notional': Float64, 'venue': String}, closed=True), None]"
+   }
+  ]
+ },
+ "open_frames_join": {
+  "file": "enrich.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, InferredRemainder, TypedDataFrame, infer, other_columns",
+   "",
+   "",
+   "class Keys(Columns):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "Left = other_columns()",
+   "Right = other_columns(disjoint_from=Left)",
+   "",
+   "",
+   "def enrich(",
+   "    left: TypedDataFrame[Keys, Left],",
+   "    right: TypedDataFrame[Keys, Right],",
+   ") -> TypedDataFrame[Keys, InferredRemainder]:",
+   "    return infer(left.join(right, on=\"symbol\"))",
+   "",
+   "",
+   "class Quotes(Keys):",
+   "    bid: pl.Float64",
+   "",
+   "",
+   "class Venues(Keys):",
+   "    venue: pl.String",
+   "",
+   "",
+   "quotes: TypedDataFrame[Quotes]",
+   "venues: TypedDataFrame[Venues]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "enrich(quotes, venues)",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "bid",
+        "Float64",
+        "rem"
+       ],
+       [
+        "venue",
+        "String",
+        "rem"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'bid': Float64, 'venue': String}, closed=True), None]"
+   }
+  ]
+ },
+ "open_frames_join_error": {
+  "file": "enrich.py",
+  "start": 1,
+  "lines": [
+   "class Keys(Columns):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "Left = other_columns()",
+   "Right = other_columns()",
+   "",
+   "",
+   "def enrich(left: TypedDataFrame[Keys, Left], right: TypedDataFrame[Keys, Right]) -> None:",
+   "    left.join(right, on=\"symbol\")"
+  ],
+  "messages": [
+   {
+    "line": 10,
+    "severity": "error",
+    "text": "This join renames columns for some callers but not others: the two remainders can share a name. Declare disjoint_from= on one of them",
+    "code": "join-rename"
+   },
+   {
+    "line": 10,
+    "severity": "note",
+    "text": "set allow_unproven = \"possible\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = \"possible\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "open_frames_undeclared": {
+  "file": "venues.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def by_venue(df: TypedDataFrame[Trades, Rest]) -> None:",
+   "    df.select(\"symbol\", \"venue\")"
+  ],
+  "messages": [
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "Column \"venue\" is not declared and cannot be proven to exist",
+    "code": "undeclared-column"
+   },
+   {
+    "line": 11,
+    "severity": "note",
+    "text": "set allow_unproven = \"possible\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = \"possible\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "open_frames_without": {
+  "file": "notional.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Clean = other_columns(without=[\"notional\"])",
+   "",
+   "",
+   "def add_notional(df: TypedDataFrame[Trades, Clean]) -> TypedDataFrame[Trades, Clean]:",
+   "    return df",
+   "",
+   "",
+   "class Booked(Trades):",
+   "    notional: pl.Float64",
+   "",
+   "",
+   "booked: TypedDataFrame[Booked]",
+   "add_notional(booked)"
+  ],
+  "messages": [
+   {
+    "line": 19,
+    "severity": "error",
+    "text": "Remainder \"Clean\" must not contain column \"notional\"",
+    "code": "forbidden-column"
+   }
+  ],
+  "results": []
+ },
+ "ops_columns": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "trimmed = trades.drop(\"quantity\").rename({\"price\": \"px\"})"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trimmed",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "px",
+        "Float64",
+        "add"
+       ],
+       [
+        "price",
+        "",
+        "gone"
+       ],
+       [
+        "quantity",
+        "",
+        "gone"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'px': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "ops_concat": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "",
+   "",
+   "class Quotes(Columns):",
+   "    symbol: pl.String",
+   "    venue: pl.String",
+   "",
+   "",
+   "quotes: TypedDataFrame[Quotes]",
+   "diagonal = pl.concat([trades, quotes], how=\"diagonal\")",
+   "vertical = pl.concat([trades, trades])"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "diagonal",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "venue",
+        "String",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'venue': String}, closed=True), None]"
+   },
+   {
+    "label": "vertical",
+    "frames": [],
+    "revealed": "DataFrame"
+   }
+  ]
+ },
+ "ops_explode": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, List, TypedDataFrame",
+   "",
+   "",
+   "class Baskets(Columns):",
+   "    basket: pl.String",
+   "    symbols: List[pl.String]",
+   "",
+   "",
+   "baskets: TypedDataFrame[Baskets]",
+   "exploded = baskets.explode(\"symbols\")",
+   "baskets.explode(\"basket\")"
+  ],
+  "messages": [
+   {
+    "line": 13,
+    "severity": "error",
+    "text": "Column \"basket\" is not List/Array, cannot explode",
+    "code": "wrong-column-shape"
+   }
+  ],
+  "results": [
+   {
+    "label": "exploded",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "basket",
+        "String",
+        ""
+       ],
+       [
+        "symbols",
+        "String",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'basket': String, 'symbols': String}, closed=True), None]"
+   }
+  ]
+ },
+ "ops_group_by": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "by_symbol = trades.group_by(\"symbol\").agg(pl.col(\"price\").mean(), pl.col(\"quantity\").sum())",
+   "counts = trades.group_by(\"symbol\").len()"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "by_symbol",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64}, closed=True), None]"
+   },
+   {
+    "label": "counts",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "len",
+        "UInt32",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'len': UInt32}, closed=True), None]"
+   }
+  ]
+ },
+ "ops_join": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "",
+   "",
+   "class Quotes(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    venue: pl.String",
+   "",
+   "",
+   "quotes: TypedDataFrame[Quotes]",
+   "joined = trades.join(quotes, on=\"symbol\")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "joined",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "price_right",
+        "Float64",
+        "add"
+       ],
+       [
+        "venue",
+        "String",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'price_right': Float64, 'venue': String}, closed=True), None]"
+   }
+  ]
+ },
+ "ops_reshape": {
+  "file": "operations.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "long = trades.unpivot(index=\"symbol\")",
+   "numbered = trades.with_row_index()"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "long",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "variable",
+        "String",
+        "add"
+       ],
+       [
+        "value",
+        "Float64",
+        "add"
+       ],
+       [
+        "price",
+        "",
+        "gone"
+       ],
+       [
+        "quantity",
+        "",
+        "gone"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'variable': String, 'value': Float64}, closed=True), None]"
+   },
+   {
+    "label": "numbered",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "index",
+        "UInt32",
+        "add"
+       ],
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'index': UInt32, 'symbol': String, 'price': Float64, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "quickstart_check": {
+  "file": "quickstart.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "def cheapest(trades: TypedDataFrame[Trades]) -> TypedDataFrame[Trades]:",
+   "    return trades.sort(\"prices\").head(1)"
+  ],
+  "messages": [
+   {
+    "line": 12,
+    "severity": "error",
+    "text": "Unknown column \"prices\"",
+    "code": "unknown-column"
+   }
+  ],
+  "results": []
+ },
+ "quickstart_fixed": {
+  "file": "quickstart.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "def cheapest(trades: TypedDataFrame[Trades]) -> TypedDataFrame[Trades]:",
+   "    return trades.sort(\"price\").head(1)",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades.with_columns(doubled=pl.col(\"price\") * 2)",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "doubled",
+        "Float64",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'doubled': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "runtime_check": {
+  "file": "boundary.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, TypedLazyFrame, check_schema, force_schema",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "checked = check_schema(pl.read_parquet(\"trades.parquet\"), TypedDataFrame[Trades])",
+   "cast = force_schema(pl.read_csv(\"trades.csv\"), TypedDataFrame[Trades])",
+   "lazy = check_schema(pl.scan_parquet(\"trades.parquet\"), TypedLazyFrame[Trades])"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "lazy",
+    "frames": [
+     {
+      "kind": "TypedLazyFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedLazyFrame[TypedDict(Trades, {'symbol': String, 'price': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "schemas_class": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Blotter(Trades):",
+   "    venue: pl.String",
+   "",
+   "",
+   "blotter: TypedDataFrame[Blotter]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "blotter",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "venue",
+        "String",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Blotter, {'symbol': String, 'price': Float64, 'quantity': Int64, 'venue': String}, closed=True), None]"
+   }
+  ]
+ },
+ "schemas_columns": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import TypedDataFrame, columns",
+   "",
+   "Pivoted = columns(\"Pivoted\", {\"id\": pl.Int64, \"2024\": pl.Float64, \"v1|a\": pl.Datetime(\"us\")})",
+   "",
+   "pivoted: TypedDataFrame[Pivoted]",
+   "picked = pivoted.select(\"id\", \"2024\")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "picked",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "id",
+        "Int64",
+        ""
+       ],
+       [
+        "2024",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'id': Int64, '2024': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "schemas_errors": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Prices(Columns):",
+   "    symbol: pl.String",
+   "    price: float",
+   "",
+   "",
+   "class Partial(Columns, total=False):",
+   "    symbol: pl.String",
+   "",
+   "",
+   "prices: TypedDataFrame[Prices]",
+   "partial: TypedDataFrame[Partial]"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "Column \"price\" must be a polars dtype or an astrolabe dtype marker",
+    "code": "columns-field-type"
+   },
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "Columns subclass \"Partial\" must not use total=False, Required[...], or NotRequired[...]: every column is required",
+    "code": "columns-not-total"
+   }
+  ],
+  "results": []
+ },
+ "schemas_generic": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Keyed[T: pl.DataType](Columns):",
+   "    key: pl.String",
+   "    value: T",
+   "",
+   "",
+   "def non_empty[T: pl.DataType](df: TypedDataFrame[Keyed[T]]) -> TypedDataFrame[Keyed[T]]:",
+   "    return df.filter(pl.col(\"key\").str.len_chars() > 0)",
+   "",
+   "",
+   "counts: TypedDataFrame[Keyed[pl.UInt32]]",
+   "kept = non_empty(counts)"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "kept",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "key",
+        "String",
+        ""
+       ],
+       [
+        "value",
+        "UInt32",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Keyed, {'key': String, 'value': UInt32}, closed=True), None]"
+   }
+  ]
+ },
+ "schemas_names": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import TypedDataFrame, columns",
+   "",
+   "Stamp = pl.Datetime(\"us\")",
+   "Money = pl.Decimal(20, 4)",
+   "Trade = columns(\"Trade\", {\"time\": Stamp, \"cost\": Money})",
+   "",
+   "trade: TypedDataFrame[Trade]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trade",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "time",
+        "Datetime[Literal['us'], None]",
+        ""
+       ],
+       [
+        "cost",
+        "Decimal[Literal[20], Literal[4]]",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Trade, {'time': Datetime[Literal['us'], None], 'cost': Decimal[Literal[20], Literal[4]]}, closed=True), None]"
+   }
+  ]
+ },
+ "schemas_parameters": {
+  "file": "schemas.py",
+  "start": 1,
+  "lines": [
+   "from typing import Literal",
+   "",
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, Datetime, Decimal, Enum, List, TypedDataFrame",
+   "",
+   "",
+   "class Fills(Columns):",
+   "    time: Datetime[Literal[\"us\"], None]",
+   "    cost: Decimal[Literal[10], Literal[2]]",
+   "    lots: List[pl.Int64]",
+   "    side: Enum[Literal[\"buy\"], Literal[\"sell\"]]",
+   "",
+   "",
+   "fills: TypedDataFrame[Fills]"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "fills",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "time",
+        "Datetime[Literal['us'], None]",
+        ""
+       ],
+       [
+        "cost",
+        "Decimal[Literal[10], Literal[2]]",
+        ""
+       ],
+       [
+        "lots",
+        "List[Int64]",
+        ""
+       ],
+       [
+        "side",
+        "Enum[tuple[Literal['buy'], Literal['sell']]]",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Fills, {'time': Datetime[Literal['us'], None], 'cost': Decimal[Literal[10], Literal[2]], 'lots': List[Int64], 'side': Enum[tuple[Literal['buy'], Literal['sell']]]}, closed=True), None]"
+   }
+  ]
+ },
+ "sel_names": {
+  "file": "selections.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "doubled = trades.with_columns((cs.numeric() * 2).name.suffix(\"_x2\"))",
+   "trades.select(cs.numeric().alias(\"number\"))"
+  ],
+  "messages": [
+   {
+    "line": 9,
+    "severity": "error",
+    "text": "A selection has several outputs, which .alias() cannot rename: use .name.suffix() or .name.prefix()",
+    "code": "selection-rename"
+   }
+  ],
+  "results": [
+   {
+    "label": "doubled",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "price_x2",
+        "Float64",
+        "add"
+       ],
+       [
+        "quantity_x2",
+        "Int64",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'price_x2': Float64, 'quantity_x2': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "sel_typed": {
+  "file": "selections.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "Rounded = typed_selection(cs.numeric(), gives=same)",
+   "",
+   "",
+   "def rounded(columns: Rounded) -> Rounded:",
+   "    return columns.round(2)",
+   "",
+   "",
+   "tidy = trades.with_columns(rounded(cs.numeric()))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "tidy",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Trades, {'symbol': String, 'price': Float64, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "start_overview": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "trades.select(\"venue\")",
+   "trades.select(pl.col(\"symbol\") - pl.col(\"price\"))",
+   "trades.filter(pl.col(\"price\"))"
+  ],
+  "messages": [
+   {
+    "line": 13,
+    "severity": "error",
+    "text": "Unknown column \"venue\"",
+    "code": "unknown-column"
+   },
+   {
+    "line": 14,
+    "severity": "error",
+    "text": "\"symbol\" has no result type at this frame's column types: arithmetic on dtypes String and Float64 is not allowed, and polars raises InvalidOperationError",
+    "code": "unsupported-dtype-op"
+   },
+   {
+    "line": 15,
+    "severity": "error",
+    "text": "Column \"price\" is not Boolean, cannot .filter()",
+    "code": "wrong-column-shape"
+   }
+  ],
+  "results": []
+ },
+ "start_overview_result": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "priced = trades.with_columns(notional=pl.col(\"price\") * pl.col(\"quantity\"))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "priced",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "notional",
+        "Float64",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'notional': Float64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_declarations": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, column",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "Price = column(\"price\", pl.Float64)",
+   "",
+   "",
+   "def discounted(price: Price) -> Price:",
+   "    return price * 0.9",
+   "",
+   "",
+   "trades.with_columns(discounted(pl.col(\"price\")))",
+   "discounted(pl.col(\"quantity\"))",
+   "discounted(pl.col(\"price\").sum())"
+  ],
+  "messages": [
+   {
+    "line": 21,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: it uses column \"quantity\", which the declared type does not allow",
+    "code": "expression-fit"
+   },
+   {
+    "line": 22,
+    "severity": "error",
+    "text": "Argument \"price\" does not match its declared type: it combines rows into one value, but the declared type works row by row",
+    "code": "expression-fit"
+   }
+  ],
+  "results": []
+ },
+ "tut_functions_body": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "class Priced(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def by_venue(df: TypedDataFrame[Priced, Rest]) -> None:",
+   "    df.group_by(\"venue\").agg(pl.len())"
+  ],
+  "messages": [
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "The result of \"group_by\" has no known schema: the undeclared columns of the frame can hold the name, or not",
+    "code": "implicitly-untyped"
+   },
+   {
+    "line": 11,
+    "severity": "note",
+    "text": "set allow_unproven = \"possible\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] group_by = \"possible\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "tut_functions_call": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "class Priced(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Turnover(Columns):",
+   "    symbol: pl.String",
+   "    turnover: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def turnover(df: TypedDataFrame[Priced, Rest]) -> TypedDataFrame[Turnover]:",
+   "    value = (pl.col(\"price\") * pl.col(\"quantity\")).sum()",
+   "    return df.group_by(\"symbol\").agg(value.alias(\"turnover\"))",
+   "",
+   "",
+   "class Blotter(Priced):",
+   "    venue: pl.String",
+   "",
+   "",
+   "class Quotes(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "",
+   "",
+   "blotter: TypedDataFrame[Blotter]",
+   "quotes: TypedDataFrame[Quotes]",
+   "turnover(blotter)",
+   "turnover(quotes)"
+  ],
+  "messages": [
+   {
+    "line": 32,
+    "severity": "error",
+    "text": "Missing required column \"quantity\"",
+    "code": "missing-column"
+   }
+  ],
+  "results": []
+ },
+ "tut_functions_define": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, other_columns",
+   "",
+   "",
+   "class Priced(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Turnover(Columns):",
+   "    symbol: pl.String",
+   "    turnover: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def turnover(df: TypedDataFrame[Priced, Rest]) -> TypedDataFrame[Turnover]:",
+   "    value = (pl.col(\"price\") * pl.col(\"quantity\")).sum()",
+   "    return df.group_by(\"symbol\").agg(value.alias(\"turnover\"))"
+  ],
+  "messages": [],
+  "results": []
+ },
+ "tut_inference_frame": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "class Priced(Columns):",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "trades: TypedDataFrame[Trades]",
+   "",
+   "",
+   "def summary(df: TypedDataFrame[Priced, Rest], by_value: bool) -> InferredDataFrame:",
+   "    if by_value:",
+   "        return infer(df.select((pl.col(\"price\") * pl.col(\"quantity\")).sum().alias(\"value\")))",
+   "    return infer(df.select(pl.col(\"quantity\").sum()))",
+   "",
+   ""
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "summary(trades, True)",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "value",
+        "Float64",
+        ""
+       ]
+      ],
+      "remainder": null
+     },
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'value': Float64}, closed=True), None] | TypedDataFrame[TypedDict({'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_inference_remainder": {
+  "file": "features.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, InferredRemainder, TypedDataFrame, infer, other_columns",
+   "",
+   "",
+   "class Priced(Columns):",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "class WithNotional(Priced):",
+   "    notional: pl.Float64",
+   "",
+   "",
+   "Rest = other_columns()",
+   "",
+   "",
+   "def add_notional(",
+   "    df: TypedDataFrame[Priced, Rest],",
+   ") -> TypedDataFrame[WithNotional, InferredRemainder]:",
+   "    return infer(df.with_columns(notional=pl.col(\"price\") * pl.col(\"quantity\")))",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "result = add_notional(trades)"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "result",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "notional",
+        "Float64",
+        "add"
+       ],
+       [
+        "symbol",
+        "String",
+        "rem"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'price': Float64, 'quantity': Int64, 'notional': Float64, 'symbol': String}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_load_plain": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "raw = pl.read_csv(\"trades.csv\")",
+   "raw.select(\"symbol\", \"prcie\")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "raw",
+    "frames": [],
+    "revealed": "DataFrame"
+   }
+  ]
+ },
+ "tut_load_schema": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "trades = pl.read_csv(",
+   "    \"trades.csv\",",
+   "    schema={",
+   "        \"symbol\": pl.String,",
+   "        \"price\": pl.Float64,",
+   "        \"quantity\": pl.Int64,",
+   "    },",
+   ")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_load_typo": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "trades = pl.read_csv(",
+   "    \"trades.csv\",",
+   "    schema={",
+   "        \"symbol\": pl.String,",
+   "        \"price\": pl.Float64,",
+   "        \"quantity\": pl.Int64,",
+   "    },",
+   ")",
+   "trades.select(\"symbol\", \"prcie\")"
+  ],
+  "messages": [
+   {
+    "line": 11,
+    "severity": "error",
+    "text": "Unknown column \"prcie\"",
+    "code": "unknown-column"
+   }
+  ],
+  "results": []
+ },
+ "tut_runtime": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "import polars as pl",
+   "",
+   "from astrolabe import Columns, TypedDataFrame, check_schema",
+   "",
+   "",
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "raw = pl.read_parquet(\"trades.parquet\")",
+   "trades = check_schema(raw, TypedDataFrame[Trades])"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "trades",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict(Trades, {'symbol': String, 'price': Float64, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_strict_default": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "rounded = trades.with_columns(pl.col(\"price\").map_elements(round))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "rounded",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Unchecked",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Unchecked, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_strict_fixed": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "rounded = trades.with_columns(pl.col(\"price\").map_elements(round, return_dtype=pl.Int64))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "rounded",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Int64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Int64, 'quantity': Int64}, closed=True), None]"
+   }
+  ]
+ },
+ "tut_strict_stated": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "rounded = trades.with_columns(pl.col(\"price\").map_elements(round))"
+  ],
+  "messages": [
+   {
+    "line": 8,
+    "severity": "error",
+    "text": "Column \"price\" of \"map_elements\" is Unchecked: a Python function decides the type, and no return_dtype= names it",
+    "code": "implicitly-unchecked"
+   },
+   {
+    "line": 8,
+    "severity": "note",
+    "text": "set allow_unproven = \"omitted\" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_elements = \"omitted\"",
+    "code": null
+   }
+  ],
+  "results": []
+ },
+ "tut_transform_errors": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "venues = pl.read_csv(",
+   "    \"venues.csv\",",
+   "    schema={\"symbol\": pl.Int64, \"venue\": pl.String},",
+   ")",
+   "trades.filter(pl.col(\"price\"))",
+   "trades.with_columns(pl.col(\"symbol\") - pl.col(\"price\"))",
+   "trades.join(venues, on=\"symbol\")"
+  ],
+  "messages": [
+   {
+    "line": 12,
+    "severity": "error",
+    "text": "Column \"price\" is not Boolean, cannot .filter()",
+    "code": "wrong-column-shape"
+   },
+   {
+    "line": 13,
+    "severity": "error",
+    "text": "\"symbol\" has no result type at this frame's column types: arithmetic on dtypes String and Float64 is not allowed, and polars raises InvalidOperationError",
+    "code": "unsupported-dtype-op"
+   },
+   {
+    "line": 14,
+    "severity": "error",
+    "text": "Join key \"symbol\" is String on the left and Int64 on the right",
+    "code": "join-key-dtype"
+   }
+  ],
+  "results": []
+ },
+ "tut_transform_steps": {
+  "file": "pipeline.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "priced = trades.with_columns(notional=pl.col(\"price\") * pl.col(\"quantity\"))",
+   "large = priced.filter(pl.col(\"notional\") > 10_000)",
+   "by_symbol = large.group_by(\"symbol\").agg(",
+   "    pl.col(\"notional\").sum(),",
+   "    pl.len(),",
+   ")"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "priced",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "notional",
+        "Float64",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'notional': Float64}, closed=True), None]"
+   },
+   {
+    "label": "by_symbol",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "notional",
+        "Float64",
+        ""
+       ],
+       [
+        "len",
+        "UInt32",
+        "add"
+       ],
+       [
+        "price",
+        "",
+        "gone"
+       ],
+       [
+        "quantity",
+        "",
+        "gone"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'notional': Float64, 'len': UInt32}, closed=True), None]"
+   }
+  ]
+ },
+ "unchecked_map": {
+  "file": "python.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "labelled = trades.with_columns(label=pl.col(\"symbol\").map_elements(str.lower))"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "labelled",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "label",
+        "Unchecked",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'label': Unchecked}, closed=True), None]"
+   }
+  ]
+ },
+ "unchecked_typed": {
+  "file": "python.py",
+  "start": 1,
+  "lines": [
+   "class Trades(Columns):",
+   "    symbol: pl.String",
+   "    price: pl.Float64",
+   "    quantity: pl.Int64",
+   "",
+   "",
+   "trades: TypedDataFrame[Trades]",
+   "lowered = pl.col(\"symbol\").map_elements(str.lower, return_dtype=pl.String)",
+   "labelled = trades.with_columns(label=lowered)"
+  ],
+  "messages": [],
+  "results": [
+   {
+    "label": "labelled",
+    "frames": [
+     {
+      "kind": "TypedDataFrame",
+      "columns": [
+       [
+        "symbol",
+        "String",
+        ""
+       ],
+       [
+        "price",
+        "Float64",
+        ""
+       ],
+       [
+        "quantity",
+        "Int64",
+        ""
+       ],
+       [
+        "label",
+        "String",
+        "add"
+       ]
+      ],
+      "remainder": null
+     }
+    ],
+    "revealed": "TypedDataFrame[TypedDict({'symbol': String, 'price': Float64, 'quantity': Int64, 'label': String}, closed=True), None]"
+   }
+  ]
+ }
+}

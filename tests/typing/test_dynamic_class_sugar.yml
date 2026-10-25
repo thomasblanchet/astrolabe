@@ -1,0 +1,397 @@
+# column(...)/other_columns(...): functional sugar through
+# get_dynamic_class_hook. column(name, dtype) builds a TypedColumn[...]
+# declaration without writing Literal[...] by hand; other_columns(...)
+# declares a remainder class whose requirement markers ride on its own
+# bases. A bare string in type-argument position is always misparsed
+# by mypy as a forward reference. A plain call argument is read
+# directly off the AST, sidestepping that entirely.
+
+- case: column_with_bare_class_dtype_matches_literal_form
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    BarCol = column("bar", pl.Int64)
+    def f(df: BarCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+- case: column_with_instantiated_dtype_matches_literal_form
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    BarCol = column("bar", pl.Int64())
+    def f(df: BarCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+- case: column_with_bare_parametrized_dtype_class_matches_literal_form
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # A bare class reference (no call at all) is unaffected by
+    # Datetime's own new parametrization: it still resolves through the
+    # old, plain path, exactly like column_with_bare_class_dtype_matches_literal_form.
+    WhenCol = column("when", pl.Datetime)
+    def f(df: WhenCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['when'], polars.datatypes.classes.Datetime]"
+
+- case: column_with_instantiated_parametrized_dtype_narrows_the_parametrized_marker
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # A call to one of the four parametrized dtype classes carries its
+    # own literal arguments into astrolabe's own Datetime[Unit, Zone]
+    # marker instead of the plain, argument-less real pl.Datetime.
+    WhenCol = column("when", pl.Datetime("us"))
+    def f(df: WhenCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['when'], astrolabe.frame.Datetime[Literal['us'], None]]"
+
+- case: column_with_instantiated_parametrized_int_literal_dtype_narrows_the_parametrized_marker
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # Exercises the int-literal (not just string-literal) side of this
+    # sugar function's own semantic-analysis-phase literal builder.
+    PriceCol = column("price", pl.Decimal(10, 2))
+    def f(df: PriceCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['price'], astrolabe.frame.Decimal[Literal[10], Literal[2]]]"
+
+- case: column_with_parametrized_dtype_and_non_literal_argument_narrows_to_the_bare_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # A call to one of the four parametrized dtype classes whose own
+    # argument cannot be read as a literal falls back to the plain,
+    # argless real dtype instead of losing the whole result: not a
+    # partially-unknown Datetime[<unknown>, ...], but not unrecognized
+    # entirely either -- the same as a bare pl.Datetime class reference
+    # with no call at all.
+    unit: Literal["ms"] = "ms"
+    WhenCol = column("when", pl.Datetime(unit))
+    def f(df: WhenCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['when'], polars.datatypes.classes.Datetime]"
+
+- case: column_with_a_variable_that_holds_no_dtype_is_not_valid_as_a_type
+  main: |
+    from astrolabe import column
+
+    dt = 3
+    BarCol = column("bar", dt)
+    def f(df: BarCol) -> None:  # E: Variable "main.BarCol" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+        reveal_type(df)  # N: Revealed type is "BarCol?"
+
+- case: column_with_a_variable_bound_dtype_call_resolves
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # column() resolves its data type during semantic analysis, before
+    # any expression has an inferred type. DtypeAliasHook runs at the
+    # assignment itself and records the data type beside the variable,
+    # so a constructor call bound to a name reaches the declaration
+    # with its parameters.
+    plain = pl.Int64()
+    stamp = pl.Datetime("ms")
+    BarCol = column("bar", plain)
+    reveal_type(BarCol)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+    WhenCol = column("when", stamp)
+    reveal_type(WhenCol)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['when'], astrolabe.frame.Datetime[Literal['ms'], None]]"
+    def f(bar: BarCol, when: WhenCol) -> None:
+        reveal_type(bar)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+- case: column_with_dtype_call_whose_callee_has_no_fullname_is_not_valid_as_a_type
+  main: |
+    import polars as pl
+    from astrolabe import column
+
+    # dtypes[0]()'s own outer call has an IndexExpr callee, which
+    # carries no fullname attribute at all: ParametrizedDtypeReaders.reader_for
+    # tolerates this the same way it does for DtypeExpr's own identical
+    # rule (see test_parametrized_dtype_calls.yml's own
+    # read_csv_with_dict_literal_schema_value_whose_callee_has_no_fullname_still_resolves_the_old_plain_way),
+    # but column()'s own dtype argument here is a call, not a bare class
+    # reference, so there is no fullname to fall back to reading either
+    # -- the whole call fails to resolve, the same as any other
+    # unrecognized dtype argument shape.
+    dtypes: list[type[pl.DataType]] = [pl.Int64]
+    BarCol = column("bar", dtypes[0]())
+    def f(df: BarCol) -> None:  # E: Variable "main.BarCol" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+        reveal_type(df)  # N: Revealed type is "BarCol?"
+
+- case: column_with_keyword_arguments_matches_literal_form
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    # column("bar", pl.Int64)'s two parameters are ordinary name=/dtype=
+    # parameters, not positional-only -- real Python accepts both
+    # keyword forms below, including the reversed order, so this sugar
+    # must recognize them too.
+    BarCol = column(name="bar", dtype=pl.Int64)
+    def f(df: BarCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+    ReversedCol = column(dtype=pl.Int64, name="bar")
+    def g(reversed_df: ReversedCol) -> None:
+        reveal_type(reversed_df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+- case: column_with_mixed_positional_and_keyword_arguments_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import column
+
+    BarCol = column("bar", dtype=pl.Int64)
+    def f(df: BarCol) -> None:
+        reveal_type(df)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['bar'], polars.datatypes.classes.Int64]"
+
+- case: column_with_missing_dtype_argument_is_not_valid_as_a_type
+  main: |
+    from astrolabe import column
+
+    # A malformed call missing dtype= entirely, neither positional nor
+    # keyword -- the hook's own argument lookup must fail cleanly
+    # rather than crash, distinct from every other case above where
+    # dtype is at least present in some form. Real mypy separately
+    # reports its own missing-argument error for the call itself.
+    BarCol = column("bar")  # E: Missing positional argument "dtype" in call to "column"  [call-arg]
+    def f(c: BarCol) -> None: ...  # E: Variable "main.BarCol" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+
+- case: column_with_non_literal_name_is_not_valid_as_a_type
+  main: |
+    import polars as pl
+    from astrolabe import column
+
+    name = "bar"
+    BarCol = column(name, pl.Int64)
+    def f(c: BarCol) -> None: ...  # E: Variable "main.BarCol" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+
+- case: column_with_non_reference_dtype_is_not_valid_as_a_type
+  main: |
+    from astrolabe import column
+
+    BarCol = column("bar", 123)
+    def f(c: BarCol) -> None: ...  # E: Variable "main.BarCol" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+
+
+- case: other_columns_sugar_declares_a_remainder_class
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Bars(Columns):
+        bar: pl.Int64
+
+    Rest = other_columns()
+
+    # The declaration registers a real class, so the frame type names
+    # it directly, alone or after a schema class, and an alias holding
+    # it is an ordinary, non-generic alias.
+    df: TypedDataFrame[Rest]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Rest]"
+    df2: TypedDataFrame[Bars, Rest]
+    reveal_type(df2)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Bars, {'bar': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+    FrameAlias = TypedDataFrame[Bars, Rest]
+    df3: FrameAlias
+    reveal_type(df3)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Bars, {'bar': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_with_one_without_name_proves_the_name_absent
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Bars(Columns):
+        bar: pl.Int64
+
+    Rest = other_columns(without=["baz"])
+
+    # The without= requirement rides on the declared class itself, so
+    # any hook that needs "baz is provably absent" can read it back:
+    # with_row_index("baz") narrows instead of fearing a hidden
+    # remainder column of that name.
+    df: TypedDataFrame[Bars, Rest]
+    reveal_type(df.with_row_index("baz"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'baz': polars.datatypes.classes.UInt32, 'bar': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_with_multiple_without_names_excludes_both
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns(without=["bar", "baz"])
+
+    class DfSchema(Columns):
+        foo: pl.String
+
+    # Both names are provably absent, so both narrow, including on the
+    # first call's own result, whose remainder is the same class.
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.with_row_index("bar").with_row_index("baz"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'baz': polars.datatypes.classes.UInt32, 'bar': polars.datatypes.classes.UInt32, 'foo': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_with_non_literal_without_item_reports_and_still_declares
+  main: |
+    from astrolabe import TypedDataFrame, other_columns
+
+    # The malformed keyword reports at the declaration site and drops
+    # that one requirement; the class itself still registers, so the
+    # frame type below works and later use sites do not cascade.
+    name = "qux"
+    Rest = other_columns(without=["baz", name])  # E: other_columns() without= must be a list of column names, e.g. without=["ticker"]  [marker-arg]
+    Frame = TypedDataFrame[Rest]
+    df: Frame
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_with_unrecognized_keyword_before_without_still_finds_it
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # other_columns() takes no bogus=, so mypy reports the call's own
+    # [call-arg] error, and the hook adds its declaration-site error.
+    # The well-formed without= keyword still registers, so "baz" stays
+    # provably absent below.
+    Rest = other_columns(bogus=1, without=["baz"])  # E: other_columns() got an unexpected keyword "bogus"  [marker-arg] # E: Unexpected keyword argument "bogus" for "other_columns"  [call-arg] # N: "other_columns" defined in "astrolabe.remainder"
+
+    class DfSchema(Columns):
+        foo: pl.String
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.with_row_index("baz"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'baz': polars.datatypes.classes.UInt32, 'foo': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_skips_a_positional_argument_and_still_reads_the_keywords
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # other_columns() takes keywords only, so mypy reports the
+    # positional argument. The hook skips it, and the well-formed
+    # without= keyword still registers, so "baz" stays provably absent.
+    Rest = other_columns(["qux"], without=["baz"])  # E: "other_columns" gets multiple values for keyword argument "without"  [misc]
+
+    class DfSchema(Columns):
+        foo: pl.String
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.with_row_index("baz"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'baz': polars.datatypes.classes.UInt32, 'foo': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_affix_keywords_register_and_reject_non_strings
+  main: |
+    from astrolabe import TypedDataFrame, other_columns
+
+    Good = other_columns(only_prefix="p_", without_suffix="_tmp")
+    df: TypedDataFrame[Good]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Good]"
+
+    Bad = other_columns(only_prefix=1)  # E: other_columns() only_prefix= must be a string, e.g. only_prefix="sec_"  [marker-arg] # E: Argument "only_prefix" to "other_columns" has incompatible type "int"; expected "str | None"  [arg-type]
+    df2: TypedDataFrame[Bad]
+    reveal_type(df2)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Bad]"
+
+- case: other_columns_sugar_type_set_keywords_take_a_class_or_a_set
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, other_columns
+
+    Ints = other_columns(all_of={pl.Int64, pl.Float64})
+    NoFlags = other_columns(none_of=pl.Boolean)
+    Bad = other_columns(all_of=1)  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]
+    df: TypedDataFrame[Ints]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Ints]"
+
+- case: other_columns_sugar_relational_keywords_take_declared_remainders
+  main: |
+    from astrolabe import TypedDataFrame, other_columns
+
+    A = other_columns()
+    B = other_columns(disjoint_from=A)
+    C = other_columns(within={A, B})
+    df: TypedDataFrame[C]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.C]"
+
+- case: other_columns_sugar_without_takes_only_a_list
+  main: |
+    from astrolabe import TypedDataFrame, other_columns
+
+    # A bare string is a Sequence[str] at run time, so the runtime
+    # signature accepts it, but the declaration reader insists on the
+    # unambiguous list spelling.
+    Rest = other_columns(without="oops")  # E: other_columns() without= must be a list of column names, e.g. without=["ticker"]  [marker-arg]
+    Empty = other_columns(without=[])
+    df: TypedDataFrame[Empty]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Empty]"
+
+- case: other_columns_sugar_relational_keyword_rejects_a_non_class_reference
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, column, other_columns
+
+    # BarCol is a column() alias, not a declared remainder class. The
+    # reader reports one malformed argument instead of crashing the
+    # build on the semantic analyzer's own class assertion.
+    BarCol = column("bar", pl.Int64)
+    Rest = other_columns(disjoint_from=BarCol)  # E: other_columns() disjoint_from= must be a declared remainder, or a set of them  [marker-arg]
+    df: TypedDataFrame[Rest]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Rest]"
+
+- case: other_columns_sugar_type_set_keyword_rejects_a_set_with_a_non_class_item
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, other_columns
+
+    Rest = other_columns(all_of={pl.Int64, 1})  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]
+    df: TypedDataFrame[Rest]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), main.Rest]"
+
+- case: a_data_type_held_in_a_name_reads_as_that_data_type
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, List, TypedDataFrame, column, other_columns
+
+    # A name bound to a data type is an implicit type alias, and each
+    # declaration reads the alias's own target. A parametrized marker
+    # keeps its parameters, and a name bound to a name resolves too.
+    Cost = pl.Float64
+    Same = Cost
+    Stamped = Datetime[Literal["us"], None]
+    Prices = List[pl.Float64]
+
+    One = column("a", Same)
+    reveal_type(One)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['a'], polars.datatypes.classes.Float64]"
+    Nested = column("b", Prices)
+    reveal_type(Nested)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['b'], astrolabe.frame.List[polars.datatypes.classes.Float64]]"
+
+    Costs = other_columns(all_of=Cost)
+    Either = other_columns(all_of={Cost, Stamped})
+
+    class FrameSchema(Columns):
+        a: Stamped
+        b: Prices
+
+    df: TypedDataFrame[FrameSchema, Costs]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': astrolabe.frame.Datetime[Literal['us'], None], 'b': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), main.Costs]"
+
+- case: a_name_that_stands_for_no_data_type_declares_nothing
+  main: |
+    import polars as pl
+    from astrolabe import column, other_columns
+
+    # A name is an alias for anything, so only a target that is
+    # itself a data type reads.
+    Pair = tuple[int, str]
+    Text = str
+
+    reveal_type(column("p", Pair))  # N: Revealed type is "Any"
+    reveal_type(column("q", Text))  # N: Revealed type is "Any"
+    Rest = other_columns(all_of=Pair)  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]
+    More = other_columns(all_of=Text)  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]

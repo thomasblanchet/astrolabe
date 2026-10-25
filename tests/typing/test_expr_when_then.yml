@@ -1,0 +1,876 @@
+# The `when`/`then`/`otherwise` chain. An open chain carries its
+# branches' fold and the entries the next branch folds into; the fold
+# joins branches under the supertype from the last branch leftward.
+# Every expected frame is confirmed against real polars.
+
+- case: a_closed_chain_joins_its_branches_under_the_supertype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+        f: pl.Float64
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Float64
+        text: pl.String
+        literal: pl.Int32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        pl.when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("f")),
+        text=pl.when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("s")),
+        literal=pl.when(pl.col("b")).then(1).otherwise(0),
+    )
+
+- case: the_chain_reads_its_conditions_as_steering_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(pl.when(pl.col("b")))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b'))"]]]"
+    reveal_type(pl.when(pl.col("b").any()))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b').any())"]]]"
+    reveal_type(pl.when(True))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal['pl.when(True)']]]"
+    reveal_type(df.select(pl.when(pl.col("missing")).then(pl.col("i")).otherwise(0)))  # E: Unknown column "missing"  [unknown-column] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_chained_when_appends_a_branch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+        f: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    chain = pl.when(pl.col("b")).then(pl.col("i")).when(pl.col("i") > 1).then(pl.col("f"))
+    reveal_type(chain.when(pl.col("b")))  # N: Revealed type is "astrolabe.expr.TypedChainedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b')).then(pl.col('i')).when(pl.col('i') > 1).then(pl.col('f')).when(pl.col('b'))"]]]"
+
+    class NarrowedSchema(Columns):
+        i: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(chain.otherwise(0))
+
+- case: an_open_chain_used_directly_types_as_its_branches
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+
+    # Without otherwise, the missing rows are null and the type is the
+    # branches' own fold.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.when(pl.col("b")).then(pl.col("i")))
+
+- case: an_aggregating_branch_broadcasts
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        b: pl.Boolean
+        i: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class SelectedSchema(Columns):
+        i: pl.Int64
+
+    selected: TypedDataFrame[SelectedSchema] = df.select(pl.when(pl.col("b")).then(pl.col("i").sum()).otherwise(pl.col("i")))
+
+    class GroupedSchema(Columns):
+        k: pl.String
+        i: List[pl.Int64]
+
+    grouped: TypedDataFrame[GroupedSchema] = df.group_by("k").agg(pl.when(pl.col("b")).then(pl.col("i")).otherwise(0))
+
+- case: a_bare_condition_steers_nothing
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.select(pl.when(True).then(pl.col("i")).otherwise(0))
+
+- case: an_unreadable_branch_leaves_the_chain_plain
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def build(other: pl.Expr, df: Frame) -> None:
+        reveal_type(pl.when(pl.col("b")).then(other))  # N: Revealed type is "astrolabe.expr.TypedThen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b')).then(hole('expr'))"]]]"
+        reveal_type(pl.when(pl.col("b")).then(pl.col("i")).otherwise(other))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b')).then(pl.col('i')).otherwise(hole('expr'))"]]]"
+        reveal_type(pl.when(other).then(pl.col("i")))  # N: Revealed type is "astrolabe.expr.TypedThen[astrolabe.expr.Deferred[Literal["pl.when(hole('expr')).then(pl.col('i'))"]]]"
+        reveal_type(pl.when(pl.col("b")).then(pl.col("i")).when(other))  # N: Revealed type is "astrolabe.expr.TypedChainedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b')).then(pl.col('i')).when(hole('expr'))"]]]"
+
+- case: a_redefinition_loop_converges
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+
+    # Each turn of the loop folds the same branch again; the fold
+    # absorbs a repeated branch, so the type reaches a fixed point and
+    # the loop's variable stays a precise expression.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    expr = pl.col("i")
+    for _ in range(3):
+        expr = pl.when(pl.col("b")).then(expr).otherwise(pl.col("i"))
+
+    class NarrowedSchema(Columns):
+        i: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(expr)
+
+- case: a_branch_of_an_unmeasured_kind_gives_the_marker
+  main: |
+    import polars as pl
+
+    # A List branch beside a branch of an open type gives Unchecked:
+    # polars accepts the join at some data types and not at others.
+    frame = pl.DataFrame({"m": [True, False]})
+    first = pl.lit(None, dtype=pl.List(pl.Int32))
+    second = pl.lit(None, dtype=pl.List(pl.Int64))
+    chain = pl.when(pl.col("m")).then(first).otherwise(second)
+    reveal_type(frame.select(chain.alias("o")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
+
+- case: a_selection_can_be_a_then_branch
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Float64
+        s: pl.String
+
+    # The first `then` may take a selection. The chain then picks the
+    # selection's own columns, and folds every branch into each one.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class PickedSchema(Columns):
+        a: pl.Float64
+        b: pl.Float64
+
+    picked: TypedDataFrame[PickedSchema] = df.select(
+        pl.when(pl.col("a") > 0).then(cs.numeric()).otherwise(0.0)
+    )
+
+- case: a_selection_chain_closes_with_no_otherwise
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Float64
+        s: pl.String
+
+    # Polars closes a chain with null where no `otherwise` follows,
+    # so the selection is the fold of its branches alone.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class PickedSchema(Columns):
+        a: pl.Int64
+        b: pl.Float64
+
+    picked: TypedDataFrame[PickedSchema] = df.select(
+        pl.when(pl.col("a") > 0).then(cs.numeric())
+    )
+
+- case: a_selection_in_a_later_branch_falls_back
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Float64
+
+    # Only the first `then` may take a selection. A later branch
+    # picks columns the chain has already fixed, so the chain gives
+    # the plain expression.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    chained = pl.when(pl.col("a") > 0).then(0).when(pl.col("a") < 0).then(cs.numeric())
+    reveal_type(chained)  # N: Revealed type is "astrolabe.expr.TypedThen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('a') > 0).then(0).when(pl.col('a') < 0).then(cs.numeric())"]]]"
+
+- case: an_open_with_no_condition_gives_the_plain_when
+  main: |
+    import polars as pl
+
+    # `when` is variadic, so mypy accepts no condition at all. The
+    # hook reads one condition or none, and gives the plain wrapper.
+    reveal_type(pl.when())  # E: This call raises TypeError before any frame meets it: at least one predicate or constraint must be provided  [invalid-call-shape]  # N: Revealed type is "polars.expr.whenthen.When"
+
+- case: an_open_with_two_conditions_gives_the_plain_when
+  main: |
+    import polars as pl
+
+    # Two conditions is a shape the hook does not read, so the chain
+    # starts untyped rather than with a wrong steering column.
+    reveal_type(pl.when(pl.col("b"), pl.col("b")))  # N: Revealed type is "astrolabe.expr.TypedWhen[astrolabe.expr.Deferred[Literal["pl.when(pl.col('b'), pl.col('b'))"]]]"
+
+- case: a_then_with_no_value_gives_the_plain_then
+  main: |
+    import polars as pl
+
+    reveal_type(pl.when(pl.col("b")).then())  # E: Missing positional argument "statement" in call to "then" of "When"  [call-arg] # N: Revealed type is "polars.expr.whenthen.Then"
+
+- case: an_otherwise_with_no_value_gives_the_plain_expression
+  main: |
+    import polars as pl
+
+    reveal_type(pl.when(pl.col("b")).then(0).otherwise())  # E: Missing positional argument "statement" in call to "otherwise" of "TypedThen"  [call-arg] # N: Revealed type is "polars.expr.expr.Expr"
+
+- case: a_chained_when_with_no_condition_gives_the_plain_chained_when
+  main: |
+    import polars as pl
+
+    reveal_type(pl.when(pl.col("b")).then(0).when())  # E: This call raises TypeError before any frame meets it: at least one predicate or constraint must be provided  [invalid-call-shape]  # N: Revealed type is "polars.expr.whenthen.ChainedWhen"
+
+- case: a_chained_then_with_no_value_gives_the_plain_chained_then
+  main: |
+    import polars as pl
+
+    reveal_type(pl.when(pl.col("b")).then(0).when(pl.col("b")).then())  # E: Missing positional argument "statement" in call to "then" of "ChainedWhen"  [call-arg] # N: Revealed type is "polars.expr.whenthen.ChainedThen"
+
+- case: a_string_in_a_chain_names_a_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Boolean
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    class BranchSchema(Columns):
+        a: pl.Int64
+
+    branch: TypedDataFrame[BranchSchema] = df.select(pl.when(pl.col("b")).then("a"))
+
+    class ConditionSchema(Columns):
+        literal: pl.Int32
+
+    condition: TypedDataFrame[ConditionSchema] = df.select(pl.when("b").then(1).otherwise(0))
+
+    class OtherwiseSchema(Columns):
+        literal: pl.Int64
+
+    otherwise: TypedDataFrame[OtherwiseSchema] = df.select(
+        pl.when(pl.col("b")).then(1).otherwise("a")
+    )
+
+    class LiteralSchema(Columns):
+        literal: pl.String
+
+    literal: TypedDataFrame[LiteralSchema] = df.select(pl.when(pl.col("b")).then(pl.lit("a")))
+
+- case: a_string_in_a_chain_that_names_no_column_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+
+    df: TypedDataFrame[FrameSchema]
+    df.select(pl.when("zz").then(1).otherwise(0))  # E: Unknown column "zz"  [unknown-column]
+    df.select(pl.when(pl.col("b")).then("zz"))  # E: Unknown column "zz"  [unknown-column]
+    df.select(pl.when(pl.col("b")).then(1).otherwise("zz"))  # E: Unknown column "zz"  [unknown-column]
+
+- case: a_branch_of_unknown_type_joins_at_every_kind_that_answers
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Raw(Columns):
+        c: pl.Boolean
+        s: pl.String
+        bn: pl.Binary
+
+    df: TypedDataFrame[Raw]
+    # A function with no return type gives a branch of unknown type. The
+    # join reads that branch at every kind and keeps the answers that
+    # exist, and only Binary joins Binary.
+    reveal_type(df.select(pl.when(pl.col("c")).then(pl.col("s").map_batches(lambda x: x.cast(pl.Binary))).otherwise(pl.col("bn")).alias("j")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'j': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("s").map_batches(lambda x: x.cast(pl.Binary)), pl.col("bn")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Binary}, closed=True), None]"
+
+- case: a_literal_branch_adapts_to_the_column_branch_beside_it
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        otherwise_side: pl.UInt8
+        then_side: pl.UInt8
+        wide: pl.UInt16
+        negative: pl.Int16
+        fraction: pl.Float32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        otherwise_side=pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.lit(1)),
+        then_side=pl.when(pl.col("b")).then(pl.lit(1)).otherwise(pl.col("u")),
+        wide=pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.lit(300)),
+        negative=pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.lit(-1)),
+        fraction=pl.when(pl.col("b")).then(pl.col("f")).otherwise(pl.lit(1.5)),
+    )
+
+- case: a_plain_int_branch_adapts_like_a_literal_branch
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        plain: pl.UInt8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        plain=pl.when(pl.col("b")).then(1).otherwise(pl.col("u")),
+    )
+
+- case: a_literal_branch_beside_a_boolean_string_or_temporal_branch_follows_the_join_grid
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        s: pl.String
+        t: pl.Datetime
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        flag: pl.Int32
+        text: pl.String
+        stamp: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        flag=pl.when(pl.col("b")).then(pl.col("b")).otherwise(pl.lit(1)),
+        text=pl.when(pl.col("b")).then(pl.col("s")).otherwise(pl.lit(1)),
+        stamp=pl.when(pl.col("b")).then(pl.col("t")).otherwise(pl.lit(1)),
+    )
+
+- case: a_chain_of_two_literal_branches_keeps_the_then_bucket
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        alone: pl.Int32
+        small_then: pl.UInt8
+        wide_then: pl.UInt16
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        alone=pl.when(pl.col("b")).then(pl.lit(1)).otherwise(pl.lit(300)),
+        small_then=pl.when(pl.col("b")).then(pl.lit(1)).otherwise(pl.lit(300)) + pl.col("u"),
+        wide_then=pl.when(pl.col("b")).then(pl.lit(300)).otherwise(pl.lit(1)) + pl.col("u"),
+    )
+
+- case: a_literal_branch_adapts_in_a_longer_chain_and_with_no_otherwise
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        three: pl.UInt8
+        open_chain: pl.UInt8
+        open_alone: pl.UInt8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        three=pl.when(pl.col("b"))
+        .then(pl.col("u"))
+        .when(pl.col("u") > 1)
+        .then(pl.lit(1))
+        .otherwise(pl.lit(2)),
+        open_chain=pl.when(pl.col("b")).then(pl.col("u")).when(~pl.col("b")).then(pl.lit(1)),
+        open_alone=pl.when(pl.col("b")).then(pl.lit(1)) + pl.col("u"),
+    )
+
+- case: a_cast_literal_branch_keeps_its_cast_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        cast: pl.Int32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        cast=pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.lit(1).cast(pl.Int32)),
+    )
+
+- case: an_int128_literal_that_a_chain_or_a_kept_method_gives_keeps_a_narrow_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+        k: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        nested: pl.UInt8
+        absolute: pl.UInt8
+        windowed: pl.UInt8
+        open_chain: pl.UInt8
+        then_side: pl.UInt8
+
+    wide = pl.lit(1267650600228229401496703205376)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        nested=pl.when(pl.col("b"))
+        .then(pl.col("u"))
+        .otherwise(pl.when(pl.col("b")).then(wide).otherwise(pl.lit(1))),
+        absolute=pl.when(pl.col("b")).then(pl.col("u")).otherwise(wide.abs()),
+        windowed=pl.when(pl.col("b")).then(pl.col("u")).otherwise(wide.over("k")),
+        open_chain=pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.when(pl.col("b")).then(wide)),
+        then_side=pl.when(pl.col("b")).then(wide.sort()).otherwise(pl.col("u")),
+    )
+
+- case: an_int128_literal_as_a_branch_of_its_own_refuses_a_narrow_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    wide = pl.lit(1267650600228229401496703205376)
+    df.select(a=pl.when(pl.col("b")).then(pl.col("u")).otherwise(wide))  # E: "a" has no result type at this frame's column types: conversion from Int128 to UInt8 failed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(a=pl.when(pl.col("b")).then(pl.col("u")).otherwise(wide.alias("w")))  # E: "a" has no result type at this frame's column types: conversion from Int128 to UInt8 failed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(a=pl.when(pl.col("b")).then(pl.col("u")).otherwise(wide.clip()))  # E: "a" has no result type at this frame's column types: conversion from Int128 to UInt8 failed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(a=pl.when(pl.col("b")).then(pl.col("u")).when(pl.col("b")).then(wide))
+    reveal_type(wide.abs())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['pl.lit(1267650600228229401496703205376).abs()']]]"
+
+- case: a_wide_literal_in_an_inner_chain_is_a_fact_of_the_data
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        d: pl.Date
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        two_branches: pl.Int64
+
+    wide = pl.lit(9223372036854775808)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        two_branches=pl.when(pl.col("b")).then(pl.col("d")).otherwise(wide),
+    )
+    # A second `when` nests a chain in the first. The inner chain holds
+    # 2**63 in a UInt64 column, and the outer chain casts it to Int64, which
+    # raises where a row takes the literal: a fact of the data, as for a
+    # UInt64 column that holds 2**63.
+    then_d = pl.when(pl.col("b")).then(pl.col("d"))
+    reveal_type(df.select(a=then_d.when(pl.col("b")).then(pl.col("u")).otherwise(wide)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(a=then_d.when(pl.col("b")).then(wide).otherwise(pl.col("u"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    then_negative = pl.when(pl.col("b")).then(pl.lit(-1))
+    reveal_type(df.select(a=then_negative.when(pl.col("b")).then(pl.col("u")).otherwise(wide)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_number_variable_branch_answers_where_every_bucket_agrees
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        f: pl.Float32
+        u: pl.UInt8
+        n: pl.Null
+        d: pl.Date
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A float variable can hold any int or a float, and an int variable any
+    # int. Polars reads the value, so the chain answers where every value
+    # that the checker tries gives one data type.
+    share: float = 1
+    count: int = 2**40
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("f")).otherwise(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(count).otherwise(pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n")).when(pl.col("b")).then(share).otherwise(pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("u")).otherwise(count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("d")).otherwise(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Alone, or beside a Null column, each value has a type of its own.
+    reveal_type(df.select(pl.when(pl.col("b")).then(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n")).otherwise(count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_container_beside_a_scalar_branch_is_refused
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+        i: pl.Int16
+        s: pl.String
+        n: pl.Null
+        l: List[pl.Int16]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A row of a list cannot become a scalar, and a scalar cannot become a
+    # list, so polars refuses a container beside every scalar kind but Null,
+    # on either side. Beside String it refuses once a row holds a list.
+    df.select(pl.when(pl.col("b")).then(pl.col("u")).otherwise(pl.col("i").implode()))  # E: "u" has no result type at this frame's column types: failed to determine supertype of UInt8 and List(Int16), and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("s")))  # E: "l" has no result type at this frame's column types: cannot cast List type (inner: Int16, to: String), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(a=pl.when(pl.col("b")).then(pl.col("l")).when(pl.col("b")).then(pl.col("u")).otherwise(pl.col("n")))  # E: "a" has no result type at this frame's column types: failed to determine supertype of List(Int16) and UInt8, and polars raises SchemaError  [unsupported-dtype-op]
+    # Null beside a list gives the list, element included, so a later scalar
+    # branch meets the list.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n")).otherwise(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("n"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n")).when(pl.col("b")).then(pl.col("n")).otherwise(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    df.select(a=pl.when(pl.col("b")).then(pl.col("u")).when(pl.col("b")).then(pl.col("n")).otherwise(pl.col("l")))  # E: "a" has no result type at this frame's column types: failed to determine supertype of UInt8 and List(Int16), and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(a=pl.when(pl.col("b")).then(pl.col("n")).when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("u")))  # E: "a" has no result type at this frame's column types: failed to determine supertype of List(Int16) and UInt8, and polars raises SchemaError  [unsupported-dtype-op]
+    # Beside a second list, the answer joins the elements.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("i").implode())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+
+- case: a_container_that_a_rule_builds_joins_by_its_kind
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+        f: pl.Float64
+        n: pl.Null
+        m: List[pl.Int64]
+        m8: List[pl.Int8]
+        a: Array[pl.Int64, Literal[1]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The sum of a list and a number is a list, so a scalar branch beside it
+    # is refused, on either side.
+    df.select(pl.when(pl.col("b")).then(pl.col("m") + pl.col("i")).otherwise(pl.col("i")))  # E: "m" has no result type at this frame's column types: failed to determine supertype of List(Int64) and Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("m") + pl.col("i")))  # E: "i" has no result type at this frame's column types: failed to determine supertype of Int64 and List(Int64), and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("m8") + pl.col("i")).otherwise(pl.col("f")))  # E: "m8" has no result type at this frame's column types: failed to determine supertype of List(Int64) and Float64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("a") + pl.col("i")).otherwise(pl.col("i")))  # E: "a" has no result type at this frame's column types: failed to determine supertype of Array(Int64, shape=(1,)) and Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("m") + 1).otherwise(pl.col("i")))  # E: "m" has no result type at this frame's column types: failed to determine supertype of List(Int64) and Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    # Beside Null or a second container, the full types decide at the frame.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m") + pl.col("i")).otherwise(pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m") + pl.col("i")).otherwise(pl.col("m8"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m") + pl.col("i")).otherwise(pl.col("n"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a") + pl.col("i")).otherwise(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int64, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a") + pl.col("i")).otherwise(pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: a_branch_with_an_unknown_kept_name_keeps_it_unknown
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        a: pl.Int64
+        g: pl.String
+        h: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A literal over two partitions takes the name of one of them, and the
+    # type holds the partitions as a set with no order. The open chain
+    # keeps that the name is unknown.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.lit(1).over("g", "h")).otherwise(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: name_keep_on_a_chain_takes_the_first_column_of_the_walk
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Boolean
+        c: pl.Boolean
+        x: pl.Float64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars walks the true branch, then the false branch, then the
+    # condition, and .name.keep() takes the first column that it meets.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a").alias("x")).otherwise(pl.col("x")).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("x")).otherwise(pl.col("a")).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(1).otherwise(pl.col("a")).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(1).when(pl.col("c")).then(pl.col("a")).otherwise(pl.col("x")).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Float64}, closed=True), None]"
+    # A chain of literals takes the name of a condition.
+    reveal_type(df.select(pl.when(pl.col("b")).then(1).otherwise(2).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(1).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.lit(1).alias("z")).otherwise(2).name.keep()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int32}, closed=True), None]"
+    # The conditions arrive as one set of names, so two of them leave the
+    # kept name unknown.
+    df.select(pl.when(pl.col("b")).then(1).when(pl.col("c")).then(2).otherwise(3).name.keep())
+
+- case: a_bare_none_branch_is_the_null_literal
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars reads a bare None branch as pl.lit(None), on either side.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("u")).otherwise(None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(None).otherwise(pl.col("u"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Null}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(None).when(pl.col("b")).then(pl.col("u")).otherwise(None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt8}, closed=True), None]"
+
+- case: two_container_branches_join_their_elements
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        n: pl.Null
+        i: pl.Int16
+        l: List[pl.Int16]
+        m: List[pl.Float32]
+        a: Array[pl.Int16, Literal[1]]
+        w: Array[pl.Int16, Literal[2]]
+        af: Array[pl.Float32, Literal[1]]
+        ll: List[List[pl.Int8]]
+        lm: List[List[pl.Int16]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Two containers give the container of the join of their elements: an
+    # Array where both are Arrays of one width, else a List.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float32]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a")).otherwise(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a")).otherwise(pl.col("w"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a")).otherwise(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n")).otherwise(pl.col("i").implode())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).when(pl.col("b")).then(pl.col("n")).otherwise(pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float32]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("a")).otherwise(pl.col("af"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Float32, Literal[1]]}, closed=True), None]"
+    # The join points do not join nested elements alike.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("ll")).otherwise(pl.col("lm"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ll': astrolabe.frame.List[astrolabe.frame.List[polars.datatypes.classes.Int16]]}, closed=True), None]"
+    # A literal container takes the type of the column beside it, which
+    # its type does not show.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("l")).otherwise(pl.lit([1], dtype=pl.List(pl.Int8)))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+
+- case: a_value_that_reads_an_element_joins_as_a_column_of_the_element_type
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Datetime, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+        m: List[pl.Int64]
+        s: List[pl.String]
+        n: List[List[pl.Int64]]
+        d: Datetime[Literal["us"], None]
+        ld: List[Datetime[Literal["ms"], None]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The kinds do not name the element of a container, so the chain joins
+    # the element at the frame, as it joins a column of the element type.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.first()).otherwise(pl.col("i"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("m").list.first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("n").list.first()).otherwise(pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.first() + 1).otherwise(pl.col("i"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.sum()).otherwise(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("i")).when(pl.col("b")).then(pl.col("m").list.first()).otherwise(pl.col("i"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A later branch joins the element of an earlier one.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("s").list.first()).when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("i"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    # A list element beside a scalar is refused, as a list column is.
+    df.select(pl.when(pl.col("b")).then(pl.col("n").list.first()).otherwise(pl.col("i")))  # E: "n" has no result type at this frame's column types: failed to determine supertype of List(Int64) and Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    # Two elements in one chain each join at the frame.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.first()).when(pl.col("b")).then(pl.col("s").list.first()).otherwise(pl.col("i"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.first()).when(pl.col("b")).then(pl.col("i")).otherwise(pl.col("m").list.last())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.Int64}, closed=True), None]"
+    # The parameters of the element join as those of a column do.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("ld").list.first()).otherwise(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ld': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("d")).otherwise(pl.col("ld").list.first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    # One value alone keeps the element.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("m").list.first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'m': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_value_that_reads_a_refused_element_refuses_the_chain
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        ls: List[pl.String]
+        li: List[pl.Int64]
+        b: pl.Boolean
+        g: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A fixed member over `diff` has an answer only where `diff` has one
+    # at the element, in each value of a chain.
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("li").diff().is_null()).otherwise(pl.col("b"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("li").diff().null_count()).otherwise(pl.col("g"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("li").diff().is_null())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Boolean}, closed=True), None]"
+    df.select(pl.when(pl.col("b")).then(pl.col("ls").diff().is_null()).otherwise(pl.col("b")))  # E: "ls" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("b")).otherwise(pl.col("ls").diff().is_null()))  # E: "b" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("ls").diff().is_null()))  # E: "ls" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("b")).when(pl.col("b")).then(pl.col("ls").diff().is_null()).otherwise(False))  # E: "b" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.when(pl.col("b")).then(pl.col("ls").diff().null_count()).otherwise(pl.col("g")))  # E: "ls" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_chain_value_keeps_its_departure_in_the_aggregation_context
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Words(Columns):
+        k: pl.Int64
+        a: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[Words]
+    grouped = df.group_by("k")
+    c = pl.col("k").first() > 0
+    mean = pl.col("s").mean()
+
+    # Inside agg, the mean of a String is a String, so a chain that
+    # holds it answers there, in any branch.
+    reveal_type(grouped.agg(pl.when(c).then(mean).otherwise(pl.lit("x"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(pl.lit("x")).otherwise(mean)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'literal': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(pl.lit("x")).when(c).then(mean).otherwise(pl.lit("y"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'literal': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(mean).when(c).then(pl.lit("y")).otherwise(pl.lit("z"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(mean)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(mean).otherwise(pl.col("a").sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(cs.string().mean()).otherwise(pl.lit("x"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(c).then(cs.string().mean())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String}, closed=True), None]"
+
+    # The row context refuses the mean of a String.
+    reveal_type(df.select(pl.when(c).then(mean).otherwise(pl.lit("x"))))  # E: "s" has no result type at this frame's column types: mean does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_condition_gives_the_chain_its_character
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class Words(Columns):
+        k: pl.Int64
+        b: pl.Boolean
+        f: pl.Float64
+        s: pl.String
+
+    df: TypedDataFrame[Words]
+    grouped = df.group_by("k")
+
+    # A condition that gives one value for each row makes the chain give
+    # one value for each row, so the aggregation context wraps it.
+    reveal_type(grouped.agg(pl.when(pl.col("k") > 0).then(pl.col("s").mean()).otherwise(pl.lit("x"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': astrolabe.frame.List[polars.datatypes.classes.String]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(pl.col("b")).then(1).otherwise(0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'literal': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(pl.col("b")).then(pl.col("f").sum()).otherwise(pl.col("f").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when("b").then(pl.col("f").sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when([pl.col("b").first(), pl.col("b")]).then(pl.col("f").sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(pl.col("b").first()).then(pl.col("f").sum()).when(pl.col("b")).then(pl.col("f").max()).otherwise(0.0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(pl.col("b")).then(cs.float().sum()).otherwise(0.0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+
+    # A condition that aggregates, or a Python value, keeps the character of the values.
+    reveal_type(grouped.agg(pl.when(pl.col("b").first()).then(pl.col("f").sum()).otherwise(pl.col("f").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when([pl.col("b").first(), pl.col("b").last()]).then(pl.col("f").sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(True).then(pl.col("f").sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(grouped.agg(pl.when(pl.col("b").first()).then(1).otherwise(0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'literal': polars.datatypes.classes.Int32}, closed=True), None]"

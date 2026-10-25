@@ -1,0 +1,313 @@
+# The declaration surface: `column`, `typed_expr`, `typed_agg`,
+# `typed_lit`, `row`, `some_column`, `same`, `wrap`, `column_of` and
+# `subset_of`. A declaration is a named value; the plugin reads the
+# call during semantic analysis and gives the name the expression
+# type the declaration describes, spelled by the one codec. Each
+# well-formedness rule is checked at the declaration itself.
+
+- case: column_declares_the_identity_at_one_type
+  main: |
+    import polars as pl
+    from astrolabe import column
+
+    Price = column("price", pl.Float64)
+    When = column("when", pl.Datetime("us"))
+
+    def f(price: Price, when: When) -> None:
+        reveal_type(price)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64]"
+        reveal_type(when)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['when'], astrolabe.frame.Datetime[Literal['us'], None]]"
+
+- case: column_declares_a_region
+  main: |
+    import polars as pl
+    from astrolabe import EveryDType, Unchecked, column
+    from polars.datatypes.classes import FloatType
+
+    Any = column("x", EveryDType)
+    Floats = column("x", FloatType)
+    Some = column("x", {pl.Int8, pl.Int16})
+    Trusted = column("x", Unchecked)
+
+    def f(a: Any, b: Floats, c: Some, d: Trusted) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['x'], astrolabe.expr.EveryDType]"
+        reveal_type(b)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['x'], polars.datatypes.classes.FloatType]"
+        reveal_type(c)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['x'], polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8]"
+        reveal_type(d)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['x'], astrolabe.frame.Unchecked]"
+
+- case: typed_expr_declares_reads_gives_and_name
+  main: |
+    import polars as pl
+    from astrolabe import column, typed_expr
+
+    Quantity = column("quantity", pl.Int64)
+    BuyFlag = typed_expr(Quantity, gives=pl.Boolean, named="is_buy")
+    Inline = typed_expr(column("q", pl.Int64), gives=pl.Boolean, named="f")
+    Stamped = typed_expr(Quantity, gives=pl.Datetime("ms"), named="t")
+
+    def f(a: BuyFlag, b: Inline, c: Stamped) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['is_buy'], polars.datatypes.classes.Boolean]]"
+        reveal_type(b)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['q'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['f'], polars.datatypes.classes.Boolean]]"
+        reveal_type(c)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['t'], astrolabe.frame.Datetime[Literal['ms'], None]]]"
+
+- case: typed_agg_and_typed_lit_carry_their_character
+  main: |
+    import polars as pl
+    from astrolabe import column, same, typed_agg, typed_lit, wrap
+
+    Quantity = column("quantity", pl.Int64)
+    Total = typed_agg(Quantity, gives=pl.Int64)
+    Imploded = typed_agg(Quantity, gives=wrap(pl.List, same))
+    RowCount = typed_agg(gives=pl.UInt32, named="len")
+    Flag = typed_lit(gives=pl.Boolean)
+    Named = typed_lit(gives=pl.Int64, named="one")
+
+    def f(a: Total, b: Imploded, c: RowCount, d: Flag, e: Named) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['quantity'], astrolabe.expr.Same[Literal['quantity']]]]"
+        reveal_type(b)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['quantity'], astrolabe.expr.Wrap[polars.datatypes.classes.List, astrolabe.expr.Same[Literal['quantity']]]]]"
+        reveal_type(c)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[()], astrolabe.frame.Column[Literal['len'], polars.datatypes.classes.UInt32]]"
+        reveal_type(d)  # N: Revealed type is "astrolabe.expr.TypedLit[astrolabe.expr.Reads[()], astrolabe.frame.Column[Literal['literal'], polars.datatypes.classes.Boolean]]"
+        reveal_type(e)  # N: Revealed type is "astrolabe.expr.TypedLit[astrolabe.expr.Reads[()], astrolabe.frame.Column[Literal['one'], polars.datatypes.classes.Int64]]"
+
+- case: rows_declare_several_areas_of_one_map
+  main: |
+    import polars as pl
+    from astrolabe import column, row, same, typed_agg
+
+    Total = typed_agg(
+        row(column("quantity", {pl.Int32, pl.Float32}), gives=pl.Int64),
+        row(column("quantity", {pl.Int64, pl.Float64}), gives=same),
+    )
+
+    def f(a: Total) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Float32 | polars.datatypes.classes.Float64 | polars.datatypes.classes.Int32 | polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['quantity'], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.Float64 | polars.datatypes.classes.Int64, astrolabe.expr.Same[Literal['quantity']]], astrolabe.expr.Row[polars.datatypes.classes.Float32 | polars.datatypes.classes.Int32, polars.datatypes.classes.Int64]]]]"
+
+- case: rows_of_one_outcome_that_form_no_product_take_overlapping_rectangles
+  main: |
+    import polars as pl
+    from astrolabe import column, row, typed_expr
+
+    # The three cells that give Float64 form an L, not a product of kinds.
+    # The type writes them as two rectangles that share the cell (String, String).
+    Cross = typed_expr(
+        row(column("a", pl.Int64), column("b", pl.String), gives=pl.Float64),
+        row(column("a", pl.String), column("b", pl.String), gives=pl.Float64),
+        row(column("a", pl.String), column("b", pl.Int64), gives=pl.Float64),
+        row(column("a", pl.Int64), column("b", pl.Int64), gives=pl.Boolean),
+        named="z",
+    )
+
+    def f(e: Cross) -> None:
+        reveal_type(e)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64 | polars.datatypes.classes.String], astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Int64 | polars.datatypes.classes.String]], astrolabe.frame.Column[Literal['z'], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.Int64, polars.datatypes.classes.Int64, polars.datatypes.classes.Boolean], astrolabe.expr.Row[polars.datatypes.classes.Int64 | polars.datatypes.classes.String, polars.datatypes.classes.String, polars.datatypes.classes.Float64], astrolabe.expr.Row[polars.datatypes.classes.String, polars.datatypes.classes.Int64 | polars.datatypes.classes.String, polars.datatypes.classes.Float64]]]]"
+
+- case: some_column_declares_a_blank_read
+  main: |
+    import polars as pl
+    from astrolabe import same, some_column, typed_agg, typed_expr
+    from polars.datatypes.classes import FloatType
+
+    Standardised = typed_expr(some_column(FloatType), gives=same)
+    Counted = typed_agg(some_column(pl.String), gives=pl.UInt32)
+
+    def f(a: Standardised, b: Counted) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedColumn[astrolabe.expr.Blank, polars.datatypes.classes.FloatType]"
+        reveal_type(b)  # N: Revealed type is "astrolabe.expr.TypedAgg[astrolabe.expr.Reads[astrolabe.frame.Column[astrolabe.expr.Blank, polars.datatypes.classes.String]], astrolabe.frame.Column[astrolabe.expr.Blank, polars.datatypes.classes.UInt32]]"
+
+- case: schema_references_read_at_the_declared_types
+  main: |
+    import polars as pl
+    from astrolabe import Columns, Unchecked, column_of, subset_of, typed_expr
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        quantity: pl.Int64
+        note: Unchecked
+
+    FlagRule = typed_expr(Trades, gives=pl.Boolean, named="flag")
+    Legs = typed_expr(subset_of(Trades, "price", "quantity"), gives=pl.Float64, named="notional")
+    One = typed_expr(column_of(Trades, "price"), gives=pl.Float64)
+
+    def f(a: FlagRule, b: Legs, c: One) -> None:
+        reveal_type(a)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['note'], astrolabe.frame.Unchecked], astrolabe.frame.Column[Literal['price'], polars.datatypes.classes.Float64], astrolabe.frame.Column[Literal['symbol'], polars.datatypes.classes.String], astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['flag'], polars.datatypes.classes.Boolean]]"
+        reveal_type(b)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['price'], polars.datatypes.classes.Float64], astrolabe.frame.Column[Literal['quantity'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['notional'], astrolabe.expr.Same[Literal['price']]]]"
+        reveal_type(c)  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['price'], polars.datatypes.classes.Float64]"
+
+- case: a_schema_reference_waits_for_the_schema_class
+  main: |
+    import polars as pl
+    from astrolabe import Columns, typed_expr
+
+    class Trades(Columns):
+        price: Later
+
+    FlagRule = typed_expr(Trades, gives=pl.Boolean, named="flag")
+
+    Later = pl.Float64
+
+    def f(r: FlagRule) -> None:
+        reveal_type(r)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['price'], polars.datatypes.classes.Float64]], astrolabe.frame.Column[Literal['flag'], polars.datatypes.classes.Boolean]]"
+
+- case: a_declared_column_names_a_struct_field
+  main: |
+    import polars as pl
+    from astrolabe import column, Columns, Struct, TypedDataFrame, Unchecked
+    from polars.datatypes.classes import FloatType
+
+    Price = column("price", pl.Float64)
+    When = column("when", pl.Datetime("us"))
+    Note = column("note", Unchecked)
+    Floats = column("x", FloatType)
+
+    class NestedSchema(Columns):
+        s: Struct[Price, When, Note]
+
+    Nested = TypedDataFrame[NestedSchema]
+    nested: Nested
+    reveal_type(nested)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.NestedSchema, {'s': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['price'], polars.datatypes.classes.Float64], astrolabe.frame.Column[Literal['when'], astrolabe.frame.Datetime[Literal['us'], None]], astrolabe.frame.Column[Literal['note'], astrolabe.frame.Unchecked]]]}, closed=True), None]"
+
+    class BadSchema(Columns):
+        s: Struct[Floats]  # E: Struct[...] arguments must be Column[...]  [marker-arg]
+
+- case: rule_one_typed_expr_reads_at_least_one_column
+  main: |
+    import polars as pl
+    from astrolabe import typed_agg, typed_expr
+
+    Bad = typed_expr(gives=pl.Boolean)  # E: Malformed declaration: no column is read. Read one, name a typed_agg, or use typed_lit  [malformed-declaration]
+    Unnamed = typed_agg(gives=pl.UInt32)  # E: Malformed declaration: no column is read. Read one, name a typed_agg, or use typed_lit  [malformed-declaration]
+
+- case: rule_two_every_row_reads_the_same_names
+  main: |
+    import polars as pl
+    from astrolabe import column, row, same, typed_agg
+
+    Bad = typed_agg(  # E: Malformed declaration: the rows read different columns. Give every row the same reads  [malformed-declaration]
+        row(column("a", pl.Int64), gives=pl.Int64),
+        row(column("b", pl.Int64), gives=same),
+    )
+
+- case: rule_three_rows_are_disjoint
+  main: |
+    import polars as pl
+    from astrolabe import column, row, same, typed_agg
+
+    Bad = typed_agg(  # E: Malformed declaration: two rows cover the same cell. Make the rows disjoint  [malformed-declaration]
+        row(column("a", {pl.Int32, pl.Int64}), gives=pl.Int64),
+        row(column("a", {pl.Int64, pl.Float64}), gives=same),
+    )
+
+- case: rule_four_same_names_one_read
+  main: |
+    import polars as pl
+    from astrolabe import column, same, typed_expr
+
+    A = column("a", pl.Int64)
+    B = column("b", pl.Int64)
+    Good = typed_expr(A, B, gives=same("a"), named="out")
+    BadBare = typed_expr(A, B, gives=same, named="out")  # E: Malformed declaration: same with no argument needs one read. Write same(name)  [malformed-declaration]
+    BadName = typed_expr(A, B, gives=same("zz"), named="out")  # E: Malformed declaration: same(name) names a column the declaration does not read  [malformed-declaration]
+
+    def f(g: Good) -> None:
+        reveal_type(g)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64], astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['out'], astrolabe.expr.Same[Literal['a']]]]"
+
+- case: rule_five_and_eight_one_blank_standing_alone
+  main: |
+    import polars as pl
+    from astrolabe import column, same, some_column, typed_expr
+
+    Two = typed_expr(some_column(pl.Int64), some_column(pl.Int64), gives=pl.Boolean, named="z")  # E: Malformed declaration: the declaration has more than one some_column read. Keep one  [malformed-declaration] # E: Malformed declaration: a some_column read stands beside another read. Declare it alone  [malformed-declaration]
+    Beside = typed_expr(column("a", pl.Int64), some_column(pl.Int64), gives=pl.Boolean, named="z")  # E: Malformed declaration: a some_column read stands beside another read. Declare it alone  [malformed-declaration]
+    Renamed = typed_expr(some_column(pl.Int64), gives=same, named="z")  # E: Malformed declaration: named= renames a some_column read. Delete named=  [malformed-declaration]
+
+- case: rule_six_regions_are_not_empty_and_reads_are_distinct
+  main: |
+    import polars as pl
+    from astrolabe import Columns, column, column_of, typed_expr
+
+    class Trades(Columns):
+        price: pl.Float64
+
+    Twice = typed_expr(column("a", pl.Int64), column("a", pl.Float64), gives=pl.Boolean, named="z")  # E: Malformed declaration: a column is read twice. Read each column once  [malformed-declaration]
+    Missing = typed_expr(column_of(Trades, "zz"), gives=pl.Boolean, named="z")  # E: Malformed declaration: a read has an empty region. Give it at least one data type  [malformed-declaration]
+
+- case: named_is_required_with_several_reads
+  main: |
+    import polars as pl
+    from astrolabe import column, typed_expr
+
+    Bad = typed_expr(column("a", pl.Int64), column("b", pl.Int64), gives=pl.Boolean)  # E: Malformed declaration: named= is required with two or more reads  [malformed-declaration]
+
+- case: a_forward_reference_waits_for_the_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, column, typed_expr
+
+    # A class whose own field is a forward reference is incomplete on
+    # the first pass, so a declaration naming it registers nothing
+    # and reports nothing until mypy analyzes the statement again.
+    Sized = column("size", Deferred)  # E: Name "Deferred" is used before definition  [used-before-def]
+    Rule = typed_expr(Deferred, gives=pl.Boolean, named="flag")  # E: Name "Deferred" is used before definition  [used-before-def]
+
+    class Deferred(Columns):
+        n: Later
+
+    Later = pl.Int64
+
+    def f(size: Sized, rule: Rule) -> None:  # E: Variable "main.Sized" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+        reveal_type(rule)  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['n'], polars.datatypes.classes.Int64]], astrolabe.frame.Column[Literal['flag'], polars.datatypes.classes.Boolean]]"
+
+- case: a_malformed_call_registers_nothing
+  main: |
+    import polars as pl
+    from astrolabe import column, column_of, other_columns, row, typed_expr
+
+    Rest = other_columns()
+    three = 3
+    NotARead = typed_expr(Rest, gives=pl.Boolean, named="z")  # E: Malformed declaration: a read is column(name, region), some_column(region), a declared column, a Columns class, column_of(...) or subset_of(...)  [malformed-declaration]
+    NotAReadEither = typed_expr(three, gives=pl.Boolean, named="z")  # E: Malformed declaration: a read is column(name, region), some_column(region), a declared column, a Columns class, column_of(...) or subset_of(...)  [malformed-declaration]
+    NotASchema = typed_expr(column_of(three, "p"), gives=pl.Boolean, named="z")  # E: Malformed declaration: a read is column(name, region), some_column(region), a declared column, a Columns class, column_of(...) or subset_of(...)  [malformed-declaration]
+    NoGives = typed_expr(column("a", pl.Int64))  # E: Malformed declaration: gives= is required  [malformed-declaration]
+    BadGives = typed_expr(column("a", pl.Int64), gives=1)  # E: Malformed declaration: gives= must be a data type, same, same(name) or wrap(...)  [malformed-declaration]
+    Mixed = typed_expr(row(column("a", pl.Int64), gives=pl.Boolean), column("b", pl.Int64), named="z")  # E: Malformed declaration: rows and bare reads cannot mix  [malformed-declaration]
+    BadName = typed_expr(column("a", pl.Int64), gives=pl.Boolean, named=3)  # E: Malformed declaration: named= must be a string literal  [malformed-declaration] # E: Argument "named" to "typed_expr" has incompatible type "int"; expected "str | None"  [arg-type]
+    Extra = typed_expr(column("a", pl.Int64), gives=pl.Boolean, wat=1)  # E: Malformed declaration: unexpected keyword wat=  [malformed-declaration] # E: Unexpected keyword argument "wat" for "typed_expr"  [call-arg] # N: "typed_expr" defined in "astrolabe.declare"
+    NoName = column(3, pl.Int64)  # E: Argument 1 to "column" has incompatible type "int"; expected "str"  [arg-type]
+    BadRegion = column("a", 3)
+    BadSet = column("a", {pl.Int64, 3})
+
+    def f(a: NotARead) -> None: ...  # E: Variable "main.NotARead" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+
+- case: a_marker_written_by_hand_is_checked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Struct, TypedDataFrame, other_columns
+    from astrolabe.frame import Column, TypedGroupBy
+    from astrolabe.remainder import DeclaredRemainder, DisjointFrom, Matching, Only
+
+    Rest = other_columns()
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        s: Struct[Column[Literal["x"], pl.Int64]]
+
+    # A Matching[...] holds a signature that the checker writes, not a pattern.
+    def matching(df: TypedDataFrame[FrameSchema, Only[Rest, Matching[Literal["^p$"]]]]) -> None: ...  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+    class Loose(DeclaredRemainder, DisjointFrom[None]):
+        pass
+
+    def need(df: TypedDataFrame[FrameSchema, Loose]) -> None: ...
+
+    def fit(df: TypedDataFrame[FrameSchema, Rest]) -> None:
+        need(df)  # E: "Loose" states a relation that names no remainder: DisjointFrom[...] and Within[...] take classes declared with other_columns(...)  [marker-arg]
+
+    def grouped(gb: TypedGroupBy[int, int, None]) -> None: ...  # E: TypedGroupBy[...] takes a tuple of Column[...] for the keys, a tuple of Column[...] for the declared columns, and the remainder  [marker-arg]
+
+- case: an_empty_output_name_is_malformed
+  main: |
+    import polars as pl
+    from astrolabe import column, typed_expr
+
+    Q = column("q", pl.Int64)
+    Empty = typed_expr(Q, gives=pl.Boolean, named="")  # E: Malformed declaration: named= must be a non-empty string  [malformed-declaration]

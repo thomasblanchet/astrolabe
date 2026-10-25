@@ -1,0 +1,156 @@
+# check_schema, force_schema and assume_schema take a frame type as a
+# value. Written in the call, the frame type is the frame type of the same
+# annotation. The frame type must be closed: a schema class and no
+# remainder.
+
+- case: an_inline_frame_type_is_the_frame_of_the_annotation
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    def use(df: TypedDataFrame[Trades]) -> None: ...
+
+    raw: pl.DataFrame
+    trades = check_schema(raw, TypedDataFrame[Trades])
+    reveal_type(trades)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64}, closed=True), None]"
+    use(trades)
+    reveal_type(trades.select("price"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: force_and_assume_take_an_inline_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame, assume_schema, force_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    raw: pl.DataFrame
+    lazy: pl.LazyFrame
+    reveal_type(force_schema(raw, TypedDataFrame[Trades]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(assume_schema(lazy, TypedLazyFrame[Trades]))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: an_inline_lazy_frame_type_is_the_frame_of_the_annotation
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame, check_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    def use(lf: TypedLazyFrame[Trades]) -> None: ...
+
+    lazy: pl.LazyFrame
+    use(check_schema(lazy, TypedLazyFrame[Trades]))
+    use(check_schema(lazy, TypedLazyFrame[Trades, None]))
+
+- case: a_bare_data_type_class_takes_its_defaults_in_an_inline_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Ledger(Columns):
+        amount: pl.Decimal
+        booked: pl.Datetime
+        lag: pl.Duration
+
+    annotated: TypedDataFrame[Ledger]
+    raw: pl.DataFrame
+    reveal_type(annotated)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Ledger, {'amount': astrolabe.frame.Decimal[Literal[38], Literal[0]], 'booked': astrolabe.frame.Datetime[Literal['us'], None], 'lag': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(check_schema(raw, TypedDataFrame[Ledger]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Ledger, {'amount': astrolabe.frame.Decimal[Literal[38], Literal[0]], 'booked': astrolabe.frame.Datetime[Literal['us'], None], 'lag': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+
+- case: a_frame_type_alias_keeps_its_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    TradesFrame = TypedDataFrame[Trades]
+    NoColumns = TypedDataFrame[()]
+    raw: pl.DataFrame
+    reveal_type(check_schema(raw, TradesFrame))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(check_schema(raw, NoColumns))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), None]"
+
+- case: an_open_frame_type_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame, assume_schema, check_schema, force_schema, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    Rest = other_columns()
+    OpenTrades = TypedDataFrame[Trades, Rest]
+    raw: pl.DataFrame
+    lazy: pl.LazyFrame
+    check_schema(raw, OpenTrades)  # E: check_schema() needs a closed frame type, and this frame type has undeclared columns. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]  [frame-type-not-closed]
+    force_schema(raw, TypedDataFrame[Trades, Rest])  # E: force_schema() needs a closed frame type, and this frame type has undeclared columns. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]  [frame-type-not-closed]
+    reveal_type(assume_schema(lazy, TypedLazyFrame[Trades, Rest]))  # E: assume_schema() needs a closed frame type, and this frame type has undeclared columns. Pass a frame type with a schema class and no remainder, for example TypedLazyFrame[MyColumns]  [frame-type-not-closed]  # N: Revealed type is "Any"
+
+- case: a_frame_type_with_no_schema_class_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, check_schema, other_columns
+
+    Rest = other_columns()
+    OnlyRest = TypedDataFrame[Rest]
+    raw: pl.DataFrame
+    check_schema(raw, TypedDataFrame[Rest])  # E: check_schema() needs a closed frame type, and this frame type has no schema class. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]  [frame-type-not-closed]
+    check_schema(raw, TypedDataFrame)  # E: check_schema() needs a closed frame type, and this frame type has no schema class. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]  [frame-type-not-closed]
+    check_schema(raw, OnlyRest)  # E: check_schema() needs a closed frame type, and this frame type has undeclared columns. Pass a frame type with a schema class and no remainder, for example TypedDataFrame[MyColumns]  [frame-type-not-closed]
+
+- case: an_inline_schema_class_gets_the_checks_of_a_schema_class
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Prices(Columns):
+        price: float  # E: Column "price" must be a polars dtype or an astrolabe dtype marker  [columns-field-type]
+
+    raw: pl.DataFrame
+    reveal_type(check_schema(raw, TypedDataFrame[Prices]))  # N: Revealed type is "Any"
+
+- case: a_frame_type_that_is_not_a_frame_class_keeps_its_type
+  main: |
+    from typing import Any
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    class TradesFrame(TypedDataFrame[Trades]):
+        pass
+
+    unknown: Any
+    raw: pl.DataFrame
+    reveal_type(check_schema(raw, TradesFrame))  # N: Revealed type is "main.TradesFrame"
+    reveal_type(check_schema(raw, unknown))  # N: Revealed type is "Any"
+
+- case: a_frame_type_through_a_type_variable_keeps_its_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, check_schema
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    def load[F: TypedDataFrame[Trades]](raw: pl.DataFrame, frame_type: type[F]) -> F:
+        loaded = check_schema(raw, frame_type)
+        reveal_type(loaded)  # N: Revealed type is "F"
+        return loaded
+
+- case: a_call_without_a_class_keeps_the_errors_of_mypy
+  main: |
+    import polars as pl
+    from astrolabe import check_schema
+
+    raw: pl.DataFrame
+    check_schema(raw)  # E: Missing positional argument "frame_type" in call to "check_schema"  [call-arg]
+    check_schema(raw, 3)  # E: Argument 2 to "check_schema" has incompatible type "int"; expected "type[Never]"  [arg-type]

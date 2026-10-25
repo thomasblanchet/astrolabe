@@ -1,0 +1,122 @@
+# Real-world test: `.over()` window functions from polars' own user
+# guide, adapted to astrolabe's typed frame API. Source: pola-rs/polars,
+# `docs/source/src/python/user-guide/expressions/window.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The Pokemon dataset's rank-by-type, mean-by-type, and
+# multi-key `.over()` examples are the documentation's own real teaching
+# example, adapted from an untyped `pl.read_csv(...)` to a declared
+# `TypedDataFrame`; the window expressions themselves are preserved.
+#
+# The source's own "sort by speed, per type" example calls
+# `.over(..., mapping_strategy="explode")` on a *multi-column* receiver
+# (`pl.col("Name", "Speed")`), a `MultiTypedExpr`. Both `.sort_by()` and
+# `.over()` are ported for a multi-column receiver too
+# (`SortByOnMultiTypedExprHook`/`OverOnMultiTypedExprHook`), so this
+# narrows fully now, the same as the single-column form.
+
+- case: real_world_pokemon_rank_over_single_type_narrows
+  main: |
+    import polars as pl
+    from astrolabe import columns, TypedDataFrame
+
+    PokemonSchema = columns("PokemonSchema", {"Name": pl.String, "Type 1": pl.String, "Speed": pl.Int64})
+
+    Pokemon = TypedDataFrame[PokemonSchema]
+
+    pokemon: Pokemon
+
+    ResultSchema = columns("ResultSchema", {"Name": pl.String, "Type 1": pl.String, "Speed rank": pl.UInt32})
+
+    # .rank(method="dense") ranks as UInt32 for every method value but
+    # "average", which ranks as Float64.
+    result: TypedDataFrame[ResultSchema] = pokemon.select(
+        pl.col("Name"),
+        pl.col("Type 1"),
+        pl.col("Speed").rank("dense", descending=True).over("Type 1").alias("Speed rank"),
+    )
+
+- case: real_world_pokemon_rank_over_multiple_types_narrows
+  main: |
+    import polars as pl
+    from astrolabe import columns, TypedDataFrame
+
+    PokemonSchema = columns("PokemonSchema", {"Name": pl.String, "Type 1": pl.String, "Type 2": pl.String, "Speed": pl.Int64})
+
+    Pokemon = TypedDataFrame[PokemonSchema]
+
+    pokemon: Pokemon
+
+    ResultSchema = columns("ResultSchema", {"Name": pl.String, "Type 1": pl.String, "Type 2": pl.String, "Speed rank": pl.UInt32})
+
+    result: TypedDataFrame[ResultSchema] = pokemon.select(
+        pl.col("Name"),
+        pl.col("Type 1"),
+        pl.col("Type 2"),
+        pl.col("Speed")
+        .rank("dense", descending=True)
+        .over("Type 1", "Type 2")
+        .alias("Speed rank"),
+    )
+
+- case: real_world_pokemon_mean_speed_and_group_by_averages_over_narrow
+  main: |
+    import polars as pl
+    from astrolabe import columns, TypedDataFrame
+
+    PokemonSchema = columns("PokemonSchema", {"Type 1": pl.String, "Type 2": pl.String, "Attack": pl.Int64, "Defense": pl.Int64})
+
+    Pokemon = TypedDataFrame[PokemonSchema]
+
+    pokemon: Pokemon
+
+    ResultSchema = columns("ResultSchema", {"Type 1": pl.String, "Type 2": pl.String, "avg_attack_by_type": pl.Float64, "avg_defense_by_type_combination": pl.Float64, "avg_attack": pl.Float64})
+
+    result: TypedDataFrame[ResultSchema] = pokemon.select(
+        "Type 1",
+        "Type 2",
+        pl.col("Attack").mean().over("Type 1").alias("avg_attack_by_type"),
+        pl.col("Defense")
+        .mean()
+        .over(["Type 1", "Type 2"])
+        .alias("avg_defense_by_type_combination"),
+        pl.col("Attack").mean().alias("avg_attack"),
+    )
+
+- case: real_world_pokemon_sort_by_speed_explode_strategy_single_column_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, columns, TypedDataFrame
+
+    PokemonSchema = columns("PokemonSchema", {"Type 1": pl.String, "Speed": pl.Int64})
+
+    Pokemon = TypedDataFrame[PokemonSchema]
+
+    filtered: Pokemon
+
+    class ResultSchema(Columns):
+        Speed: pl.Int64
+
+    # .sort_by() is a pure identity (sorting by any expression never
+    # changes dtype), and mapping_strategy="explode" is dtype-identical
+    # to the default.
+    result: TypedDataFrame[ResultSchema] = filtered.select(pl.col("Speed").sort_by("Speed", descending=True).over("Type 1", mapping_strategy="explode"))
+
+- case: real_world_pokemon_group_by_agg_rank_narrows_to_list_of_uint32
+  main: |
+    import polars as pl
+    from astrolabe import columns, List, TypedDataFrame
+
+    PokemonSchema = columns("PokemonSchema", {"Name": pl.String, "Type 1": pl.String, "Speed": pl.Int64})
+
+    Pokemon = TypedDataFrame[PokemonSchema]
+
+    pokemon: Pokemon
+
+    ResultSchema = columns("ResultSchema", {"Type 1": pl.String, "Name": List[pl.String], "Speed rank": List[pl.UInt32]})
+
+    # The source docs' own alternative to .over(): group_by().agg() the
+    # names and dense ranks into parallel lists, per type. .rank() is
+    # elementwise, so it implodes into List[D] inside .agg() the same
+    # as any other elementwise expression, D being its own UInt32
+    # result dtype for method="dense".
+    result: TypedDataFrame[ResultSchema] = pokemon.group_by("Type 1").agg(pl.col("Name"), pl.col("Speed").rank("dense", descending=True).alias("Speed rank"))

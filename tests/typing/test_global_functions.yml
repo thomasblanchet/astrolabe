@@ -1,0 +1,351 @@
+# The functions of `pl` that build one column from several:
+# `concat_str`, `concat_list`, `concat_arr`, `coalesce`, `corr`, `cov`,
+# `arg_where` and `format`. Each names its result after its first input
+# (`concat_str`, `concat_list`, `coalesce`: the first of `exprs`;
+# `corr`, `cov`: `a`; `arg_where`: `condition`; `format`: the first of
+# `*args`), confirmed against real polars 1.43.2. A bare string input is
+# a column name here.
+#
+# `concat_str` and `format` give `String`. `concat_list` and `coalesce`
+# join their inputs by the supertype, and `concat_list` wraps it in a
+# `List`. `concat_arr` refuses inputs of different data types and gives
+# an `Array` as wide as its inputs. `corr` and `cov` give `Float64`, and
+# `arg_where` gives `UInt32`. `struct()` has its own file,
+# `test_struct_build.yml`.
+
+- case: select_concat_str_iterable_arg_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.concat_str(["a", "b"]))
+
+- case: select_concat_str_variadic_args_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.concat_str("a", "b", separator="-"))
+
+- case: select_concat_list_narrows_with_folded_inner_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: List[pl.Float64]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.concat_list("a", "c"))
+
+- case: select_coalesce_narrows_with_folded_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.coalesce(["a", "c"]))
+
+- case: select_coalesce_single_operand_is_pure_identity
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: pl.Boolean
+
+    # A lone Boolean input stays Boolean under coalesce, where + gives
+    # UInt32.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.select(pl.coalesce(["d"]))
+
+- case: select_corr_narrows_to_float64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.corr("a", "c"))
+
+- case: select_corr_final_str_operand_names_result_after_column
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A Final-declared string variable names the result after the
+    # column the same as the equivalent inline string would (see
+    # select_corr_narrows_to_float64, above).
+    NAME: Final = "a"
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.corr(NAME, "c"))
+
+- case: select_cov_narrows_to_float64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.cov("a", "c"))
+
+- case: select_arg_where_narrows_to_uint32_named_after_condition
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        d: pl.UInt32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.arg_where(pl.col("d")))
+
+- case: select_format_narrows_to_string_named_after_first_arg
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.format("{}-{}", "a", "b"))
+
+- case: with_columns_coalesce_appends_new_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        c: pl.Float64
+        x: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(x=pl.coalesce(["a", "c"]))
+
+- case: select_format_with_no_variadic_args_narrows_to_literal_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # pl.format's own *args can be empty when the format string has no
+    # substitution placeholders. Confirmed empirically the result still
+    # narrows, named "literal" the same way every other name-less
+    # result in this project already is.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.format("no args here"))
+
+- case: select_format_with_unrecognized_operand_narrows_to_literal_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    fmt = "{}-{}"
+
+    class NarrowedSchema(Columns):
+        literal: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.format(fmt, 1, 2))
+
+- case: global_function_over_two_columns_of_a_plain_frame_is_unchecked
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    # The two columns of a plain frame give too many choices of data types,
+    # so the checker does not try them, and the answer is Unchecked.
+    reveal_type(df.select(pl.concat_str(pl.col("a"), pl.col("b"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.corr(pl.col("a"), pl.col("b"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: select_any_horizontal_with_unchecked_operand_still_narrows_to_boolean
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: Unchecked
+        b: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    # The Boolean gate is defined at (Boolean, Boolean) only, so the
+    # unchecked operand lifts to its one surviving member and the
+    # answer stays Boolean, not Unchecked.
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Boolean
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.any_horizontal("a", "b"))
+
+- case: pl_first_last_nth_are_left_unmodeled
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.last()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.nth(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.nth(-1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.nth(5)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pl_select_builds_a_frame_from_expressions_alone
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    # pl.select reads no column, so every argument is a literal or an
+    # expression over no column at all. eager=False gives a lazy frame.
+    class LiteralSchema(Columns):
+        a: pl.Int32
+        b: pl.String
+
+    built: TypedDataFrame[LiteralSchema] = pl.select(a=pl.lit(1), b=pl.lit("x"))
+    lazy: TypedLazyFrame[LiteralSchema] = pl.select(a=pl.lit(1), b=pl.lit("x"), eager=False)
+    reveal_type(pl.select(pl.lit(1).alias("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int32}, closed=True), None]"
+
+- case: pl_select_refuses_a_duplicate_output_name
+  main: |
+    import polars as pl
+
+    # Two outputs of one name are the same duplicate polars raises on.
+    reveal_type(pl.select(pl.lit(1).alias("a"), pl.lit(2).alias("a")))  # E: select would produce duplicate column "a"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: coalesce_joins_the_parameters_of_two_decimals
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class Prices(Columns):
+        d1: Decimal[Literal[10], Literal[2]]
+        d2: Decimal[Literal[12], Literal[4]]
+        d3: Decimal[Literal[12], Literal[2]]
+        d4: Decimal[Literal[10], Literal[4]]
+        i: pl.Int32
+
+    df: TypedDataFrame[Prices]
+
+    # Two decimals meet at the larger precision and the larger scale.
+    reveal_type(df.select(pl.coalesce(pl.col("d1"), pl.col("d2")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[12], Literal[4]]}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("d3"), pl.col("d4")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[12], Literal[4]]}, closed=True), None]"
+
+    # An integer beside a decimal: polars gives the whole precision to a
+    # decimal whose integer digits cannot hold an Int32, and keeps the
+    # precision of one that can.
+    reveal_type(df.select(pl.coalesce(pl.col("d1"), pl.col("i")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("d3"), pl.col("i")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[12], Literal[2]]}, closed=True), None]"

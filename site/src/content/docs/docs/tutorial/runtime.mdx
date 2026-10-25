@@ -1,0 +1,35 @@
+---
+title: 6. Check the data at run time
+description: Check a frame from outside the program against its declared type, once, at the boundary.
+sidebar:
+  order: 6
+  label: Check the data at run time
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+The checker proves that the code agrees with the declared types. It cannot prove that a file agrees with them. Check the data once, where it enters the program.
+
+## Check a frame and type it
+
+`check_schema` checks at run time that a frame has exactly the declared columns, with their data types. For mypy, it gives the typed frame:
+
+<Example name="tut_runtime" />
+
+Write the frame type in the call as an annotation writes it. The result has the type of a variable annotated `TypedDataFrame[Trades]`.
+
+At run time, `check_schema` raises if a column is missing, if a column has another data type, or if the frame has a column that the type does not declare. The order of the columns does not matter.
+
+## Cast, or trust
+
+Two other functions give a typed frame:
+
+| Function | At run time |
+| -- | -- |
+| `check_schema` | Checks the columns and the data types, and casts nothing. |
+| `force_schema` | Keeps the declared columns in their declared order, and casts each one to its declared data type. |
+| `assume_schema` | Checks nothing. Use it only for a frame that you know is correct. |
+
+See [Runtime checks](../../guides/runtime/).
+
+Next: [7. Make the checker stricter](../strictness/).

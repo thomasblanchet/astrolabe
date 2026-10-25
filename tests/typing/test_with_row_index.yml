@@ -1,0 +1,156 @@
+# .with_row_index(): prepending a literal row-index column. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# Confirmed against real polars 1.43.2, not assumed: the new column is
+# always a `pl.UInt32`, always prepended before every existing column,
+# regardless of `offset` (`offset` only shifts the row values
+# themselves, confirmed by inspecting `df.with_row_index(offset=100).schema`,
+# unchanged from the default). A name colliding with an existing column
+# raises a real `DuplicateError` at runtime, confirmed by actually
+# running it.
+#
+# This hook does not extend to a still-generic (`Rest`-containing)
+# receiver: unlike `select`/`drop`, prepending a *new* column has the
+# same soundness problem `rename`'s destination name has, since the new
+# name could collide with something hidden inside `Rest`. Deferred,
+# consistent with `with_columns`/`select`/`join` also not being
+# extended for a Rest-generic receiver in their initial implementation.
+
+- case: with_row_index_default_name_prepends_uint32_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        index: pl.UInt32
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_row_index()
+
+- case: with_row_index_custom_name_prepends_uint32_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        idx: pl.UInt32
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_row_index("idx")
+
+- case: with_row_index_offset_does_not_affect_the_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        idx: pl.UInt32
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_row_index("idx", offset=100)
+
+- case: with_row_index_on_empty_schema_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    df: TypedDataFrame[()]
+
+    class NarrowedSchema(Columns):
+        index: pl.UInt32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_row_index()
+
+- case: with_row_index_duplicate_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_row_index("foo")  # E: with_row_index would produce duplicate column "foo"  [duplicate-column]
+
+- case: with_row_index_non_literal_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "idx"
+    reveal_type(df.with_row_index(name))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_row_index_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        index: pl.UInt32
+        foo: pl.String
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.with_row_index()
+
+- case: with_row_index_duplicate_name_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    lf.with_row_index("foo")  # E: with_row_index would produce duplicate column "foo"  [duplicate-column]
+
+- case: with_row_index_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.with_row_index())  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_row_index_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.with_row_index())  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"

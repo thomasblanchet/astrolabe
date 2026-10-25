@@ -1,0 +1,39 @@
+---
+title: Adopting in an existing codebase
+description: Add the checker to a codebase step by step, from the boundaries in.
+sidebar:
+  order: 12
+---
+
+Astrolabe checks only the frames that it can type. A plain `pl.DataFrame` stays plain, and the checker reports nothing about it. So you can add the plugin to a large codebase, and type it one frame at a time.
+
+## Steps
+
+1. [Install and set up](../../start/install/) the plugin. With the default level, the existing code gets few new errors.
+1. Type the frames where data enters the program. Give each reader a schema, or bind the frame with `check_schema`. See [Loading data](../loading/) and [Runtime checks](../runtime/).
+1. Declare a `Columns` class for each frame that several functions share, and use it in their signatures.
+1. Use an open frame for a function that reads some columns of a larger frame. See [Open frames](../open-frames/).
+1. Read the errors, and fix each fault. Each error has a code, and [Error codes](../../reference/error-codes/) gives the cause and the fix.
+1. When the code is clean at the default level, make the level stricter. See [Configuration](../../reference/configuration/).
+
+## Silence one line
+
+mypy keeps its usual controls. To silence one error on one line, add a comment with its code:
+
+```python
+df.select("venue")  # type: ignore[undeclared-column]
+```
+
+To turn a code off for the whole project, use the `disable_error_code` setting of mypy.
+
+## Change the level of one operation
+
+`allow_unproven_overrides` sets the level of one operation, and wins over the global level. For example, make the project stricter, and still accept a `map_elements` without `return_dtype=`:
+
+```toml title="pyproject.toml"
+[tool.astrolabe]
+allow_unproven = "stated"
+
+[tool.astrolabe.allow_unproven_overrides]
+map_elements = "omitted"
+```

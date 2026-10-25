@@ -1,0 +1,1426 @@
+# Frame methods that select, reorder, deduplicate or slice rows, and so
+# never change the column list or a data type. Their polars stubs return
+# a plain `DataFrame` or `LazyFrame`, so `frame.py` gives each a `Self`
+# override. `select_seq` and `with_columns_seq` reuse the hooks of
+# `select` and `with_columns`, and `merge_sorted` reuses the schema check
+# of `vstack`. `rechunk` and `sample` exist only on `DataFrame`.
+#
+# `fill_null`, `fill_nan` and `interpolate` can change a data type, and
+# their cases are at the end of this file. `fill_null` and `fill_nan`
+# record the expression that polars runs for them, and the hook of
+# `with_columns` or `select` types it.
+
+- case: filter_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.filter(pl.col("foo") > 0)
+
+- case: filter_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.filter(pl.col("foo") > 0)
+
+- case: sort_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.sort("foo")
+
+- case: sort_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.sort("foo")
+
+- case: unique_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.unique()
+
+- case: unique_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.unique()
+
+- case: head_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.head()
+
+- case: head_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.head()
+
+- case: tail_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.tail(3)
+
+- case: tail_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.tail(3)
+
+- case: limit_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.limit(3)
+
+- case: limit_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.limit(3)
+
+- case: reverse_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.reverse()
+
+- case: reverse_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.reverse()
+
+- case: drop_nulls_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.drop_nulls()
+
+- case: drop_nulls_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.drop_nulls()
+
+- case: clone_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.clone()
+
+- case: clone_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.clone()
+
+- case: gather_every_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.gather_every(2)
+
+- case: gather_every_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.gather_every(2)
+
+- case: clear_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.clear()
+
+- case: clear_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.clear()
+
+- case: rechunk_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.rechunk()
+
+- case: sample_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.sample(2)
+
+# Polars converts a count of rows to an integer of a fixed width before it
+# reads any data, so a count outside that width raises at the call.
+- case: a_count_of_rows_outside_the_width_that_polars_reads_is_an_error
+  main: |
+    from typing import Final, Literal
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    BIG: Final = 2**64
+
+    class Rows(Columns):
+        k: pl.String
+        x: pl.Int64
+
+    def run(df: TypedDataFrame[Rows], lf: TypedLazyFrame[Rows]) -> None:
+        df.head(BIG)  # E: head() with n=18446744073709551616 raises OverflowError: polars reads it as a whole number up to 18446744073709551615  [invalid-call-shape]
+        df.head(-(2**70))
+        lf.head(-1)  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.slice(2**63)  # E: slice() with offset=9223372036854775808 raises OverflowError: polars reads it as a whole number from -9223372036854775808 to 9223372036854775807  [invalid-call-shape]
+        lf.top_k(2**32, by="x")  # E: top_k() with k=4294967296 raises OverflowError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.gather_every(0)  # E: gather_every() with n=0 raises InvalidOperationError: polars reads it as a whole number from 1 to 18446744073709551615  [invalid-call-shape]
+        df.with_row_index(offset=2**32)  # E: with_row_index() with offset=4294967296 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.group_by("k").head(-1)  # E: head() with n=-1 raises OverflowError: polars reads it as a whole number from 0 to 18446744073709551615  [invalid-call-shape]
+        reveal_type(df.head(3))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Rows, {'k': polars.datatypes.classes.String, 'x': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    def typed(df: TypedDataFrame[Rows], lf: TypedLazyFrame[Rows], n: Literal[-1]) -> None:
+        lf.head(n)  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        lf.head((count := -1))  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.group_by("k").head(3, count)  # E: Too many arguments for "head" of "GroupBy"  [call-arg]
+
+# A key of `sort`, `top_k` or `bottom_k` adds no column, and polars still
+# evaluates it over the frame: a key that reads a missing column, or that
+# polars refuses at the data types of the frame, raises.
+- case: a_key_that_orders_the_rows_is_evaluated_over_the_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        s: pl.Int64
+        a: pl.String
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    df.sort(pl.col("s").str.len_chars())  # E: "s" has no result type at this frame's column types: str.len_chars does not accept Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.sort("zz")  # E: Unknown column "zz"  [unknown-column]
+    df.sort(["s", pl.col("a").abs()])  # E: "a" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    lf.sort(by=pl.col("s").str.len_chars())  # E: "s" has no result type at this frame's column types: str.len_chars does not accept Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.top_k(2, by=pl.col("a").abs())  # E: "a" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    reveal_type(df.sort(pl.col("s") * -1, "a", descending=True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Rows, {'s': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: slice_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.slice(1, 2)
+
+- case: slice_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.slice(1, 2)
+
+- case: shift_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.shift(1)
+
+- case: shift_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.shift(1)
+
+- case: drop_nans_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.drop_nans()
+
+- case: drop_nans_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Float64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.drop_nans()
+
+- case: gather_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.gather([0, 2])
+
+- case: gather_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.gather([0, 2])
+
+- case: remove_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.remove(pl.col("foo") == 0)
+
+- case: remove_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.remove(pl.col("foo") == 0)
+
+- case: top_k_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.top_k(2, by="foo")
+
+- case: top_k_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.top_k(2, by="foo")
+
+- case: bottom_k_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.bottom_k(2, by="foo")
+
+- case: bottom_k_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: LzFrame = lf.bottom_k(2, by="foo")
+
+- case: select_seq_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select_seq("foo")
+
+- case: select_seq_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.select_seq("foo")
+
+- case: with_columns_seq_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns_seq((pl.col("foo") + 1).alias("bar"))
+
+- case: with_columns_seq_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.with_columns_seq((pl.col("foo") + 1).alias("bar"))
+
+- case: merge_sorted_with_matching_schema_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    narrowed: Frame = left.merge_sorted(right, key="foo")
+
+- case: merge_sorted_with_mismatched_schema_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.merge_sorted(right, key="foo")  # E: .merge_sorted() requires an identical schema  [schema-mismatch]
+
+- case: merge_sorted_with_mismatched_schema_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedLazyFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.merge_sorted(right, key="foo")  # E: .merge_sorted() requires an identical schema  [schema-mismatch]
+
+- case: update_keeps_the_receivers_schema_when_every_shared_dtype_matches
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # update() keeps the receiver's own column names, in order: a
+    # column only "other" has is dropped, confirmed against real polars
+    # 1.43.2 even under how="full".
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    narrowed: Left = left.update(right, on="foo")
+
+- case: update_promotes_a_shared_column_to_the_supertype_of_both_sides
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int16
+
+    # Confirmed against real polars 1.43.2:
+    # {k: Int64, v: Int16}.update({k: Int64, v: Int64}, on="k") really
+    # returns {k: Int64, v: Int64}. Declaring the result as the
+    # receiver's own schema was unsound.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_promotes_a_shared_column_against_a_string_right_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    # String absorbs a numeric column, so {v: Int64} against
+    # {v: String} really returns {v: String}.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: update_leaves_a_join_key_at_the_receivers_own_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int16
+        v: pl.Int64
+
+    # A join key matches rows and never contributes a value, confirmed
+    # against real polars 1.43.2:
+    # {k: Int64}.update({k: Int32}, on="k") returns {k: Int64}, while
+    # the same pair in a non-key column would widen to Int64 anyway, so
+    # this case uses a narrower receiver key to tell the two apart.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.LeftSchema, {'k': polars.datatypes.classes.Int16, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_with_left_on_and_right_on_reads_the_right_side_keys
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int16
+
+    # right_on names "kk", so "v" is an ordinary source column and
+    # promotes, confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        kk: pl.Int64
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, left_on="k", right_on="kk"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_with_no_join_key_treats_every_shared_column_as_a_source
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int16
+        v: pl.Int64
+
+    # With no on=, real polars joins on row position, so every shared
+    # column is a source and promotes, confirmed against real polars
+    # 1.43.2. "k" would keep Int16 if it were read as a join key.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_substitutes_unchecked_for_an_unmodeled_promotion
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+        d: pl.Date
+
+    # Two numbers take the supertype that polars measures for the pair:
+    # Int64 beside Float64 gives Float64. The checker does not model the
+    # supertype of a Date and a Datetime, so that column keeps its name,
+    # its data type becomes Unchecked, and every other column stays exact.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.Float64
+        d: pl.Datetime
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Float64, 'd': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: update_of_an_unchecked_column_gives_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        u: Unchecked
+        v: pl.Int64
+        l: List[Unchecked]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        u: pl.Int64
+        v: Unchecked
+        l: List[pl.Int64]
+
+    left: TypedDataFrame[LeftSchema]
+    right: TypedDataFrame[RightSchema]
+    # A shared column takes the supertype of its two sides, which an
+    # Unchecked side decides, at any depth.
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'u': astrolabe.frame.Unchecked, 'v': astrolabe.frame.Unchecked, 'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+
+- case: update_lazy_promotes_the_same_way
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        v: pl.Int16
+
+    Left = TypedLazyFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: update_falls_back_when_the_receiver_has_a_generic_remainder
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class RightSchema(Columns):
+        k: pl.Int64
+
+    # An unseen "other" column can overwrite an unseen remainder
+    # column, and neither name is known, so the whole call erases.
+    Right = TypedDataFrame[RightSchema]
+
+    left: TypedDataFrame[RightSchema, Rest]
+    right: Right
+    reveal_type(left.update(right, on="k"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: update_falls_back_when_other_is_not_passed_at_all
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+
+    # mypy reports the missing argument itself. The hook still runs,
+    # finds no "other" to read a schema from, and erases rather than
+    # inventing one.
+    Frame = TypedDataFrame[FrameSchema]
+
+    left: Frame
+    reveal_type(left.update())  # E: Missing positional argument "other" in call to "update" of "DataFrame"  [call-arg] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: update_falls_back_when_the_join_key_is_not_a_literal_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    key: str
+    reveal_type(left.update(right, on=key))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: passthrough_methods_chain_together
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.filter(pl.col("foo") > 0).sort("foo").unique().head(3)
+
+- case: filter_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.filter(pl.col("anything") > 0))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: filter_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.filter(pl.col("anything") > 0))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: a_class_derived_from_a_typed_frame_is_read_through_its_base
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    class MyFrame(TypedDataFrame[A]):
+        def custom(self) -> int:
+            return 1
+
+    class Own(TypedDataFrame[A]):
+        def select(self, *args: object, **kwargs: object) -> "Own":
+            return self
+
+    def need(df: TypedDataFrame[A]) -> None: ...
+
+    def f(m: MyFrame, o: Own) -> None:
+        out = m.select(pl.lit("x").alias("z"))
+        reveal_type(out)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'z': polars.datatypes.classes.String}, closed=True), None]"
+        t: TypedDataFrame[A] = out  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'z': String}), None]", variable has type "TypedDataFrame[A, None]")  [assignment]
+        reveal_type(m["a"])  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], polars.datatypes.classes.Int64]"
+        reveal_type(m.get_column("a"))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], polars.datatypes.classes.Int64]"
+        reveal_type(m.schema)  # N: Revealed type is "polars.schema.Schema"
+        reveal_type(m.with_columns(b=pl.col("a") + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), None]"
+        m.select("zzz")  # E: Unknown column "zzz"  [unknown-column]
+        need(m)
+        # A method that the derived class defines keeps its own type.
+        reveal_type(o.select("a"))  # N: Revealed type is "main.Own"
+        reveal_type(m.custom())  # N: Revealed type is "int"
+
+- case: fill_null_with_a_number_joins_each_numeric_column_with_its_bucket
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        i8: pl.Int8
+        f: pl.Float32
+        s: pl.String
+        t: pl.Date
+
+    df: TypedDataFrame[FrameSchema]
+    lf: TypedLazyFrame[FrameSchema]
+
+    class WideSchema(Columns):
+        u: pl.UInt16
+        i8: pl.Int16
+        f: pl.Float32
+        s: pl.String
+        t: pl.Date
+
+    class FloatSchema(Columns):
+        u: pl.Float64
+        i8: pl.Float64
+        f: pl.Float32
+        s: pl.String
+        t: pl.Date
+
+    # 300 joins each numeric column by its value. A column of another kind keeps its type.
+    wide: TypedDataFrame[WideSchema] = df.fill_null(300)
+    fraction: TypedLazyFrame[FloatSchema] = lf.fill_null(1.5)
+
+- case: fill_null_with_a_number_leaves_uint128_and_float16_alone
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt128
+        h: pl.Float16
+        i: pl.Int8
+
+    df: TypedDataFrame[FrameSchema]
+    # polars does not list UInt128 or Float16 among the kinds that a number fills.
+    reveal_type(df.fill_null(1.5))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt128, 'h': polars.datatypes.classes.Float16, 'i': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.fill_null(-1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt128, 'h': polars.datatypes.classes.Float16, 'i': polars.datatypes.classes.Int8}, closed=True), None]"
+
+- case: fill_null_with_an_expression_fills_every_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        u: pl.UInt8
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+    # pl.lit(1) is an expression, so it fills every column, the Boolean column too.
+    reveal_type(df.fill_null(pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int32, 'u': polars.datatypes.classes.UInt8, 's': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.fill_null(1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'b': polars.datatypes.classes.Boolean, 'u': polars.datatypes.classes.UInt8, 's': polars.datatypes.classes.String}, closed=True), None]"
+    # bytes fills every column through an expression too, and the column of another expression joins each one.
+    reveal_type(df.select("s").fill_null(b"x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.select("u").fill_null(pl.col("u") * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    df.fill_null(b"x")  # E: "b" has no result type at this frame's column types: failed to determine supertype of Boolean and Binary, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: fill_null_with_matches_supertype_false_fills_one_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        u: pl.UInt8
+        i: pl.Int64
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+    # An int fills only Int64 and Null, and a float only Float64 and Null.
+    reveal_type(df.fill_null(300, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int32, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.fill_null(1.5, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Float64, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+
+- case: fill_null_with_a_value_fills_its_own_kinds_and_null
+  main: |
+    from datetime import date, time
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        b: pl.Boolean
+        s: pl.String
+        c: pl.Categorical
+        d: pl.Date
+        t: pl.Time
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+    # A filled column keeps its type. A Null column takes the type of the value.
+    reveal_type(df.fill_null("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.String, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Boolean, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(date(2020, 1, 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Date, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(date.today()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Date, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(time(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Time, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+
+- case: fill_null_with_a_temporal_value_takes_the_coarser_unit
+  main: |
+    from datetime import UTC, datetime, timedelta, timezone
+    from typing import Literal
+    from zoneinfo import ZoneInfo
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+    from astrolabe.frame import Datetime, Duration
+
+    class Spans(Columns):
+        n: pl.Null
+        du: Duration[Literal["ns"]]
+        dm: Duration[Literal["ms"]]
+        dt: Datetime[Literal["ns"], None]
+
+    class Stamps(Columns):
+        n: pl.Null
+        dz: Datetime[Literal["ms"], Literal["UTC"]]
+
+    lf: TypedLazyFrame[Spans]
+    zf: TypedDataFrame[Stamps]
+    # A timedelta is a Duration('us'), and a naive datetime a Datetime('us').
+    reveal_type(lf.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'n': astrolabe.frame.Duration[Literal['us']], 'du': astrolabe.frame.Duration[Literal['us']], 'dm': astrolabe.frame.Duration[Literal['ms']], 'dt': astrolabe.frame.Datetime[Literal['ns'], None]}, closed=True), None]"
+    reveal_type(lf.fill_null(datetime(2020, 1, 1)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'n': astrolabe.frame.Datetime[Literal['us'], None], 'du': astrolabe.frame.Duration[Literal['ns']], 'dm': astrolabe.frame.Duration[Literal['ms']], 'dt': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    # The call states the time zone of the value, which a column must share.
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, tzinfo=UTC)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']], 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']], 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, tzinfo=ZoneInfo("UTC"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']], 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    zf.fill_null(datetime(2020, 1, 1, tzinfo=None))  # E: "dz" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ms', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: fill_null_on_an_open_frame_retypes_each_kind_of_the_remainder
+  main: |
+    from datetime import timedelta
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    Rest = other_columns()
+
+    wide: TypedDataFrame[FrameSchema, Rest]
+    # Each kind of the remainder that the value changes takes its own type.
+    reveal_type(wide.fill_null("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], polars.datatypes.classes.String], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]]"
+    # The precision and the scale of a Decimal, and the unit of a Duration,
+    # depend on the column, so these kinds keep only their kind.
+    reveal_type(wide.fill_null(300))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Int8]], polars.datatypes.classes.Int16], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], polars.datatypes.classes.Int32], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.UInt8]], polars.datatypes.classes.UInt16], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['u']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int8 | polars.datatypes.classes.Null | polars.datatypes.classes.UInt8]]]]]]]]]"
+    reveal_type(wide.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]], polars.datatypes.classes.Duration], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]]]]"
+    # The rules have no data type of the kind Extension, so its columns are Unchecked.
+    reveal_type(wide.fill_null(strategy="forward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]]]]"
+    reveal_type(wide.fill_null(pl.lit("x")))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: fill_null_with_a_strategy_keeps_every_type_or_reports_a_refused_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+    from astrolabe.frame import List
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        l: List[pl.Int64]
+        x: Unchecked
+
+    class Loose(Columns):
+        x: Unchecked
+
+    Flat = other_columns(none_of={pl.List, pl.Array, pl.Struct})
+    Rest = other_columns()
+
+    df: TypedDataFrame[FrameSchema]
+    flat: TypedDataFrame[Loose, Flat]
+    wide: TypedDataFrame[FrameSchema, Rest]
+    loose: TypedDataFrame[Loose, Rest]
+    # forward and backward refuse no kind, on a closed and on an open frame.
+    reveal_type(df.fill_null(strategy="forward", limit=1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'l': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.Unchecked}, closed=True), None]"
+    # min, max, zero, one and mean refuse some kinds where the column holds a
+    # null, and a fill of nulls exists to meet one, so a declared column of
+    # such a kind is an error. A Null column holds only nulls.
+    reveal_type(df.fill_null(strategy="min"))  # E: "l" has no result type at this frame's column types: the fill strategy does not accept List where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.fill_null(strategy="zero"))  # E: "n" has no result type at this frame's column types: the fill strategy does not accept Null where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(wide.fill_null(None, "backward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'l': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.Unchecked}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]]]]"
+    # A remainder that can hold a List makes the result depend on the caller.
+    # A remainder of no nested kind keeps each kind, but the kind Extension.
+    reveal_type(loose.fill_null(strategy="max"))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(flat.fill_null(strategy="max"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Loose, {'x': astrolabe.frame.Unchecked}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Flat, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Flat, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]]]]"
+
+- case: fill_null_that_polars_refuses_at_the_call_is_reported
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+    df.fill_null()  # E: fill_null() with no value and no strategy raises ValueError: must specify either a fill `value` or `strategy`  [invalid-call-shape]
+    df.fill_null(1, strategy="forward")  # E: fill_null() with a value and a strategy raises ValueError: cannot specify both `value` and `strategy`  [invalid-call-shape]
+    df.fill_null(1, limit=2)  # E: fill_null() with limit= raises ValueError: can only specify `limit` when strategy is set to 'backward' or 'forward'  [invalid-call-shape]
+    df.fill_null(strategy="mean", limit=2)  # E: fill_null() with limit= raises ValueError: can only specify `limit` when strategy is set to 'backward' or 'forward'  [invalid-call-shape]
+    df.fill_null(170141183460469231731687303715884105728)  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape]
+
+- case: fill_null_with_a_number_variable_keeps_a_column_where_every_bucket_agrees
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        f: pl.Float32
+        d: pl.Float64
+        i: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A float variable can hold any int or a float, so each filled column
+    # takes the type that every value that the checker tries gives, else
+    # Unchecked.
+    share: float = 1
+    reveal_type(df.fill_null(share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': astrolabe.frame.Unchecked, 's': polars.datatypes.classes.String}, closed=True), None]"
+    # With matches_supertype=False an int fills only Int64 and a float only
+    # Float64, and the Int64 column turns Float64 beside a value above Int64.
+    reveal_type(df.fill_null(share, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': astrolabe.frame.Unchecked, 's': polars.datatypes.classes.String}, closed=True), None]"
+
+# `min`, `max`, `zero`, `one` and `mean` refuse some kinds where the
+# column holds a null, and a fill of nulls exists to meet a null. So a
+# declared column of such a kind is an error, and a remainder that can hold
+# one makes the result depend on the caller.
+- case: fill_null_strategy_refuses_a_kind_that_cannot_give_its_value
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    class Items(Columns):
+        k: pl.Int64
+        l: List[pl.Int64]
+
+    class Counts(Columns):
+        k: pl.Int64
+
+    def run(items: TypedDataFrame[Items], opened: TypedDataFrame[Counts, Rest]) -> None:
+        items.fill_null(strategy="max")  # E: "l" has no result type at this frame's column types: the fill strategy does not accept List where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]
+        reveal_type(items.fill_null(strategy="forward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Items, {'k': polars.datatypes.classes.Int64, 'l': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+        reveal_type(opened.fill_null(strategy="mean"))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        which: Literal["min", "forward"] = "min"
+        items.fill_null(strategy=which)  # E: "l" has no result type at this frame's column types: the fill strategy does not accept List where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: fill_null_falls_back_where_the_call_does_not_fix_the_answer
+  main: |
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+    from enum import IntEnum
+    from typing import Any, Literal
+    from zoneinfo import ZoneInfo
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        u: pl.UInt8
+
+    class Flag(IntEnum):
+        A = 1
+        B = 300
+
+    Rest = other_columns()
+
+    df: TypedDataFrame[FrameSchema]
+    wide: TypedDataFrame[FrameSchema, Rest]
+    # A variable does not fix the value of a number. A column then takes the
+    # type that every value that the checker tries gives, else Unchecked.
+    count = 3
+    reveal_type(df.fill_null(count))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    share = 0.5
+    reveal_type(df.fill_null(share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Polars reads an int subclass, such as an IntEnum member, by its value.
+    flag: Flag = Flag.B
+    reveal_type(df.fill_null(flag))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A variable does not fix a date from a datetime.
+    cutoff = date(2020, 1, 1)
+    reveal_type(df.fill_null(cutoff))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.select("u").fill_null(cutoff))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # A datetime whose call does not state its time zone fills a Null column with an unknown zone.
+    reveal_type(df.fill_null(datetime.now()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A variable, a zone in a variable and a key in a variable do not fix the zone either.
+    moment = datetime(2020, 1, 1)
+    zone = ZoneInfo("UTC")
+    key = "UTC"
+    reveal_type(df.fill_null(moment))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.fill_null(datetime(2020, 1, 1, tzinfo=zone)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.fill_null(datetime(2020, 1, 1, tzinfo=ZoneInfo(key))))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.select("u").fill_null(datetime.now()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # A Decimal value and a list value fill every column, and a plain
+    # expression fills each one with a data type that the checker does not know.
+    # Each strategy of a variable keeps each type here, and each one refuses `limit=`.
+    reveal_type(df.fill_null(Decimal("1.5")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Decimal[Literal[38], Literal[1]], 'u': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    reveal_type(df.fill_null([1]))  # E: "u" has no result type at this frame's column types: failed to determine supertype of UInt8 and List(Int64), and polars raises SchemaError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int64], 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    def plain() -> pl.Expr:
+        return pl.col("u")
+
+    reveal_type(df.fill_null(plain()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    strategy: Literal["min", "max"] = "min"
+    reveal_type(df.fill_null(strategy=strategy))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(strategy=strategy, limit=1))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    exact: bool = True
+    reveal_type(df.fill_null(1, matches_supertype=exact))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # Polars refuses a Datetime column of another zone in the remainder and runs
+    # beside one of this zone, so the result depends on the caller.
+    reveal_type(wide.fill_null(datetime(2020, 1, 1, tzinfo=UTC)))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The remainder can hold a kind that the expression refuses at every data type.
+    reveal_type(wide.fill_null(pl.lit(1)))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(wide.fill_null(pl.col("zz")))  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    text: Literal["x"] = "x"
+    reveal_type(df.fill_null(text))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.String, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    either: int | str = "x"
+    reveal_type(df.fill_null(either))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    value: Any = 1
+    reveal_type(df.fill_null(value))  # E: The result of "fill_null" has no known schema: an argument is not typed, so its columns and types are unknown  [implicitly-untyped]  # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "asserted"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    df.fill_null(pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+
+- case: fill_nan_fills_the_float_columns_as_a_float_selection_does
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        h: pl.Float16
+        f: pl.Float32
+        d: pl.Float64
+        i: pl.Int64
+        s: pl.String
+        y: pl.Binary
+
+    df: TypedDataFrame[FrameSchema]
+    lf: TypedLazyFrame[FrameSchema]
+    share: float = 0.5
+    # A number keeps every float column, whatever its value.
+    reveal_type(df.fill_nan(1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'h': polars.datatypes.classes.Float16, 'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.fill_nan(2**40))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'h': polars.datatypes.classes.Float16, 'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.fill_nan(share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'h': polars.datatypes.classes.Float16, 'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.fill_nan(None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'h': polars.datatypes.classes.Float16, 'f': polars.datatypes.classes.Float32, 'd': polars.datatypes.classes.Float64, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    # Polars refuses to build an integer that no data type holds.
+    reveal_type(df.fill_nan(2**127))  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # polars reads a value as pl.lit(value), and joins each float column with it.
+    text = df.fill_nan("a")  # E: Argument 1 to "fill_nan" of "DataFrame" has incompatible type "str"; expected "Expr | int | float | None"  [arg-type]
+    reveal_type(text)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'h': polars.datatypes.classes.String, 'f': polars.datatypes.classes.String, 'd': polars.datatypes.classes.String, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(lf.fill_nan(pl.lit("a")))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'h': polars.datatypes.classes.String, 'f': polars.datatypes.classes.String, 'd': polars.datatypes.classes.String, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.fill_nan(pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'h': polars.datatypes.classes.Float64, 'f': polars.datatypes.classes.Float64, 'd': polars.datatypes.classes.Float64, 'i': polars.datatypes.classes.Int64, 's': polars.datatypes.classes.String, 'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    # A float column and a Binary value have no supertype.
+    df.fill_nan(pl.col("y").first())  # E: "h" has no result type at this frame's column types: failed to determine supertype of Float16 and Binary, and polars raises SchemaError  [unsupported-dtype-op]
+    df.fill_nan(pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+
+- case: fill_nan_on_an_open_frame_retypes_the_float_part_of_the_remainder
+  main: |
+    from typing import Any
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        y: pl.Binary
+
+    Rest = other_columns()
+    wide: TypedDataFrame[FrameSchema, Rest]
+    reveal_type(wide.fill_nan(1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'i': polars.datatypes.classes.Int64, 'y': polars.datatypes.classes.Binary}, closed=True), main.Rest]"
+    reveal_type(wide.fill_nan(pl.lit("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'i': polars.datatypes.classes.Int64, 'y': polars.datatypes.classes.Binary}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]], polars.datatypes.classes.String], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]]]]"
+    # The remainder can hold a float column, beside which a Binary value raises.
+    reveal_type(wide.fill_nan(pl.col("y").first()))  # E: The result of "fill_nan" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_nan = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(wide.fill_nan(pl.col("zz")))  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_nan = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    value: Any = 1
+    reveal_type(wide.fill_nan(value))  # E: The result of "fill_nan" has no known schema: an argument is not typed, so its columns and types are unknown  [implicitly-untyped]  # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_nan = "asserted"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # An expression that is not typed leaves the float part of the remainder
+    # `Unchecked`, and the default setting lets it pass.
+    def plain() -> pl.Expr:
+        return pl.col("i")
+    reveal_type(wide.fill_nan(plain()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'i': polars.datatypes.classes.Int64, 'y': polars.datatypes.classes.Binary}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]]]]"
+
+# A method that keeps the type of the frame passes its arguments on to polars,
+# and the call takes the parameters of the polars method.
+- case: a_method_that_keeps_the_type_takes_the_parameters_of_polars
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        x: pl.Int64
+
+    class MyFrame(TypedDataFrame[Rows]):
+        pass
+
+    def run(df: TypedDataFrame[Rows], lf: TypedLazyFrame[Rows], mine: MyFrame) -> None:
+        lf.head(1, 2)  # E: Too many arguments for "head" of "TypedLazyFrame"  [call-arg]
+        lf.head("a")  # E: Argument 1 to "head" of "TypedLazyFrame" has incompatible type "str"; expected "int"  [arg-type]
+        reveal_type(lf.head(2))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Rows, {'x': polars.datatypes.classes.Int64}, closed=True), None]"
+        df.gather_every(1, 0, 3)  # E: Too many arguments for "gather_every" of "TypedDataFrame"  [call-arg]
+        df.top_k(2, by="x", nope=True)  # E: Unexpected keyword argument "nope" for "top_k" of "TypedDataFrame"  [call-arg] # N: "top_k" defined in "polars.dataframe.frame"
+        reveal_type(df.top_k(2, by="x", reverse=True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Rows, {'x': polars.datatypes.classes.Int64}, closed=True), None]"
+        df.get_column("x").round("a")  # E: Argument 1 to "round" of "TypedSeries" has incompatible type "str"; expected "int"  [arg-type]
+        mine.tail(1, 2)  # E: Too many arguments for "tail" of "TypedDataFrame"  [call-arg]

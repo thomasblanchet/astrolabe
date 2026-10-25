@@ -1,0 +1,38 @@
+---
+title: Proof and trust
+description: What the checker does when it cannot prove a result, and how you choose what to accept.
+sidebar:
+  order: 4
+---
+
+The checker gives each result one of three answers: a proof, a fault, or no proof.
+
+- With a proof, the result has a type, and the code goes on.
+- With a fault, the checker reports an error: Polars refuses this code at run time.
+- With no proof, the checker cannot decide. The code can be correct, but nothing in the types shows it.
+
+## Why a proof can be missing
+
+A proof is missing for a reason that the code can often fix:
+
+- A column name is a variable, not a literal string.
+- A Python function computes a column, and no `return_dtype=` names its data type.
+- A reader has no schema.
+- A remainder can hold a name or not, depending on the caller.
+
+## What the checker gives without a proof
+
+The checker keeps as much as it can:
+
+- If it knows the name of a column but not its data type, the column takes `Unchecked`. The rest of the frame keeps its schema.
+- If it knows nothing about the columns, the result is the plain frame.
+
+## You choose what to accept
+
+Each reason has a level, from the reasons that a strict program can avoid to those that only a promise of the caller can remove. The setting `allow_unproven` sets the level that the checker accepts with no error. The note under such an error names the level, and the operation, that lets it pass.
+
+A program can start at the default level, and become stricter as its code states more. See [Configuration](../../reference/configuration/).
+
+## Checker gaps
+
+A checker gap is a case that the plugin does not model. The code has nothing to fix there. A gap passes at every level except `never`, and `report_checker_gaps` lists them.

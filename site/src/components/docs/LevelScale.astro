@@ -1,0 +1,84 @@
+---
+/**
+ * The levels of `allow_unproven` as a graduated rule, from the strictest to the most lenient.
+ *
+ * The default is marked, and a band shows the reasons that the default
+ * accepts: its own and those of every stricter level on the scale.
+ */
+interface Props {
+  default?: string;
+}
+
+const LEVELS = ['never', 'none', 'stated', 'omitted', 'possible', 'asserted'];
+const { default: chosen = 'omitted' } = Astro.props;
+
+const x0 = 30;
+const x1 = 670;
+const y = 34;
+const step = (x1 - x0) / (LEVELS.length - 1);
+const at = LEVELS.indexOf(chosen);
+const ticks = Array.from({ length: 5 * (LEVELS.length - 1) + 1 }, (_, k) => ({ x: x0 + (k * step) / 5, h: k % 5 === 0 ? 9 : 4 }));
+const band = { from: x0 + 2 * step, to: x0 + at * step };
+const mark = x0 + at * step;
+---
+
+<div class="level-scale not-content">
+  <div class="ends"><span>Stricter</span><span>Accepts more</span></div>
+  <svg viewBox="0 0 700 96" role="img" aria-label={`The levels of allow_unproven, from never to asserted. The default is ${chosen}.`}>
+    <line x1={x0} y1={y} x2={x1} y2={y} stroke="var(--line-strong)" stroke-width="1"></line>
+    {ticks.map((t) => <line x1={t.x} y1={y - t.h} x2={t.x} y2={y} stroke="var(--line-strong)" stroke-width="1" />)}
+    {band.to > band.from && <rect x={band.from} y={y + 6} width={band.to - band.from} height="5" rx="2.5" fill="var(--accent)" opacity="0.35" />}
+    {
+      LEVELS.map((level, i) => (
+        <text
+          x={x0 + i * step}
+          y={y + 32}
+          text-anchor="middle"
+          font-family="JetBrains Mono, monospace"
+          font-size="13"
+          fill={level === chosen ? 'var(--heading)' : 'var(--text-soft)'}
+          font-weight={level === chosen ? '500' : '400'}
+        >
+          {level}
+        </text>
+      ))
+    }
+    <circle cx={mark} cy={y} r="6.5" fill="none" stroke="var(--accent)" stroke-width="1"></circle>
+    <circle cx={mark} cy={y} r="2.6" fill="var(--accent)"></circle>
+    <text x={mark} y={y - 16} text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.2" fill="var(--accent-text)">DEFAULT</text>
+    {
+      band.to > band.from && (
+        <text x={(band.from + band.to) / 2} y={y + 54} text-anchor="middle" font-family="Instrument Sans, sans-serif" font-size="12.5" fill="var(--muted)">
+          accepted at the default
+        </text>
+      )
+    }
+  </svg>
+</div>
+
+<style>
+  .level-scale {
+    margin: 1.4rem 0 0.6rem;
+    padding: 18px 20px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--bg-raised);
+  }
+
+  .ends {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+</style>

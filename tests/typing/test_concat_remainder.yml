@@ -1,0 +1,122 @@
+# Union-by-name concat strategies over remainders: allowed when every
+# member pairing is certain, since every strategy constrains a shared
+# name. Each member's declared names must be provably absent from
+# every other member's remainder, no two remainders can share a name,
+# and the result's remainder is the union of the members' slots.
+
+- case: concat_horizontal_extend_over_disjoint_remainders_narrows_to_the_union
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    L = other_columns(without=["bar"])
+    R = other_columns(without=["foo"], disjoint_from=L)
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    reveal_type(pl.concat([left, right], how="horizontal_extend"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'bar': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
+
+- case: concat_diagonal_over_disjoint_remainders_narrows_to_the_union
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    L = other_columns(without=["bar"])
+    R = other_columns(without=["foo"], disjoint_from=L)
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    reveal_type(pl.concat([left, right], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'bar': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
+
+- case: concat_a_promise_says_nothing_about_a_suffixed_remainder
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, Suffixed, TypedDataFrame
+
+    # R is promised disjoint from L, not from L's names with a suffix:
+    # L = {y} and R = {y_x} share the name y_x after the suffix.
+    L = other_columns(without=["bar"])
+    R = other_columns(without=["foo"], disjoint_from=L)
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, Suffixed[L, Literal["_x"]]]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    pl.concat([left, right], how="horizontal_extend")  # E: This concat combines columns differently for some callers: two remainders can share a name. Declare disjoint_from= on one of them  [concat-collision] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "possible"
+
+- case: concat_align_over_prefix_disjoint_remainders_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    # No disjoint_from= at all: the two only_prefix= records already
+    # prove the remainders share no name.
+    A = other_columns(only_prefix="a_")
+    B = other_columns(only_prefix="b_")
+
+    class OneSchema(Columns):
+        k: pl.Int64
+
+    one: TypedDataFrame[OneSchema, A]
+    two: TypedDataFrame[OneSchema, B]
+    reveal_type(pl.concat([one, two], how="align"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.OneSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
+
+- case: concat_over_remainders_without_disjointness_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    L = other_columns(without=["bar"])
+    R = other_columns(without=["foo"])
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    right: TypedDataFrame[RightSchema, R]
+    pl.concat([left, right], how="horizontal_extend")  # E: This concat combines columns differently for some callers: two remainders can share a name. Declare disjoint_from= on one of them  [concat-collision] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "possible"
+
+- case: concat_beside_a_remainder_that_permits_no_column_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, NumericType, other_columns, TypedDataFrame
+
+    # A remainder whose type set is empty holds no column for any
+    # caller, so it shares no name with any other remainder.
+    L = other_columns(without=["bar"])
+    Empty = other_columns(without=["foo"], all_of=NumericType, none_of=NumericType)
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    left: TypedDataFrame[LeftSchema, L]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    right: TypedDataFrame[RightSchema, Empty]
+    reveal_type(pl.concat([left, right], how="horizontal_extend"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'bar': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.Empty, main.L]]"

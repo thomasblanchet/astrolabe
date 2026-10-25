@@ -1,0 +1,59 @@
+---
+title: Open frames
+description: Write a function that takes any frame with some columns, and give the caller back the other columns.
+sidebar:
+  order: 6
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A function can take any frame that has some columns. The caller gets the other columns back, with their names and their data types.
+
+## Declare a remainder
+
+An open frame has declared columns and a remainder. The remainder stands for the columns that the type does not name. Declare it with `other_columns()`, and write it as the second argument of `TypedDataFrame`.
+
+Below, `add_notional` accepts any frame with the columns of `Trades`, and `Rest` stands for the other columns. At each call, the checker puts the columns of the caller in place of `Rest`. A `Blotter` frame has one more column, `venue`, and the result keeps it:
+
+<Example name="open_frames_call" />
+
+The return type writes `InferredRemainder` for the remainder of the result, and the body wraps the returned value in `infer(...)`. The checker then computes the remainder from the body. If a caller passes a `notional` column, `with_columns` replaces it, so the remainder of the result never holds `notional`. In a revealed type inside the function, the checker writes that remainder as `Minus[Rest, Literal["notional"]]`. See [Inferred return types](../inferred/) and [Remainders](../../reference/remainders/).
+
+## Use only the declared columns
+
+In the body, the checker knows only the declared columns. A caller can pass a frame without `venue`, so a read of `venue` is an error:
+
+<Example name="open_frames_undeclared" />
+
+:::tip
+If the function needs `venue`, add it to the schema of `df`. Then every caller must pass a frame with `venue`.
+:::
+
+## Ask the caller for a promise
+
+A keyword of `other_columns(...)` states a promise that each caller must keep. The body can rely on it, and the checker reports a call that breaks it:
+
+<Example name="open_frames_without" />
+
+| Keyword | The promise |
+| -- | -- |
+| `without=[...]` | The remainder holds none of these names. |
+| `only=[...]` | The remainder holds only these names. |
+| `without_prefix=`, `only_prefix=` | No name starts with the prefix, or every name does. |
+| `without_suffix=`, `only_suffix=` | No name ends with the suffix, or every name does. |
+| `all_of=` | Every column has one of these data types. |
+| `none_of=` | No column has one of these data types. |
+| `disjoint_from=` | This remainder shares no name with the other remainders. |
+| `within=` | The other remainders hold every name of this one. |
+
+`all_of=` and `none_of=` take a Polars class such as `NumericType` or `pl.String`, a data type with parameters such as `pl.Datetime("us")`, or a set of them. `AnyZone` fills the zone of a `Datetime` with every zone of its time unit: `Datetime[Literal["us"], AnyZone]` is the data types that `cs.datetime("us")` picks.
+
+## Join two open frames
+
+A join keeps the columns of both frames. If both remainders can hold one name, Polars renames the right column for some callers and not for others. The checker cannot name the columns of such a result:
+
+<Example name="open_frames_join_error" />
+
+`disjoint_from=` states that the two remainders share no name. The result then holds the columns of both remainders. At the call below, `bid` comes from the left frame and `venue` from the right:
+
+<Example name="open_frames_join" />

@@ -1,0 +1,220 @@
+# Column[...]/TypedDataFrame[...]/TypedLazyFrame[...] parsing. Written
+# before the corresponding get_type_analyze_hook implementation exists.
+# This test is expected to fail (red) until plugin.py implements it.
+#
+# Column[Literal["foo"], dtype] is the only accepted spelling. A bare
+# string (Column["foo", dtype]) is rejected outright, not just discouraged.
+# It silently breaks the moment code uses it in the RHS of an implicit
+# type alias assignment (Frame = TypedDataFrame[...]), which is the
+# dominant usage pattern this library is built around. See
+# _analyze_column_type's docstring in plugin.py for the full explanation.
+
+- case: valid_concrete_schema_declaration_compiles
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+    LzFrame = TypedLazyFrame[FrameSchema]
+
+    df: Frame
+    lf: LzFrame
+
+- case: column_wrong_arity_too_few_errors
+  main: |
+    from astrolabe import Column
+
+    x: Column[  # E: Column[...] requires exactly 2 type arguments: Column[name, dtype]  [marker-arity]
+        "foo"
+    ]
+
+- case: column_wrong_arity_too_many_errors
+  main: |
+    import polars as pl
+    from astrolabe import Column
+
+    x: Column[  # E: Column[...] requires exactly 2 type arguments: Column[name, dtype]  [marker-arity]
+        "foo", pl.String, pl.Int64
+    ]
+
+- case: column_name_must_be_a_string_literal
+  main: |
+    import polars as pl
+    from astrolabe import Column
+
+    x: Column[  # E: Column[...] name argument must be a string literal, e.g. Column[Literal["foo"], ...]  [marker-arg]
+        int, pl.String
+    ]
+
+- case: column_bare_string_name_is_rejected
+  main: |
+    import polars as pl
+    from astrolabe import Column
+
+    x: Column[  # E: Column[...] name argument must be a string literal, e.g. Column[Literal["foo"], ...]  [marker-arg]
+        "foo", pl.Int64
+    ]
+
+- case: column_declaration_with_bare_decimal_narrows_as_decimal_38_0
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Decimal
+
+    # A bare, unparametrized pl.Decimal column dtype was accepted with
+    # zero validation before this fix -- real polars' own Decimal.__init__
+    # substitutes precision=38, scale=0 unconditionally when both are
+    # omitted, so this transparently defaults the same way, reusing
+    # Stage 17's own implicit-precision-38 logic.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: Decimal[Literal[38], Literal[0]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select("a")
+
+- case: column_declaration_with_bare_decimal_arithmetic_widens
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Decimal
+
+    # A bare pl.Decimal declaration defaults to Decimal[38, 0], and the
+    # addition widens the precision to the whole polars allows.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: Decimal[Literal[38], Literal[0]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("a") + pl.col("a"))
+
+- case: a_schema_class_with_a_repeated_column_name_is_refused
+  main: |
+    import polars as pl
+    from astrolabe import Columns
+
+    # A class body cannot declare one column twice: mypy refuses the
+    # repeated key.
+    class XSchema(Columns):
+        a: pl.Int64
+        a: pl.String  # E: Duplicate TypedDict key "a"  [misc]
+
+- case: frame_declaration_with_distinct_names_on_open_receiver_compiles
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), main.Rest]"
+
+- case: a_bare_temporal_column_dtype_takes_polars_defaults
+  main: |
+    from typing import Literal
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Datetime, Duration, TypedDataFrame
+
+    # `pl.Datetime()` is `Datetime("us", None)` and `pl.Duration()` is
+    # `Duration("us")`, so a bare class declares those types. A selector
+    # of one data type then picks the column.
+    class Schema(Columns):
+        t: pl.Datetime
+        d: pl.Duration
+
+    df: TypedDataFrame[Schema]
+
+    class Defaulted(Columns):
+        t: Datetime[Literal["us"], None]
+        d: Duration[Literal["us"]]
+
+    class Stamp(Columns):
+        t: Datetime[Literal["us"], None]
+
+    kept: TypedDataFrame[Defaulted] = df.select("t", "d")
+    picked: TypedDataFrame[Stamp] = df.select(cs.datetime("us", None))
+
+- case: a_decimal_or_enum_column_keeps_its_parameters_through_an_expression
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, Enum, TypedDataFrame
+
+    class Schema(Columns):
+        n: Decimal[Literal[10], Literal[2]]
+        e: Enum[Literal["a"], Literal["b"]]
+
+    df: TypedDataFrame[Schema]
+
+    class Renamed(Columns):
+        m: Decimal[Literal[10], Literal[2]]
+
+    kept: TypedDataFrame[Schema] = df.select(pl.col("n"), pl.col("e"))
+    renamed: TypedDataFrame[Renamed] = df.select(pl.col("n").alias("m"))
+
+- case: a_data_type_held_in_a_variable_reaches_a_declaration
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import TypedDataFrame, column, columns, other_columns
+
+    # A constructor call bound to a name carries its parameters into
+    # every declaration, exactly as the call written in place does.
+    Stamp = pl.Datetime("us")
+    Money = pl.Decimal(20, 4)
+    Counts = pl.List(pl.Int64)
+    Point = pl.Array(pl.Float64, 3)
+    Side = pl.Enum(["buy", "sell"])
+    Span = pl.Duration("ms")
+
+    Traded = column("traded", Stamp)
+    reveal_type(Traded)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['traded'], astrolabe.frame.Datetime[Literal['us'], None]]"
+    Cost = column("cost", Money)
+    reveal_type(Cost)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['cost'], astrolabe.frame.Decimal[Literal[20], Literal[4]]]"
+    Lots = column("lots", Counts)
+    reveal_type(Lots)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['lots'], astrolabe.frame.List[polars.datatypes.classes.Int64]]"
+    Where = column("where", Point)
+    reveal_type(Where)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['where'], astrolabe.frame.Array[polars.datatypes.classes.Float64, Literal[3]]]"
+    Way = column("way", Side)
+    reveal_type(Way)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['way'], astrolabe.frame.Enum[Literal['buy'], Literal['sell']]]"
+    Took = column("took", Span)
+    reveal_type(Took)  # N: Revealed type is "def () -> astrolabe.expr.TypedColumn[Literal['took'], astrolabe.frame.Duration[Literal['ms']]]"
+
+    # The variable keeps its own meaning, so every value use checks.
+    held: pl.DataType = Stamp
+    cast = pl.col("x").cast(Stamp)
+
+    # A schema declaration and a remainder read the same variable.
+    Schema = columns("Schema", {"traded": Stamp, "cost": Money})
+    Rest = other_columns(all_of=Stamp)
+    df: TypedDataFrame[Schema, Rest]
+    kept: TypedDataFrame[Schema] = df.select("traded", "cost")
+
+    # A constructor whose arguments are no literals records nothing,
+    # exactly as the same call written in place does, so the
+    # declaration registers nothing and its uses are no type.
+    size = 3
+    Open = pl.Array(pl.Int64, size)
+    Spot = column("spot", Open)
+
+    def priced(spot: Spot) -> None:  # E: Variable "main.Spot" is not valid as a type  [valid-type]  # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+        pass

@@ -1,0 +1,260 @@
+# The consumer sites: `select`, `with_columns`, `agg`, the bare
+# receiver's `select`, and the row filters. Every site materializes
+# each argument the same way and differs only in how it consumes the
+# output. Every expected frame is confirmed against real polars.
+
+- case: with_columns_overlays_by_output_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        f: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Int64
+        f: pl.Int64
+        doubled: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("i").alias("f"), doubled=pl.col("i") * 2)
+
+- case: agg_keeps_the_keys_and_reads_every_argument_in_the_aggregation_context
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        i: pl.Int64
+        f: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class GroupedSchema(Columns):
+        k: pl.String
+        total: pl.Int64
+        items: List[pl.Int64]
+        i: pl.Float64
+
+    grouped: TypedDataFrame[GroupedSchema] = df.group_by("k").agg(
+        total=pl.col("i").sum(), items=pl.col("i")
+    ).join(df.group_by("k").agg(pl.col("i").sum() + pl.col("f").max()), on="k")
+
+- case: an_expression_argument_reads_other_expression_arguments
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        lo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Boolean
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("i").is_between(pl.col("lo"), 3))
+    reveal_type(df.select(pl.col("i").is_between(pl.col("missing"), 3)))  # E: Unknown column "missing"  [unknown-column] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_bare_receiver_select_declares_every_need_unchecked
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.select(pl.col("a") + 1, (pl.col("s").str.len_chars()).alias("n"), "b", renamed="d", total=pl.col("a").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'n': polars.datatypes.classes.UInt32, 'b': astrolabe.frame.Unchecked, 'renamed': astrolabe.frame.Unchecked, 'total': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: filter_demands_a_boolean_predicate
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        i: pl.Int64
+        u: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.filter(pl.col("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'b': polars.datatypes.classes.Boolean, 'i': polars.datatypes.classes.Int64, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    df.filter(pl.col("i") > 1, pl.col("u"))
+    df.filter(pl.col("i").sum() > 1)
+    df.filter(pl.col("i"))  # E: Column "i" is not Boolean, cannot .filter()  [wrong-column-shape]
+    df.remove(pl.col("i") + 1)  # E: Column "i" is not Boolean, cannot .remove()  [wrong-column-shape]
+    df.lazy().filter("b").filter(i=1)
+    df.filter(pl.col("missing"))  # E: Unknown column "missing"  [unknown-column]
+    df.filter(zz=1)  # E: Unknown column "zz"  [unknown-column]
+
+- case: filter_on_an_open_frame_reports_an_undeclared_constraint
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema, Rest]
+
+    def keep(df: Frame) -> None:
+        df.filter(zz=1)  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] filter = "possible"
+
+- case: unchecked_lifting_recovers_a_constant_answer
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        u: Unchecked
+
+    # An unchecked input does not condemn the output: an operation with
+    # one possible answer recovers it, and one with several stays
+    # unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        length: pl.UInt32
+        cast: pl.Int64
+        flag: pl.Boolean
+        plus: Unchecked
+        u: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        length=pl.col("u").str.len_chars(),
+        cast=pl.col("u").cast(pl.Int64),
+        flag=pl.col("u") > 1,
+        plus=pl.col("u") + 1,
+        u=pl.col("u").abs(),
+    )
+
+- case: a_branch_argument_gives_one_frame_for_each_branch
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        f: pl.Float64
+        k: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+    flag: bool
+    other: bool
+    if flag:
+        w = pl.col("i")
+    else:
+        w = pl.col("f")
+    # Each branch gives its own frame, and a later step reads each of them.
+    reveal_type(df.select(w))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    cast = pl.col("i") if flag else pl.col("i").cast(pl.String)
+    out = df.with_columns(cast)
+    reveal_type(out.select(pl.col("i").alias("z")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'z': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'z': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(cast))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'i': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'i': astrolabe.frame.List[polars.datatypes.classes.String]}, closed=True), None]"
+    # Two branches that give one frame give it once.
+    same = pl.col("i") + 1 if flag else pl.col("i") - 1
+    reveal_type(df.select(same))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    # Three branches can be the versions that a loop leaves, so their answers merge.
+    three = pl.col("i") if flag else (pl.col("f") if other else pl.col("i").cast(pl.String))
+    reveal_type(df.select(three))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # Four arguments of two members give more choices than the operation
+    # tries, so the answers of each argument merge.
+    reveal_type(df.select(w.alias("a"), w.alias("b"), w.alias("c"), w.alias("d")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'b': astrolabe.frame.Unchecked, 'c': astrolabe.frame.Unchecked, 'd': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_yoda_equality_reads_an_int_variable_and_not_a_direct_dunder_call
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Every int compares with an Int64 column as Boolean, so an int variable
+    # needs no known value. A direct call of __eq__ comes from no comparison,
+    # so the hook cannot read the literal, and the call stays plain.
+    n: int = 2**40
+    reveal_type(df.select(n == pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+    def direct() -> None:
+        reveal_type((5).__eq__(pl.col("i")))  # N: Revealed type is "bool"
+
+- case: filter_with_unpacked_constraints_checks_nothing
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def keep(constraints: dict[str, int], df: Frame) -> None:
+        reveal_type(df.filter(**constraints))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'b': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: a_plain_chain_keeps_its_outermost_alias
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int64]
+
+    # A `pl.Expr` variable is a plain expression; the consumer keeps
+    # the outermost alias and the dtype is Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    plain: pl.Expr
+    reveal_type(df.select(plain.alias("inner").alias("outer")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'outer': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: an_opaque_chain_keeps_its_outermost_alias
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    # The outer alias wins over an inner one. A `.cast()` with no
+    # argument is mypy's own call error; the output keeps the alias
+    # under Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        outer: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("i").map_elements(str, return_dtype=pl.String).alias("inner").alias("outer"))
+    reveal_type(df.select(pl.col("i").map_elements(str, return_dtype=pl.String).cast().alias("t")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.Unchecked}, closed=True), None]" # E: Missing positional argument "dtype" in call to "cast" of "Expr"  [call-arg]
+
+
+- case: a_filter_keeps_the_schema_for_a_predicate_it_cannot_resolve
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    predicate: pl.Expr
+    reveal_type(df.filter(predicate))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'a': polars.datatypes.classes.Int64}, closed=True), None]"

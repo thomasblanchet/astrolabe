@@ -1,0 +1,340 @@
+# pl.read_csv()/pl.scan_csv(): recovering a typed frame from a declared
+# schema. Recognizes two shapes of schema= and narrows the call's result
+# accordingly, instead of plain pl.DataFrame/pl.LazyFrame:
+#
+# - schema=SomeAlias.schema, SomeAlias a module-level alias for a
+#   concrete TypedDataFrame[...]/TypedLazyFrame[...]: narrows to
+#   SomeAlias itself.
+# - schema={"foo": pl.String, ...}, a dict literal with string-literal
+#   keys: mints a fresh TypedDataFrame[...]/TypedLazyFrame[...].
+#
+# The dict-literal shape needs astrolabe.frame's Column/TypedDataFrame/
+# TypedLazyFrame TypeInfo. AstrolabePlugin.get_additional_deps
+# (plugin.py) forces every file in the build to depend on
+# astrolabe.frame/astrolabe.remainder, specifically so this always
+# resolves even when nothing in the user's own code imports astrolabe
+# — see the last case, which pins this down.
+#
+# Scope: read_csv/read_parquet/read_json/read_ndjson narrow to
+# TypedDataFrame; scan_csv/scan_parquet/scan_ndjson narrow to
+# TypedLazyFrame. Each is the exact same SchemaArgFrameHook, registered
+# once per function in _hooks/dispatch/function.py -- confirmed each of
+# these functions' own schema= parameter accepts the same two shapes
+# (a SchemaDict/SchemaDefinition dict literal, or a `.schema` alias
+# access), so no new parsing logic is needed per function. The
+# DataFrame()/LazyFrame() constructors are still an explicit non-goal.
+# A .schema access's receiver need not be a class alias: a concrete
+# instance's own .schema access narrows too, and so does a single-column
+# inline subscript with no intermediate alias name (see the cases below
+# for both). A schema= alias of the "wrong" frame kind for the call is
+# not an error: the result is always rebuilt as this call's own expected
+# kind, since read_csv()/scan_csv() both validate schema= against the
+# file at runtime the same way regardless of which alias kind named it.
+#
+# Every edge case of the shared parsing logic itself (a non-literal
+# key/value, an inline subscript, and so on) is exercised once, against
+# read_csv/scan_csv; the other five functions each get one alias-schema
+# and one dict-literal-schema case, to prove they are correctly wired to
+# the same hook, not to re-prove logic that does not vary by caller.
+#
+# Every case below falls back through the shared UntypedFallback, same
+# as every other hook. This is silent here because allow_unproven
+# defaults to "omitted", which lets a missing schema pass. This
+# sandboxed yaml can only reach that default. See
+# test_allow_unproven_integration.py for the reported and
+# per-operation-override cases, which need a real pyproject.toml.
+#
+# Every unresolvable schema= shape, named "_falls_back_to_untyped"
+# below, falls back to the plain, erased pl.DataFrame/pl.LazyFrame of
+# this call's own expected kind: read_csv()/scan_csv() have no receiver
+# of their own to preserve otherwise, the same reasoning that applies
+# to every other operation's fallback. This holds even when nothing in
+# the user's own code imports astrolabe at all, since
+# get_additional_deps (see above) guarantees TypedDataFrame/
+# TypedLazyFrame are always resolvable.
+
+- case: read_csv_with_alias_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    reveal_type(pl.read_csv("data.csv", schema=Frame.schema))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: scan_csv_with_alias_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LazyFrameSchema(Columns):
+        foo: pl.String
+
+    LazyFrame = TypedLazyFrame[LazyFrameSchema]
+
+    reveal_type(pl.scan_csv("data.csv", schema=LazyFrame.schema))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"foo": pl.String, "bar": pl.Int64}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: scan_csv_with_dict_literal_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedLazyFrame
+
+    reveal_type(pl.scan_csv("data.csv", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_instance_dtypes_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"foo": pl.String(), "bar": pl.Int64()}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_final_str_key_narrows_like_inline_literal
+  main: |
+    from typing import Final
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    # A Final-declared string variable names the column the same way
+    # the equivalent inline string literal key does (see
+    # read_csv_with_dict_literal_schema_returns_frame_type, above).
+    NAME: Final = "foo"
+
+    reveal_type(pl.read_csv("data.csv", schema={NAME: pl.Int64}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: read_csv_with_dict_variable_schema_falls_back_to_untyped
+  main: |
+    import polars as pl
+
+    schema: dict[str, pl.DataType] = {"foo": pl.String()}
+    reveal_type(pl.read_csv("data.csv", schema=schema))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: read_csv_with_dict_literal_spread_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+
+    other: dict[str, pl.DataType] = {}
+    reveal_type(pl.read_csv("data.csv", schema={**other, "foo": pl.Int64}))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: read_csv_with_dict_literal_non_literal_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    key_name: str = "foo"
+    reveal_type(pl.read_csv("data.csv", schema={key_name: pl.Int64}))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: read_csv_with_dict_literal_non_literal_value_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Unchecked, Column, TypedDataFrame
+
+    # The column's own name is still known outright even though its
+    # dtype is not: this narrows with Unchecked substituted for "foo",
+    # instead of losing the whole schema.
+    dtype_var: type[pl.DataType] = pl.Int64
+    reveal_type(pl.read_csv("data.csv", schema={"foo": dtype_var}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_partial_schema_narrows_the_resolvable_columns
+  main: |
+    import polars as pl
+    from astrolabe import Unchecked, Column, TypedDataFrame
+
+    # "bar"'s own value does not resolve to a recognizable dtype, but
+    # this must not discard "foo"'s own already-resolved dtype: each
+    # column in a schema dict literal is independent.
+    dtype_var: type[pl.DataType] = pl.Int64
+    reveal_type(pl.read_csv("data.csv", schema={"foo": pl.String, "bar": dtype_var}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: read_csv_with_schema_member_access_not_named_schema_falls_back_to_untyped
+  main: |
+    import polars as pl
+
+    class Foo:
+        columns: dict[str, pl.DataType] = {}
+
+    reveal_type(pl.read_csv("data.csv", schema=Foo.columns))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: read_csv_with_instance_schema_access_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    # A concrete receiver's own .schema access is at least as easy to
+    # resolve as the supported alias case: the receiver's own type is
+    # already the resolved frame Instance directly, no synthesized
+    # constructor signature to unwrap.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(pl.read_csv("data.csv", schema=df.schema))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_csv_with_mismatched_frame_kind_schema_narrows_to_hooks_own_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    # read_csv()/scan_csv() both validate schema= against the file at
+    # runtime the same way. The alias's own frame kind has no bearing
+    # on which kind the call itself produces: scan_csv() always narrows
+    # to TypedLazyFrame, even from a TypedDataFrame alias.
+    Frame = TypedDataFrame[FrameSchema]
+
+    narrowed: TypedLazyFrame[FrameSchema] = pl.scan_csv("data.csv", schema=Frame.schema)
+
+- case: read_csv_with_inline_subscript_schema_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema1(Columns):
+        foo: pl.String
+
+    # A frame type written as a value takes one argument, as an annotation does.
+    reveal_type(
+        pl.read_csv("data.csv", schema=TypedDataFrame[Schema1].schema)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+    )
+
+- case: read_csv_with_dict_literal_schema_narrows_even_when_astrolabe_is_never_imported
+  main: |
+    import polars as pl
+
+    # This file imports nothing from astrolabe at all. Without
+    # AstrolabePlugin.get_additional_deps forcing astrolabe.frame/
+    # astrolabe.remainder into the build graph regardless, TypedDataFrame's
+    # own TypeInfo would be unresolvable here, and this would silently
+    # fall back to the plain, erased pl.DataFrame instead.
+    reveal_type(pl.read_csv("data.csv", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_parquet_with_alias_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    reveal_type(pl.read_parquet("data.parquet", schema=Frame.schema))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: read_parquet_with_dict_literal_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_parquet("data.parquet", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: scan_parquet_with_alias_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LazyFrameSchema(Columns):
+        foo: pl.String
+
+    LazyFrame = TypedLazyFrame[LazyFrameSchema]
+
+    reveal_type(pl.scan_parquet("data.parquet", schema=LazyFrame.schema))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: scan_parquet_with_dict_literal_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedLazyFrame
+
+    reveal_type(pl.scan_parquet("data.parquet", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_json_with_alias_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    reveal_type(pl.read_json("data.json", schema=Frame.schema))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_json_with_dict_literal_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_json("data.json", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_ndjson_with_alias_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    reveal_type(pl.read_ndjson("data.ndjson", schema=Frame.schema))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_ndjson_with_dict_literal_schema_returns_frame_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_ndjson("data.ndjson", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: scan_ndjson_with_alias_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LazyFrameSchema(Columns):
+        foo: pl.String
+
+    LazyFrame = TypedLazyFrame[LazyFrameSchema]
+
+    reveal_type(pl.scan_ndjson("data.ndjson", schema=LazyFrame.schema))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: scan_ndjson_with_dict_literal_schema_returns_lazyframe_type
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedLazyFrame
+
+    reveal_type(pl.scan_ndjson("data.ndjson", schema={"foo": pl.String}))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: read_parquet_with_dict_variable_schema_falls_back_to_untyped
+  main: |
+    import polars as pl
+
+    schema: dict[str, pl.DataType] = {"foo": pl.String()}
+    reveal_type(pl.read_parquet("data.parquet", schema=schema))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: read_csv_with_open_alias_schema_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        foo: pl.String
+
+    Rest = other_columns()
+    Frame = TypedDataFrame[FrameSchema, Rest]
+
+    # The type of an open frame does not name all of its columns, so its schema cannot give the columns of the result.
+    reveal_type(pl.read_csv("data.csv", schema=Frame.schema))  # N: Revealed type is "polars.dataframe.frame.DataFrame"

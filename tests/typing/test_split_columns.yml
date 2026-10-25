@@ -1,0 +1,53 @@
+# SplitColumns[...]: naming a partition of one remainder into parts,
+# each part a class declared with other_columns(...). The frame's
+# second argument carries the split; hooks that cannot yet read a
+# split treat the slot as opaque and stay conservative.
+
+- case: split_columns_with_declared_parts_is_accepted
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, SplitColumns, TypedDataFrame
+
+    # The parts must be reachable in order: the first takes the
+    # integer columns, and the second takes what it leaves.
+    A = other_columns(all_of=pl.Int64)
+    B = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    df: TypedDataFrame[DfSchema, SplitColumns[A, B]]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.SplitColumns[main.A, main.B]]"
+
+- case: split_columns_with_a_non_declared_part_is_rejected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    df: TypedDataFrame[DfSchema, SplitColumns[int]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+- case: a_frame_accepts_at_most_one_remainder_item
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    A = other_columns()
+    B = other_columns()
+
+    df: TypedDataFrame[Keys, A, B]  # E: TypedDataFrame[...]/TypedLazyFrame[...] takes a schema class, then an optional remainder: declare the columns in a class that inherits Columns, or with columns("Name", {...}) for names that are not identifiers  [marker-arg]
+
+- case: split_columns_with_a_non_class_part_is_rejected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    df: TypedDataFrame[DfSchema, SplitColumns[None]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]

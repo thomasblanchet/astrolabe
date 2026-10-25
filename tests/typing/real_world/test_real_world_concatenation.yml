@@ -1,0 +1,120 @@
+# Real-world test: `pl.concat()`'s own `how=` variants from polars'
+# user guide, adapted to astrolabe's typed frame API. Source:
+# pola-rs/polars,
+# `docs/source/src/python/user-guide/transformations/concatenation.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The vertical/horizontal/horizontal-with-different-
+# lengths/diagonal examples are the documentation's own real teaching
+# examples (renamed `how="horizontal"` to the stable, non-deprecated
+# `how="horizontal_extend"` only for the different-lengths case, exactly
+# as the source itself does), adapted from inline `pl.DataFrame({...})`
+# literals to declared `TypedDataFrame`s.
+#
+# This maps directly onto ConcatHook's own four `how=`-by-`how=`
+# behaviors (see `_hooks/concat.py`'s own module docstring): a plain
+# `how="vertical"` concat and a bare `how="horizontal"` concat both
+# stay deferred and fall back untouched (for different, already-
+# documented reasons -- order-soundness for `"vertical"`, genuine row-
+# count ambiguity for bare `"horizontal"`), while `how="horizontal_extend"`
+# and `how="diagonal"` both narrow to a real, concrete schema. No new
+# gap was found adapting this file: every behavior below already has
+# its own dedicated coverage in `test_concat.yml`; this file only
+# restates it in the documentation's own realistic shape.
+
+- case: real_world_concatenation_vertical_is_untyped_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class V1Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    V1 = TypedDataFrame[V1Schema]
+    V2 = TypedDataFrame[V1Schema]
+
+    df_v1: V1
+    df_v2: V2
+    reveal_type(pl.concat([df_v1, df_v2], how="vertical"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: real_world_concatenation_bare_horizontal_is_untyped_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class H1Schema(Columns):
+        l1: pl.Int64
+        l2: pl.Int64
+
+    H1 = TypedDataFrame[H1Schema]
+
+    class H2Schema(Columns):
+        r1: pl.Int64
+        r2: pl.Int64
+        r3: pl.Int64
+
+    H2 = TypedDataFrame[H2Schema]
+
+    df_h1: H1
+    df_h2: H2
+    # how="horizontal" is mid-deprecation in real polars itself, and
+    # stays deferred here since it remains genuinely ambiguous about
+    # row-count handling.
+    reveal_type(pl.concat([df_h1, df_h2], how="horizontal"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: real_world_concatenation_horizontal_extend_narrows_side_by_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class H1Schema(Columns):
+        l1: pl.Int64
+        l2: pl.Int64
+
+    H1 = TypedDataFrame[H1Schema]
+
+    class H2Schema(Columns):
+        r1: pl.Int64
+        r2: pl.Int64
+        r3: pl.Int64
+
+    H2 = TypedDataFrame[H2Schema]
+
+    df_h1: H1
+    df_h2: H2
+
+    class DfHorizontalConcatSchema(Columns):
+        l1: pl.Int64
+        l2: pl.Int64
+        r1: pl.Int64
+        r2: pl.Int64
+        r3: pl.Int64
+
+    df_horizontal_concat: TypedDataFrame[DfHorizontalConcatSchema] = pl.concat([df_h1, df_h2], how="horizontal_extend")
+
+- case: real_world_concatenation_diagonal_unions_by_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class D1Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    D1 = TypedDataFrame[D1Schema]
+
+    class D2Schema(Columns):
+        a: pl.Int64
+        d: pl.Int64
+
+    D2 = TypedDataFrame[D2Schema]
+
+    df_d1: D1
+    df_d2: D2
+
+    class DfDiagonalConcatSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        d: pl.Int64
+
+    df_diagonal_concat: TypedDataFrame[DfDiagonalConcatSchema] = pl.concat([df_d1, df_d2], how="diagonal")

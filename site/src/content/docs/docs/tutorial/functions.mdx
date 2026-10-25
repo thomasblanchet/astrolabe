@@ -1,0 +1,36 @@
+---
+title: 3. Write a function that accepts other columns
+description: Declare only the columns that a function reads. A caller can pass a frame with more columns.
+sidebar:
+  order: 3
+  label: Write a function that accepts other columns
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A pipeline puts its steps in functions. A function reads some columns, and a caller often has more. This chapter declares a function that accepts any frame with the columns that it reads.
+
+## Declare the columns that the function reads
+
+A `Columns` class names columns and their data types, like a dataclass. `other_columns()` declares a remainder: the columns of a frame that its type does not name. Write it as the second argument of `TypedDataFrame`:
+
+<Example name="tut_functions_define" />
+
+`TypedDataFrame[Priced, Rest]` accepts any frame with `symbol`, `price` and `quantity`, whatever other columns it has. A frame of this type is an open frame. A frame with no remainder, like `TypedDataFrame[Turnover]`, is a closed frame: it has exactly its declared columns.
+
+## The checker checks each call
+
+<Example name="tut_functions_call" />
+
+- `blotter` has the three columns and one more, `venue`. The call passes.
+- `quotes` has no `quantity`. The checker reports the call, not the body of the function.
+
+## The body sees only the declared columns
+
+A caller can pass a frame without `venue`, so the body cannot use it:
+
+<Example name="tut_functions_body" />
+
+The remainder `Rest` can hold `venue` or not, so the checker cannot give the result a schema. The note under the error names the level of the setting `allow_unproven` at which the line passes: see [Make the checker stricter](../strictness/). To use `venue`, declare it in the class of the parameter. Then each caller must pass it.
+
+Next: [4. Let the body decide the return type](../inference/).

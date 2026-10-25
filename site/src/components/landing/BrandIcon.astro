@@ -1,0 +1,17 @@
+---
+/**
+ * The mark of Astrolabe: a ring, the offset circle of the ecliptic, the horizon and the pole.
+ */
+interface Props {
+  size?: number;
+}
+
+const { size = 30 } = Astro.props;
+---
+
+<svg aria-hidden="true" width={size} height={size} viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="44" fill="none" stroke="#d4af37" stroke-width="6"></circle>
+  <circle cx="50" cy="38.5" r="24" fill="none" stroke="#f0c75e" stroke-width="5"></circle>
+  <line x1="12" y1="50" x2="88" y2="50" stroke="#f5f3ec" stroke-width="3.5" stroke-linecap="round" opacity="0.85"></line>
+  <circle cx="50" cy="50" r="6.5" fill="#f0c75e"></circle>
+</svg>

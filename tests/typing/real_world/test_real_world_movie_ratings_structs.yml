@@ -1,0 +1,79 @@
+# Real-world test: `Struct` column patterns from polars' own user
+# guide, adapted to astrolabe's typed frame API. Source: pola-rs/polars,
+# `docs/source/src/python/user-guide/expressions/structs.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The movie-ratings dataset and its `pl.struct(...).is_duplicated()`
+# dedup/`.rank().over(...)` cases are the documentation's own real
+# teaching example, layered onto a declared `TypedDataFrame` instead of
+# an inline `pl.DataFrame({...})` literal. `.value_counts()` is
+# registered (API_METHOD_COVERAGE_REMEDIATION.md Stage 3), reusing
+# `StructBuild` directly to narrow its own dynamic, receiver-name-
+# dependent `Struct` shape.
+
+- case: real_world_ratings_value_counts_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class RatingsSchema(Columns):
+        Movie: pl.String
+        Theatre: pl.String
+        Avg_Rating: pl.Float64
+        Count: pl.Int64
+
+    Ratings = TypedDataFrame[RatingsSchema]
+
+    ratings: Ratings
+
+    class ResultSchema(Columns):
+        Theatre: Struct[Column[Literal["Theatre"], pl.String], Column[Literal["count"], pl.UInt32]]
+
+    result: TypedDataFrame[ResultSchema] = ratings.select(pl.col("Theatre").value_counts(sort=True))
+
+- case: real_world_ratings_struct_duplicated_filter_keeps_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class RatingsSchema(Columns):
+        Movie: pl.String
+        Theatre: pl.String
+        Avg_Rating: pl.Float64
+        Count: pl.Int64
+
+    Ratings = TypedDataFrame[RatingsSchema]
+
+    ratings: Ratings
+    # pl.struct(...).is_duplicated() is a plain Boolean-typed predicate:
+    # .filter() never changes the schema regardless of what the
+    # predicate itself is built from.
+    result: Ratings = ratings.filter(pl.struct("Movie", "Theatre").is_duplicated())
+
+- case: real_world_ratings_struct_rank_over_ranks_as_uint32
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class RatingsSchema(Columns):
+        Movie: pl.String
+        Theatre: pl.String
+        Avg_Rating: pl.Float64
+        Count: pl.Int64
+
+    Ratings = TypedDataFrame[RatingsSchema]
+
+    ratings: Ratings
+
+    class ResultSchema(Columns):
+        Movie: pl.String
+        Theatre: pl.String
+        Avg_Rating: pl.Float64
+        Count: pl.Int64
+        Rank: pl.UInt32
+
+    # Polars ranks a struct as UInt32 for method="dense".
+    result: TypedDataFrame[ResultSchema] = ratings.with_columns(
+        pl.struct("Count", "Avg_Rating").rank("dense", descending=True).over("Movie", "Theatre").alias("Rank")
+    )
+

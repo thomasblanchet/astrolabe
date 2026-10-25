@@ -1,0 +1,1122 @@
+# The binary operators over two columns, over a column and a bare
+# literal, and reflected with the literal on the left, plus the unary
+# dunders. Every expected frame is confirmed against real polars.
+
+- case: addition_over_two_columns_follows_the_measured_grid
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        j: pl.Int32
+        f: pl.Float64
+        b: pl.Boolean
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        ii: pl.Int64
+        ij: pl.Int64
+        i_f: pl.Float64
+        bb: pl.UInt32
+        ss: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        ii=pl.col("i") + pl.col("i"),
+        ij=pl.col("i") + pl.col("j"),
+        i_f=pl.col("i") + pl.col("f"),
+        bb=pl.col("b") + pl.col("b"),
+        ss=pl.col("s") + pl.col("s"),
+    )
+
+- case: addition_of_an_integer_and_a_string_is_an_undefined_cell
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("i") + pl.col("s"))  # E: "i" has no result type at this frame's column types: arithmetic on dtypes Int64 and String is not allowed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: the_other_arithmetic_operators
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        f: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        sub: pl.Int64
+        mul: pl.Float64
+        div: pl.Float64
+        floordiv: pl.Int64
+        mod: pl.Int64
+        pow: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        sub=pl.col("i") - pl.col("i"),
+        mul=pl.col("i") * pl.col("f"),
+        div=pl.col("i") / pl.col("i"),
+        floordiv=pl.col("i") // pl.col("i"),
+        mod=pl.col("i") % pl.col("i"),
+        pow=pl.col("i") ** 2,
+    )
+
+- case: temporal_arithmetic_carries_the_unit
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, Duration, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: pl.Date
+        t: Datetime[Literal["ms"], None]
+        dur: Duration[Literal["ms"]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        d: pl.Date
+        t: Duration[Literal["ms"]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("d") + pl.col("dur"), pl.col("t") - pl.col("t"))
+
+- case: comparisons_and_boolean_operators
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        b: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        eq: pl.Boolean
+        lt: pl.Boolean
+        both: pl.Boolean
+        either: pl.Boolean
+        one: pl.Boolean
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        eq=pl.col("i") == pl.col("i"),
+        lt=pl.col("i") < 5,
+        both=pl.col("b") & pl.col("b"),
+        either=pl.col("b") | pl.col("b"),
+        one=pl.col("b") ^ pl.col("b"),
+    )
+
+- case: a_literal_partner_reads_the_value_indexed_grid
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        j: pl.Int32
+        b: pl.Boolean
+        s: pl.String
+
+    # polars reads a literal partner by its value: a small integer keeps
+    # Int32, a Boolean plus an integer widens to Int32, a float partner
+    # gives Float64, a string partner concatenates.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Int64
+        j: pl.Int32
+        b: pl.Int32
+        s: pl.String
+        ratio: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        pl.col("i") + 1,
+        pl.col("j") + 40000,
+        pl.col("b") + 1,
+        pl.col("s") + "!",
+        ratio=pl.col("i") * 1.5,
+    )
+
+- case: a_literal_on_the_left_names_the_output_literal
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+
+    # polars names a reflected result "literal": the left operand is
+    # the literal, and the output takes its name.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(1 / pl.col("i"))
+    scaled: TypedDataFrame[NarrowedSchema] = df.select(2.0 * pl.col("i"))
+
+    class PrefixedSchema(Columns):
+        literal: pl.String
+
+    prefixed: TypedDataFrame[PrefixedSchema] = df.select("s" + pl.col("s"))
+
+- case: a_literal_on_the_left_of_a_comparison_keeps_the_column_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        i: pl.Boolean
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(5 == pl.col("i"))
+    other: TypedDataFrame[NarrowedSchema] = df.select(5 != pl.col("i"))
+
+- case: unary_dunders_serve_their_catalog_members
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        f: pl.Float64
+        b: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.select(-pl.col("i"), abs(pl.col("f")), ~pl.col("b"))
+
+    class NegatedSchema(Columns):
+        b: Unchecked
+
+    negated: TypedDataFrame[NegatedSchema] = df.select(-pl.col("b"))  # E: "b" has no result type at this frame's column types: neg does not accept Boolean, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: an_unmeasured_kind_reads_as_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        n: pl.Object
+
+    # The rules give no data type for an operation on an `Object` column,
+    # so the answer is Unchecked, not an error.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class LiftedSchema(Columns):
+        n: Unchecked
+
+    lifted: TypedDataFrame[LiftedSchema] = df.select(pl.col("n") + 1)  # E: "n" has no result type at this frame's column types: failed to determine supertype of Object and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: a_narrow_integer_keeps_its_width_beside_a_literal
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        n: pl.Int8
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    added: TypedDataFrame[FrameSchema] = df.select(pl.col("n") + 1)
+
+- case: an_integer_variable_partner_answers_where_every_int_agrees
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars picks an integer literal's width from its value, and a variable
+    # has no known value. The checker tries a few values of the type, and the
+    # operation answers where every value gives one data type, on either
+    # side, and is Unchecked where they differ.
+    n: int = 2**40
+    reveal_type(df.select(pl.col("f") + n))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(n * pl.col("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.col("i") > n))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i") + n))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").fill_null(n)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_subclass_of_int_or_float_reads_as_its_value
+  main: |
+    from enum import IntEnum
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    class Ratio(float):
+        pass
+
+    class Flag(IntEnum):
+        A = 1
+
+    # A subclass of float holds no int, so it is tried at floats alone. A
+    # subclass of int, such as an IntEnum, can hold any int.
+    ratio = Ratio(1.5)
+    flag: Flag = Flag.A
+    reveal_type(df.select(pl.col("u") + ratio))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("f") * flag))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") * flag))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: an_operand_of_a_wide_or_narrow_kind_is_measured
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+
+    # The rules cover every integer width, so an operand or an answer
+    # such as Int8 or UInt32 has a data type.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.lit(1, dtype=pl.Int8) + pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").str.len_chars() + pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").str.len_chars() > pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.UInt8) * pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").str.len_chars() + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").str.len_chars().abs()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.UInt8).abs()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.lit(1, dtype=pl.Int8) + pl.lit(1, dtype=pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    df.select(pl.col("s") - pl.col("s"))  # E: "s" has no result type at this frame's column types: sub is not defined for String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: an_operand_of_an_unmeasured_kind_gives_the_marker
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        o: pl.Object
+
+    # An `Object` operand has no supertype beside an Int64, so polars
+    # refuses the sum, and the output keeps its name under Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("o") + pl.col("i")))  # E: "o" has no result type at this frame's column types: failed to determine supertype of Object and Int64, and polars raises SchemaError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.col("o").abs()))  # E: "o" has no result type at this frame's column types: abs does not accept Object, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_struct_operand_compares_where_its_fields_admit_the_other_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, Struct, TypedDataFrame, column
+
+    Count = column("count", pl.Int64)
+    Blob = column("blob", pl.Binary)
+
+    class FrameSchema(Columns):
+        s: Struct[Count]
+        t: Struct[Count]
+        u: Struct[Blob]
+        bare: pl.Struct
+        txt: pl.String
+        n: pl.Int64
+        d: pl.Date
+        l: List[pl.Int64]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The answer is a bare Boolean, and the rule is symmetric.
+    reveal_type(df.select(pl.col("s") == pl.col("t")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s") == pl.col("txt")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s") == pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+    # The four ordered members read the struct as text, so they
+    # answer beside a String alone.
+    reveal_type(df.select(pl.col("s") < pl.col("txt")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    df.select(pl.col("s") < pl.col("n"))  # E: "s" has no result type at this frame's column types: cannot order Struct({'count': Int64}), and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    # A Binary field admits no numeric, and a Date operand admits no struct.
+    df.select(pl.col("u") == pl.col("n"))  # E: "u" has no result type at this frame's column types: could not evaluate comparison of Struct({'blob': Binary}) and Int64, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("s") == pl.col("d"))  # E: "s" has no result type at this frame's column types: could not evaluate comparison of Struct({'count': Int64}) and Date, and polars raises SchemaError  [unsupported-dtype-op]
+
+    # A List operand beside a struct raises.
+    df.select(pl.col("s") == pl.col("l"))  # E: "s" has no result type at this frame's column types: could not evaluate comparison of Struct({'count': Int64}) and List(Int64), and polars raises SchemaError  [unsupported-dtype-op]
+
+    # A struct whose fields are unnamed leaves the rule nothing to
+    # read, so the answer is the marker rather than a refusal.
+    reveal_type(df.select(pl.col("bare") == pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bare': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: a_struct_operand_compares_with_a_literal_by_its_own_text
+  main: |
+    import polars as pl
+    from astrolabe import Columns, Struct, TypedDataFrame, column
+
+    Count = column("count", pl.Int64)
+    Blob = column("blob", pl.Binary)
+
+    class FrameSchema(Columns):
+        s: Struct[Count]
+        u: Struct[Blob]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Beside a literal the rule is the one beside an expression of the
+    # literal's data type: an ordered member answers beside text alone.
+    reveal_type(df.select(pl.col("s") == 5))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s") < "a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    df.select(pl.col("s") < 5)  # E: "s" has no result type at this frame's column types: cannot order Struct({'count': Int64}), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    reveal_type(df.select(pl.col("s") == "a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") == "a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+    # A boolean literal and a Binary field beside a number both raise.
+    df.select(pl.col("s") == True)  # E: "s" has no result type at this frame's column types: could not evaluate comparison of Struct({'count': Int64}) and Boolean, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("u") == 5)  # E: "u" has no result type at this frame's column types: could not evaluate comparison of Struct({'blob': Binary}) and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: a_carrier_reaches_through_a_nest_beside_a_literal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int8]
+        ll: List[List[pl.Int8]]
+        lll: List[List[List[pl.Int8]]]
+        a: Array[pl.Int8, Literal[3]]
+        aa: Array[Array[pl.Int8, Literal[2]], Literal[3]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A literal fits itself to the innermost element, and the whole
+    # nest comes back around the answer.
+    class Kept(Columns):
+        l: List[pl.Int8]
+        ll: List[List[pl.Int8]]
+        lll: List[List[List[pl.Int8]]]
+        a: Array[pl.Int8, Literal[3]]
+        aa: Array[Array[pl.Int8, Literal[2]], Literal[3]]
+
+    kept: TypedDataFrame[Kept] = df.select(
+        pl.col("l") + 1,
+        pl.col("ll") + 1,
+        pl.col("lll") + 1,
+        pl.col("a") + 1,
+        pl.col("aa") + 1,
+    )
+
+    class Widened(Columns):
+        ll: List[List[pl.Float64]]
+        aa: Array[Array[pl.Float64, Literal[2]], Literal[3]]
+
+    widened: TypedDataFrame[Widened] = df.select(
+        pl.col("ll") + 1.5,
+        pl.col("aa") + 1.5,
+    )
+
+    # A comparison member beside a literal raises on a column with a
+    # row, whatever the literal is.
+    df.select(pl.col("l") == "a")  # E: "l" has no result type at this frame's column types: cannot cast List type (inner: Int8, to: String), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("a") != "a")  # E: "a" has no result type at this frame's column types: cannot cast Array type (inner: Int8, to: String), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("l") == 5)  # E: "l" has no result type at this frame's column types: could not evaluate comparison of List(Int8) and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("l") < 5)  # E: "l" has no result type at this frame's column types: could not evaluate comparison of List(Int8) and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: a_member_that_keeps_an_array_meets_a_literal_as_the_array
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Array[pl.Int16, Literal[1]]
+        aa: Array[Array[pl.Int8, Literal[2]], Literal[3]]
+        n: pl.Int16
+
+    df: TypedDataFrame[FrameSchema]
+
+    # `first` over an Array keeps its width, so a literal meets the
+    # answer as it meets the Array column itself.
+    reveal_type(df.select(pl.col("a").first() + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").last() * 1.5))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Float64, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(2 - pl.col("a").sort()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").shift(1) // 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").head(1) + 2**40))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int64, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").reverse() / 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Float64, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").diff() % 3))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("aa").first() + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aa': astrolabe.frame.Array[astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]], Literal[3]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").first() + pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+
+    # The answer is an Array, so a later operation reads it as one.
+    reveal_type(df.select((pl.col("a").first() + 1) * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+    reveal_type(df.select((pl.col("a").first() + 1).arr.max()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").first() * pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[1]]}, closed=True), None]"
+
+    # A comparison with a literal raises, as over the Array column.
+    df.select(pl.col("a").first() == 1)  # E: "a" has no result type at this frame's column types: could not evaluate comparison of Array(Int16, shape=(1,)) and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("a").first() + "x")  # E: "a" has no result type at this frame's column types: cannot add non-numeric inner dtypes: Int16 and String, and polars raises ComputeError  [unsupported-dtype-op]
+
+- case: a_member_that_keeps_a_container_meets_a_column_as_the_container
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Array[pl.Int16, Literal[1]]
+        l: List[pl.Int16]
+        n: pl.Int16
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars refuses these pairs over the container column, and over the
+    # answer of a member that keeps the container too.
+    df.select(pl.col("a").first() < pl.col("a"))  # E: "a" has no result type at this frame's column types: cannot order Array(Int16, shape=(1,)), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("a").first() ** pl.col("a"))  # E: "a" has no result type at this frame's column types: `pow` operation not supported for dtype `Array(Int16, shape=(1,))` as base, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("a").first() & pl.col("n"))  # E: "a" has no result type at this frame's column types: bitand is not defined for Array(Int16, shape=(1,)), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("a").first() + pl.lit("x"))  # E: "a" has no result type at this frame's column types: cannot add non-numeric inner dtypes: Int16 and String, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("l").first() < pl.col("l"))  # E: "l" has no result type at this frame's column types: cannot order List(Int16), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("l").first() + pl.lit("x"))  # E: "l" has no result type at this frame's column types: add operation not supported for List(Int16) and String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_boolean_operand_beside_a_carrier_is_unchecked_where_polars_can_fold_it
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int16]
+        a: Array[pl.Int16, Literal[2]]
+        b: pl.Boolean
+        i: pl.Int16
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The optimizer of polars folds a Boolean constant, so the run decides
+    # the answer of `|` and `&` beside a carrier on the left, and of `|`
+    # beside a carrier on the right.
+    reveal_type(df.select(pl.col("l") | False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a") & True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").first() | True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").first() & False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(True | pl.col("l").first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("l") | pl.lit(False)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+    reveal_type(df.select(pl.col("a") & (pl.col("b").first() | True)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Array[polars.datatypes.classes.Int16, Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(True) | pl.col("a").first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i") | False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int16}, closed=True), None]"
+
+    # polars folds no constant here, so these raise in every run.
+    df.select(pl.col("l") ^ False)  # E: "l" has no result type at this frame's column types: bitxor is not defined for List(Int16), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(False & pl.col("l").first())  # E: "literal" has no result type at this frame's column types: cannot unpack List(Int16) into Boolean, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("b") & pl.col("a"))  # E: "b" has no result type at this frame's column types: cannot unpack Array(Int16, shape=(2,)) into Boolean, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("l") | 0)  # E: "l" has no result type at this frame's column types: bitor is not defined for List(Int16), and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_carrier_composed_from_two_operands_compares_and_appends
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int8]
+        m: List[pl.Int16]
+        n: pl.Int16
+        a: Array[pl.Float64, Literal[3]]
+        b: Array[pl.Float64, Literal[3]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The sum of a list and a number is a list, so it compares with
+    # another list, also after a second operation.
+    reveal_type(df.select((pl.col("l") + pl.col("n")) == pl.col("m")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(((pl.col("l") + pl.col("n")) * pl.col("n")) != pl.col("m")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("b").append(pl.col("a") / pl.col("n"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Array[polars.datatypes.classes.Float64, Literal[3]]}, closed=True), None]"
+
+    # polars refuses to order two lists, composed or not.
+    df.select((pl.col("l") + pl.col("n")) < pl.col("m"))  # E: "l" has no result type at this frame's column types: cannot order List(Int16), and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_method_after_a_container_answer_reads_its_kind
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, Struct, TypedDataFrame
+    from astrolabe.frame import Column
+
+    class FrameSchema(Columns):
+        l: List[pl.Int8]
+        s: Struct[Column[Literal["f"], pl.Int8]]
+        a: Array[pl.Int8, Literal[2]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The sum of a list and a number is a list.
+    reveal_type(df.select((pl.col("l") + 1).list.len()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select((pl.col("l") + 1).is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").append(pl.col("l")).list.len()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.UInt32}, closed=True), None]"
+
+    # The element and the fields of such an answer are read at the frame.
+    reveal_type(df.select((pl.col("l") + 1).list.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select((pl.col("a") * 2).arr.max()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select((pl.col("s") + 1).struct.field("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Int8}, closed=True), None]"
+
+    # A struct beside a text prints as text, which has no field.
+    df.select((pl.col("s") + "x").struct.field("f"))  # E: "f" has no result type at this frame's column types: f, and polars raises StructFieldNotFoundError  [unsupported-dtype-op]
+
+- case: a_struct_field_that_is_a_carrier_keeps_its_own_type
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, Struct, TypedDataFrame
+    from astrolabe.frame import Column
+
+    class FrameSchema(Columns):
+        sl: Struct[Column[Literal["f"], List[pl.Int8]]]
+        sa: Struct[Column[Literal["f"], Array[pl.Int8, Literal[2]]]]
+        n: pl.Int16
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A `List` field keeps its own data type, beside a column and
+    # beside a literal alike.
+    class Kept(Columns):
+        sl: Struct[Column[Literal["f"], List[pl.Int8]]]
+
+    kept: TypedDataFrame[Kept] = df.select(pl.col("sl") + pl.col("n"))
+    listed: TypedDataFrame[Kept] = df.select(pl.col("sl") + 1)
+
+    # An `Array` field raises on either path.
+    df.select(pl.col("sa") + pl.col("n"))  # E: "sa" has no result type at this frame's column types: casting from Int16 to Array(Int8, shape=(2,)) not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("sa") + 1)  # E: "sa" has no result type at this frame's column types: casting from Int128 to Array(Int8, shape=(2,)) not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_binary_operation_with_no_operand_gives_the_plain_expression
+  main: |
+    import polars as pl
+
+    # The hook reads one operand. A call that names none is a shape it
+    # does not read, so the expression stays plain.
+    reveal_type(pl.col("i").add())  # E: Missing positional argument "other" in call to "add" of "Expr"  [call-arg] # N: Revealed type is "polars.expr.expr.Expr"
+
+- case: a_python_value_takes_the_table_of_its_bucket
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, List, Struct, TypedDataFrame
+    from astrolabe.frame import Column
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        i8: pl.Int8
+        f32: pl.Float32
+        l: List[pl.UInt64]
+        lb: List[pl.Boolean]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars reads an integer by its sign and the smallest type that holds it.
+    reveal_type(df.select(pl.col("u") + -1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.col("i8") + 200))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(200 + pl.col("i8")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.col("i8") + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+
+    # pl.lit with no data type is the plain value beside an expression.
+    reveal_type(df.select(pl.col("u") + pl.lit(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.col("f32") * pl.lit(1.5)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f32': polars.datatypes.classes.Float32}, closed=True), None]"
+    # A string literal stays a String expression.
+    df.select(pl.col("u") + pl.lit("x"))  # E: "u" has no result type at this frame's column types: arithmetic on dtypes UInt8 and String is not allowed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    # Inside a carrier, UInt64 beside a negative integer gives Float64,
+    # and a Boolean element beside True gives UInt32.
+    reveal_type(df.select(pl.col("l") - 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.UInt64]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l") + -1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(df.select(pl.col("lb") - True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'lb': astrolabe.frame.List[polars.datatypes.classes.UInt32]}, closed=True), None]"
+
+- case: a_python_temporal_or_decimal_value_is_a_literal_of_its_type
+  main: |
+    from datetime import UTC, date, datetime, time, timedelta
+    from decimal import Decimal
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: pl.Date
+        u: pl.UInt8
+        t: pl.Time
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+    day: date
+
+    # Polars reads each value as pl.lit(value), which joins as a column of its type.
+    reveal_type(df.select(pl.col("d") + timedelta(days=1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(pl.col("d") - date(2020, 1, 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(df.select(pl.col("d") < datetime(2020, 1, 1, tzinfo=UTC)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("t") == time(1, 0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': polars.datatypes.classes.Boolean}, closed=True), None]"
+    # A Decimal takes the scale of its digits.
+    reveal_type(df.select(pl.col("u") + Decimal("1.5")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("u").mul(Decimal(2))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Decimal[Literal[38], Literal[0]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") + pl.lit(1.5, dtype=pl.Decimal(38, 1))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    # On the left, the result takes the name of the literal.
+    reveal_type(df.select(timedelta(days=1) + pl.col("d")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(Decimal("1.5") * pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    # A String column has no sum with a Duration.
+    df.select(pl.col("s") + timedelta(days=1))  # E: "s" has no result type at this frame's column types: Plus not allowed on String and Duration(time_unit='us'), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    # A variable of the type date can hold a datetime, so the call stays plain.
+    reveal_type(df.select(pl.col("d") - day))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    # pl.lit reads the value in the same way.
+    reveal_type(df.select(pl.lit(timedelta(days=1))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(Decimal("1.50"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+- case: a_constant_expression_takes_the_bucket_of_its_value
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Python computes the value first, so polars reads the value 1024.
+    reveal_type(df.select(pl.col("u") + 2**10))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(2**10 + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(pl.col("u").__radd__(2**10)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(2**10 == pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") * (1 << 9)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") + 1.5 * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") - (True + 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") - 7 // 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    pl.col("u") + 2**127  # E: an integer that no polars data type holds raises InvalidOperationError: integer too large for Polars  [invalid-call-shape]
+
+    # The type stub of a power gives Any for an exponent that is not a
+    # literal. A power of literals takes the type of its value back, so the
+    # operation beside it has a hook.
+    SHIFT: Final = 9
+    HALF: Final = 0.5
+    reveal_type(2**(SHIFT + 1))  # N: Revealed type is "int"
+    reveal_type(df.select(pl.col("u") + 2**(SHIFT + 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(2**(SHIFT + 1) - pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt16}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") + 4.0**HALF))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64}, closed=True), None]"
+    # A power that gives a complex number keeps the type Any.
+    reveal_type((-8.0) ** HALF)  # N: Revealed type is "Any"
+
+    # A Final name inside a function keeps its value on its type.
+    def local(frame: TypedDataFrame[FrameSchema]) -> None:
+        bits: Final = 9
+        reveal_type(frame.select(pl.col("u") + 2**bits))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), None]"
+
+    # A parameter of a Literal type holds its value too. A Final name of a
+    # declared type keeps no value, so its bucket is not known.
+    def typed(frame: TypedDataFrame[FrameSchema], wide: Literal[300]) -> None:
+        reveal_type(frame.select(pl.col("u") + wide))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), None]"
+        reveal_type(frame.with_columns(w=wide))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8, 'w': polars.datatypes.classes.Int32}, closed=True), None]"
+        declared: Final[int] = 300
+        reveal_type(frame.select(pl.col("u") + declared))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_float_variable_answers_only_where_an_int_agrees
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    # mypy accepts an int where the code declares a float, and polars reads
+    # that int by its value. The checker tries ints and floats, and the
+    # answer holds where they agree, and is Unchecked where they differ.
+    share: float = 1
+    reveal_type(df.select(pl.col("u") + share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.col("f") * share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(share - pl.col("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") > share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") / share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(cs.float() * share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.lit(1) + share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.lit(1) < share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: a_null_literal_compares_with_a_struct_and_a_carrier
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, List, Struct, TypedDataFrame
+    from astrolabe.frame import Column
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        l: List[pl.Int8]
+        s: Struct[Column[Literal["a"], pl.Int64]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    reveal_type(df.select(pl.col("s") == pl.lit(None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s") < None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("l") == None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i8") + None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(None + pl.col("i8")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int8}, closed=True), None]"
+    # Two lists beside each other still refuse an order.
+    df.select(pl.col("l") < 1)  # E: "l" has no result type at this frame's column types: could not evaluate comparison of List(Int8) and Int32, and polars raises SchemaError  [unsupported-dtype-op]
+
+
+- case: a_struct_meets_another_kind_or_another_struct
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Struct, TypedDataFrame
+    from astrolabe.frame import Column
+
+    class FrameSchema(Columns):
+        i: pl.Int32
+        i8: pl.Int8
+        sd: Struct[Column[Literal["x"], pl.Date]]
+        t: Struct[Column[Literal["a"], pl.Int8]]
+        u: Struct[Column[Literal["z"], pl.Int16]]
+        w: Struct[Column[Literal["a"], pl.Int8], Column[Literal["b"], pl.UInt8]]
+        f: Struct[Column[Literal["z"], pl.Float32]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A Date field minus another Date is a Duration in microseconds, on either side.
+    reveal_type(df.select(pl.col("sd") - pl.col("i8")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'sd': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], astrolabe.frame.Duration[Literal['us']]]]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i") - pl.col("sd")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], astrolabe.frame.Duration[Literal['us']]]]]}, closed=True), None]"
+    # With the struct on the right, a small integer refuses the Date field.
+    df.select(pl.col("i8") - pl.col("sd"))  # E: "i8" has no result type at this frame's column types: failed to determine supertype of Int8 and Struct({'x': Date}), and polars raises SchemaError  [unsupported-dtype-op]
+
+    # Two structs pair their fields by position and keep the left names.
+    reveal_type(df.select(pl.col("t") + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int16]]]}, closed=True), None]"
+    # A right struct of one field meets every left field.
+    reveal_type(df.select(pl.col("w") * pl.col("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'w': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Float32], astrolabe.frame.Column[Literal['b'], polars.datatypes.classes.Float32]]]}, closed=True), None]"
+    # A left struct of one field beside a longer one raises.
+    df.select(pl.col("t") + pl.col("w"))  # E: "t" has no result type at this frame's column types: two fields have the same name, and polars raises DuplicateError  [unsupported-dtype-op]
+    # floordiv over two different kinds raises.
+    df.select(pl.col("t") // pl.col("u"))  # E: "t" has no result type at this frame's column types: cannot read Int16 as Int8, and polars panics  [unsupported-dtype-op]
+
+- case: a_carrier_meets_a_null_element_or_a_null_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        ln: List[pl.Null]
+        i: pl.Int8
+        l: List[pl.Int32]
+        n: pl.Null
+        lb: List[pl.Boolean]
+
+    df: TypedDataFrame[FrameSchema]
+
+    reveal_type(df.select(pl.col("ln") + pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ln': astrolabe.frame.List[polars.datatypes.classes.Int8]}, closed=True), None]"
+    reveal_type(df.select(pl.col("ln") / pl.col("ln")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ln': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l") == pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("n") != pl.col("l")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").append(pl.col("n"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
+    reveal_type(df.select(pl.col("n").append(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
+
+    # A list does not order beside Null, and these pairs raise inside a carrier.
+    df.select(pl.col("l") < pl.col("n"))  # E: "l" has no result type at this frame's column types: cannot order List(Int32), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("lb") + pl.col("n"))  # E: "lb" has no result type at this frame's column types: no numeric kernel for Boolean, and polars panics  [unsupported-dtype-op]
+    df.select(pl.col("ln") + pl.col("ln"))  # E: "ln" has no result type at this frame's column types: no numeric kernel for Null, and polars panics  [unsupported-dtype-op]
+
+- case: none_on_the_left_of_an_equality_is_a_literal
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        l: List[pl.Int8]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Python calls the reflected __eq__ of the expression, which keeps its name.
+    reveal_type(df.select(None == pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(None != pl.col("l")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(None == 1)  # N: Revealed type is "bool"
+
+- case: a_literal_on_the_left_is_the_plain_value
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        i8: pl.Int8
+        f: pl.Float32
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # pl.lit with no data type is the plain value on the left too.
+    reveal_type(df.select(pl.lit(1) + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.lit(200) + pl.col("i8")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.lit(1).add(pl.col("u"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select(pl.lit(1.5) * pl.col("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None) + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # A comparison swaps its operands.
+    reveal_type(df.select(pl.lit(1) < pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Boolean}, closed=True), None]"
+    # A string stays a String expression.
+    reveal_type(df.select(pl.lit("x") + pl.col("s")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: an_integer_beside_a_decimal_follows_the_member
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int32
+        big: pl.Int64
+        d: Decimal[Literal[20], Literal[4]]
+        n: Decimal[Literal[5], Literal[1]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Arithmetic widens the decimal to the whole precision.
+    reveal_type(df.select(pl.col("i") + pl.col("d")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Decimal[Literal[38], Literal[4]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("d") + 1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Decimal[Literal[38], Literal[4]]}, closed=True), None]"
+    # append keeps the decimal where the digits of the integer fit before its point.
+    reveal_type(df.select(pl.col("i").append(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Decimal[Literal[20], Literal[4]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("big").append(pl.col("n"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'big': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("d").append(None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Decimal[Literal[20], Literal[4]]}, closed=True), None]"
+
+- case: a_literal_in_a_variable_adapts_to_the_column_on_either_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        i8: pl.Int8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        left: pl.UInt8
+        right: pl.UInt8
+        signed: pl.Int8
+
+    # A literal with no data type adapts to the column, also from a variable.
+    e = pl.lit(1)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        left=e + pl.col("u"),
+        right=pl.col("u") + e,
+        signed=pl.col("i8") + e,
+    )
+
+- case: a_large_literal_in_a_variable_widens_a_uint8_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.UInt16
+
+    # 300 does not fit a UInt8, so the column widens to the next unsigned kind.
+    big = pl.lit(300)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + big)
+
+- case: a_float_literal_in_a_variable_keeps_a_float32_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        f: pl.Float32
+        u: pl.Float64
+
+    # A float literal keeps a Float32 column, and an integer column becomes Float64.
+    x = pl.lit(1.5)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(f=pl.col("f") * x, u=pl.col("u") + x)
+
+- case: an_aliased_literal_adapts_to_a_uint8_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.UInt8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + pl.lit(1).alias("x"))
+
+- case: a_negated_literal_keeps_the_bucket_of_its_value
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.UInt8
+
+    # The type comes from the value 1, so polars writes null for -1.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + -pl.lit(1))
+
+- case: a_negative_literal_widens_a_uint8_column_to_a_signed_kind
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.Int16
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + pl.lit(-1))
+
+- case: arithmetic_between_two_literals_beside_a_column_gives_the_run_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.UInt16
+
+    # The run folds the two literals into the literal 300, which meets the column.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + (pl.lit(200) + pl.lit(100)))
+
+- case: a_boolean_or_null_literal_beside_a_uint8_column_keeps_the_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        true: pl.UInt8
+        null: pl.UInt8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        true=pl.col("u") + pl.lit(True),
+        null=pl.col("u") + pl.lit(None),
+    )
+
+- case: a_literal_with_a_data_type_does_not_adapt_to_the_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.Int32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") + pl.lit(1, dtype=pl.Int32))
+
+- case: a_comparison_with_a_literal_in_a_variable_is_boolean
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        u: pl.Boolean
+
+    e = pl.lit(1)
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.col("u") == e)
+
+- case: a_python_number_beside_a_literal_follows_the_rule_for_two_literals
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        summed: pl.UInt8
+        reflected: pl.UInt8
+        power: pl.UInt8
+        compared: pl.Boolean
+
+    # A plain number is a dynamic literal too. The run folds the sum of two literals.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        summed=pl.col("u") + (pl.lit(1) + 1),
+        reflected=pl.col("u") + (1 + pl.lit(1)),
+        power=pl.col("u") + pl.lit(1).pow(2),
+        compared=pl.lit(1) < 2,
+    )

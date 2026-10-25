@@ -1,0 +1,446 @@
+---
+/**
+ * A checked example: code, what mypy reports on it, and the frames that it reveals.
+ *
+ * The content comes from `src/data/examples.json`, which
+ * `uv run python -m tools.site_examples` writes from a real run of mypy
+ * with the plugin over `site/examples/<name>.py`. The page never writes
+ * a message of the checker by hand.
+ */
+import catalog from '../../data/examples.json';
+import { escape, tokens } from '../../lib/python';
+
+interface Message {
+  line: number;
+  severity: 'error' | 'note';
+  text: string;
+  code: string | null;
+}
+
+interface Frame {
+  kind: string;
+  columns: [string, string, string][];
+  remainder: string | null;
+}
+
+interface Result {
+  label: string;
+  frames: Frame[];
+  revealed: string;
+}
+
+interface Entry {
+  file: string;
+  start: number;
+  lines: string[];
+  messages: Message[];
+  results: Result[];
+}
+
+interface Props {
+  name: string;
+}
+
+const { name } = Astro.props;
+const entry = (catalog as Record<string, Entry>)[name];
+if (entry === undefined) {
+  throw new Error(`No checked example named "${name}". Add site/examples/${name}.py and run uv run python -m tools.site_examples.`);
+}
+
+const errors = entry.messages.filter((message) => message.severity === 'error').length;
+const status = errors === 0 ? 'mypy: no errors' : `mypy: ${errors} ${errors === 1 ? 'error' : 'errors'}`;
+
+function message(m: Message): string {
+  const code = m.code === null ? '' : `  <span class="code">[${escape(m.code)}]</span>`;
+  return `${m.severity}: ${escape(m.text)}${code}`;
+}
+
+const MARK_LABELS: Record<string, string> = { '': 'declared', add: 'added', rem: 'from the remainder', gone: 'dropped' };
+
+function legend(result: Result): string[] {
+  const marks = new Set(result.frames.flatMap((frame) => frame.columns.map(([, , mark]) => mark)));
+  return ['', 'add', 'rem', 'gone'].filter((mark) => mark === '' || marks.has(mark));
+}
+---
+
+<div class="ex not-content">
+  <div class="ex-bar">
+    <span>{entry.file}</span>
+    <span class:list={['ex-status', { err: errors > 0 }]}><i></i>{status}</span>
+  </div>
+  <div class="ex-lines">
+    {
+      entry.lines.map((line, index) => {
+        const number = entry.start + index;
+        return (
+          <>
+            <div class="ln">
+              <b>{number}</b>
+              <span set:html={tokens(line)} />
+            </div>
+            {entry.messages
+              .filter((m) => m.line === number)
+              .map((m) => (
+                <div class:list={['ln', 'msg', m.severity === 'error' ? 'err' : 'note']}>
+                  <b aria-hidden="true">↑</b>
+                  <span set:html={message(m)} />
+                </div>
+              ))}
+          </>
+        );
+      })
+    }
+  </div>
+  {
+    entry.results.map((result) => (
+      <div class="ex-result">
+        <div class="ex-result-head">
+          <span>
+            <em>Result</em>
+            <b>{result.label}</b>
+          </span>
+          {result.frames.length > 0 && (
+            <span class="ex-legend">
+              {legend(result).map((mark) => (
+                <span>
+                  <i class={mark} />
+                  {MARK_LABELS[mark]}
+                </span>
+              ))}
+            </span>
+          )}
+        </div>
+        {result.frames.length > 0 ? (
+          result.frames.map((frame, index) => (
+            <>
+              {index > 0 && <span class="ex-or">or</span>}
+              <div class="ex-chips">
+                {frame.columns.map(([column, dtype, mark]) => (
+                  <span class:list={['ex-col', mark]}>
+                    <b>{column}</b>
+                    {dtype && <span>{dtype}</span>}
+                  </span>
+                ))}
+                {frame.remainder && (
+                  <span class="ex-col rest">
+                    <b>other columns</b>
+                    <span>{frame.remainder}</span>
+                  </span>
+                )}
+              </div>
+            </>
+          ))
+        ) : (
+          <pre class="ex-plain">{result.revealed}</pre>
+        )}
+        {result.frames.length > 0 && (
+          <details class="ex-reveal">
+            <summary>Revealed type</summary>
+            <pre>{result.revealed}</pre>
+          </details>
+        )}
+      </div>
+    ))
+  }
+</div>
+
+<style is:global>
+  .ex {
+    margin: 1.4rem 0 1.75rem;
+    border: 1px solid rgba(212, 175, 55, 0.22);
+    border-radius: 10px;
+    background: var(--navy-panel);
+    overflow: hidden;
+    box-shadow: var(--panel-shadow);
+  }
+
+  .ex-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 16px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.13);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: #9298ad;
+  }
+
+  .ex-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ex-status i {
+    display: block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #7fd9a8;
+  }
+
+  .ex-status.err i {
+    background: #f0a08a;
+  }
+
+  .ex-lines {
+    padding: 14px 0;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: var(--code-plain);
+    overflow-x: auto;
+    font-variant-ligatures: none;
+  }
+
+  .ex .ln {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr);
+    white-space: pre;
+  }
+
+  .ex .ln > b {
+    font-weight: 400;
+    color: var(--code-line-number);
+    text-align: right;
+    padding-right: 16px;
+    user-select: none;
+  }
+
+  .ex .ln > span {
+    padding-right: 18px;
+  }
+
+  .ex .ln.msg {
+    white-space: pre-wrap;
+    padding: 2px 0;
+  }
+
+  .ex .ln.err {
+    background: rgba(232, 131, 107, 0.11);
+    color: var(--code-error);
+  }
+
+  .ex .ln.err > b {
+    color: var(--code-error);
+    opacity: 0.7;
+  }
+
+  .ex .ln.note {
+    background: rgba(143, 195, 255, 0.06);
+    color: var(--code-note);
+  }
+
+  .ex .ln .code {
+    white-space: nowrap;
+  }
+
+  .ex-result {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    padding: 14px 16px 12px;
+    border-top: 1px solid rgba(212, 175, 55, 0.13);
+    background: rgba(255, 255, 255, 0.015);
+  }
+
+  .ex-result-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #9298ad;
+  }
+
+  .ex-result-head em {
+    font-style: normal;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-right: 10px;
+  }
+
+  .ex-result-head b {
+    font-weight: 500;
+    color: #f5f3ec;
+  }
+
+  .ex-or {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7d8399;
+  }
+
+  .ex-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ex-col {
+    display: inline-flex;
+    gap: 8px;
+    padding: 4px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .ex-col b {
+    font-weight: 400;
+    color: #f5f3ec;
+  }
+
+  .ex-col span {
+    color: #9298ad;
+  }
+
+  .ex-col.add {
+    border-color: #d4af37;
+    background: rgba(212, 175, 55, 0.14);
+  }
+
+  .ex-col.rem,
+  .ex-col.rest {
+    border-style: dashed;
+    border-color: rgba(201, 205, 220, 0.4);
+  }
+
+  .ex-col.rest b {
+    color: #9298ad;
+  }
+
+  .ex-col.gone {
+    border-style: dashed;
+    border-color: rgba(232, 131, 107, 0.5);
+    opacity: 0.6;
+  }
+
+  .ex-col.gone b {
+    color: #f0a08a;
+    text-decoration: line-through;
+  }
+
+  .ex-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 11.5px;
+    color: #7d8399;
+  }
+
+  .ex-legend > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .ex-legend i {
+    display: block;
+    width: 16px;
+    height: 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+  }
+
+  .ex-legend i.add {
+    border-color: #d4af37;
+    background: rgba(212, 175, 55, 0.2);
+  }
+
+  .ex-legend i.rem {
+    border-style: dashed;
+    border-color: rgba(201, 205, 220, 0.5);
+  }
+
+  .ex-legend i.gone {
+    border-style: dashed;
+    border-color: #f0a08a;
+  }
+
+  .ex-reveal {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: #9298ad;
+  }
+
+  .ex-reveal summary {
+    cursor: pointer;
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ex-reveal summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .ex-reveal summary::before {
+    content: '';
+    width: 0;
+    height: 0;
+    border-left: 5px solid #9298ad;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 0.2s;
+  }
+
+  .ex-reveal[open] summary::before {
+    transform: rotate(90deg);
+  }
+
+  .ex-reveal pre,
+  .ex-plain {
+    margin: 10px 0 2px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.22);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    color: #c9cddc;
+  }
+
+  .ex-plain {
+    margin: 0;
+  }
+
+  .tk-plain {
+    color: var(--code-plain);
+  }
+
+  .tk-keyword {
+    color: var(--code-keyword);
+  }
+
+  .tk-string {
+    color: var(--code-string);
+  }
+
+  .tk-number {
+    color: var(--code-number);
+  }
+
+  .tk-comment {
+    color: var(--code-comment);
+    font-style: italic;
+  }
+
+  .tk-call {
+    color: var(--code-call);
+  }
+
+  .tk-type {
+    color: var(--code-type);
+  }
+</style>

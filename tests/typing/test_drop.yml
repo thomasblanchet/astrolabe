@@ -1,0 +1,425 @@
+# .drop(): taking columns out of a frame, by literal names, columns and
+# selectors, which polars expands to names.
+#
+# Uses Column[Literal["foo"], dtype] (not the bare-string shorthand). See
+# the comment at the top of test_column_parsing.yml for why this is the
+# reliable spelling for alias assignments like `Frame =
+# TypedDataFrame[...]`.
+#
+# A non-literal argument falls back to the plain, erased pl.DataFrame/
+# pl.LazyFrame, not "schema unchanged": drop always removes the
+# requested column(s) on success, so "unchanged" could claim a dropped
+# column still exists.
+
+- case: drop_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.drop("bar")
+
+- case: drop_final_str_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A Final-declared string variable narrows the same way the
+    # equivalent inline string literal does (see drop_narrows_precisely,
+    # above).
+    NAME: Final = "bar"
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.drop(NAME)
+
+- case: drop_with_list_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Float64
+
+    # Real polars flattens a single list literal passed to drop()'s own
+    # *columns identically to writing out separate positional arguments.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.drop(["bar", "baz"])
+
+- case: drop_with_tuple_literal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.drop(("bar", "baz"))
+
+- case: drop_everything_succeeds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.drop("foo", "bar")
+
+- case: drop_non_literal_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "bar"
+    reveal_type(df.drop(name))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: drop_expands_columns_and_selectors_to_names
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+    from astrolabe.expr import TypedColumn
+
+    Rest = other_columns()
+
+    class FrameSchema(Columns):
+        k: pl.String
+        n: pl.Int64
+        f: pl.Float64
+
+    class Loose(Columns):
+        k: pl.String
+        u: Unchecked
+
+    def run(
+        df: TypedDataFrame[FrameSchema],
+        wide: TypedDataFrame[FrameSchema, Rest],
+        loose: TypedDataFrame[Loose],
+        c: TypedColumn[Literal["n"], pl.Int64],
+        pattern: str,
+    ) -> None:
+        reveal_type(df.drop(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String}, closed=True), None]"
+        reveal_type(df.drop(pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+        reveal_type(df.drop([cs.float(), "k"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int64}, closed=True), None]"
+        reveal_type(df.drop(c))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+        # A selector also takes the columns that it picks out of the
+        # undeclared columns.
+        reveal_type(wide.drop(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['f'] | Literal['n']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]]"
+        # A column, and a name that a selector lists, must exist whatever
+        # strict= says.
+        df.drop(cs.by_name("x"), strict=False)  # E: Unknown column "x"  [unknown-column]
+        # No name follows from an expression that is no column and no selector.
+        df.drop(pl.col("n") + 1)  # E: drop() with an expression that is not a selector raises InvalidOperationError: polars takes only the columns that a name or a selector picks. Pass a column name, pl.col(...) or a selector  [invalid-call-shape]
+        # The data decide whether cs.numeric() picks "u", and which columns
+        # a pattern from a variable picks.
+        reveal_type(loose.drop(cs.numeric()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        reveal_type(df.drop(cs.matches(pattern)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: drop_unknown_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.drop("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: drop_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.drop("bar")
+
+- case: drop_unknown_column_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    lf.drop("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: drop_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.drop("anything"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: drop_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.drop("anything"))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+# `strict=False`: real polars ignores a requested name it does not find,
+# instead of raising ColumnNotFoundError. Confirmed against real polars
+# 1.43.2, eager and lazy. So the name is not an error, and on an open
+# receiver the result says the remainder no longer holds it:
+# `Minus[Rest, Literal[name]]`.
+
+- case: drop_missing_column_with_strict_false_is_not_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.drop("missing", strict=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: drop_mixes_a_present_and_a_missing_column_under_strict_false
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.drop("bar", "missing", strict=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: drop_missing_column_with_strict_false_is_not_an_error_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    reveal_type(lf.drop("missing", strict=False))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.LzFrameSchema, {'foo': polars.datatypes.classes.String, 'bar': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: drop_with_strict_true_written_out_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.drop("missing", strict=True)  # E: Unknown column "missing"  [unknown-column]
+
+
+- case: drop_on_open_receiver_with_strict_false_removes_the_name_from_the_remainder
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    # "nope" is not declared, so the frame's remainder can hold it.
+    # Real polars drops it there and raises nothing. The result says
+    # exactly that, with no assumption about the remainder at all.
+    df: TypedDataFrame[DfSchema, Rest]
+    narrowed: TypedDataFrame[DfSchema, Minus[Rest, Literal["nope"]]] = df.drop("nope", strict=False)
+
+- case: drop_on_open_receiver_removes_a_declared_name_from_the_remainder_too
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # A declared name gets the same `Minus` node an undeclared one
+    # gets. While "b" was declared, the schema itself proved the
+    # remainder lacks "b"; the drop frees the name, so the node is
+    # what carries that proof forward.
+    df: TypedDataFrame[DfSchema, Rest]
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema, Minus[Rest, Literal["b"]]] = df.drop("b")
+
+- case: drop_on_open_receiver_leaves_an_already_excluded_name_alone
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns(without=["nope"])
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    # The declaration already proves "nope" absent, so nothing is
+    # removed and the remainder passes through unchanged.
+    df: TypedDataFrame[DfSchema, Rest]
+    narrowed: TypedDataFrame[DfSchema, Rest] = df.drop(
+        "nope", strict=False
+    )
+
+- case: drop_on_open_receiver_with_strict_true_still_errors_for_an_undeclared_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    # Real polars raises for every caller whose own remainder does not
+    # hold "nope", so the default mode is still an error.
+    df: TypedDataFrame[DfSchema, Rest]
+    df.drop("nope")  # E: Column "nope" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] drop = "possible"
+
+- case: drop_with_a_runtime_strict_value_narrows_only_for_declared_names
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # `strict` is a plain variable here, so which of the two modes runs
+    # is not knowable. For a declared name both modes agree on the whole
+    # result, so the call still narrows. For an undeclared one they do
+    # not, and neither mode's own diagnostic can be claimed, so the
+    # call erases with no error.
+    df: TypedDataFrame[DfSchema, Rest]
+    flag: bool
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema, Minus[Rest, Literal["b"]]] = df.drop("b", strict=flag)
+    reveal_type(df.drop("nope", strict=flag))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # An expression in place of the flag gives no value either.
+    also_narrowed: TypedDataFrame[NarrowedSchema, Minus[Rest, Literal["b"]]] = df.drop("b", strict=not flag)
+
+- case: drop_frees_a_declared_name_for_with_row_index
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # Real polars accepts this and gives Schema({'k': UInt32, ...}),
+    # measured against polars 1.43.2. While "k" was declared, the
+    # schema itself proved the remainder does not hold it. The drop
+    # frees the name, and the `Minus` node it mints keeps that proof
+    # for with_row_index to read back.
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.drop("k").with_row_index("k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.UInt32}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['k']]]"
+
+- case: dropping_two_names_in_sequence_merges_into_one_minus_node
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # Removing two names one at a time and removing both at once give
+    # one canonical remainder, so the two-step spelling shows the same
+    # single `Minus` node the one-step spelling would.
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.drop("a").drop("b"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['a'] | Literal['b']]]"

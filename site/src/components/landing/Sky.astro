@@ -1,0 +1,84 @@
+---
+/**
+ * The background of the landing page: a disc of stars that turns around Polaris.
+ *
+ * The disc scrolls with the page, and the stars fade out below the fold, so
+ * the page under the first screen is one plain color. Place it first inside
+ * an element with `position: relative`. The figures turn with this disc: see
+ * `Figures.astro`, which uses the same turn.
+ */
+import { DISC_RADIUS, TURN_SECONDS, tileUri, twinkles } from '../../lib/sky';
+
+const disc = `background-image:url("${tileUri()}");animation-duration:${TURN_SECONDS}s`;
+const size = 2 * DISC_RADIUS;
+---
+
+<div class="sky" aria-hidden="true">
+  <div class="sky-disc" style={`${disc};width:${size}px;height:${size}px;left:calc(50% + ${280 - DISC_RADIUS}px);top:${345 - DISC_RADIUS}px`}>
+    {
+      twinkles().map((t) => (
+        <i
+          class="sky-dot"
+          style={`left:${t.left}px;top:${t.top}px;width:${t.size}px;height:${t.size}px;opacity:${t.opacity};animation-delay:-${t.delay}s`}
+        />
+      ))
+    }
+  </div>
+</div>
+
+<style>
+  .sky {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1040px;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 640px, transparent 1040px);
+    mask-image: linear-gradient(to bottom, #000 640px, transparent 1040px);
+  }
+
+  .sky-disc {
+    position: absolute;
+    background-repeat: repeat;
+    background-size: 1400px 1000px;
+    animation-name: sky-turn;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+    will-change: transform;
+  }
+
+  .sky-dot {
+    position: absolute;
+    display: block;
+    border-radius: 50%;
+    background: var(--star);
+    transform: translate(-50%, -50%);
+    animation: twinkle 4s ease-in-out infinite;
+  }
+
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes sky-turn {
+    to {
+      transform: rotate(-360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sky-disc,
+    .sky-dot {
+      animation: none;
+    }
+  }
+</style>

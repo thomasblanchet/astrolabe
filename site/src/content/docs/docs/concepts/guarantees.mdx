@@ -1,0 +1,31 @@
+---
+title: What a type guarantees
+description: What a clean check proves, and the facts of the data that no type can see.
+sidebar:
+  order: 5
+---
+
+A type is a claim about the schema of a frame. If the checker reports no error, at a level that accepts no reason, it proves this: when the frames at the boundaries have their declared schemas, each operation in the code finds each column that it reads, with a data type that it accepts.
+
+The condition matters. The checker proves that the code agrees with the declared types. It does not prove that a file agrees with them. Check each frame from outside once, where it enters the program, with `check_schema`. See [Runtime checks](../../guides/runtime/).
+
+## What no type can see
+
+A type holds the names and the data types of the columns. It does not hold:
+
+- **The values.** Nulls, ranges, duplicates and the values of a literal are facts of the data. A cast that can fail for some values, for example a too large integer, passes the checker.
+- **The number of rows.** `df.select(pl.col("b"), pl.col("a").head(2))` sets two columns of different lengths. Polars raises unless the lengths agree, and they agree only by chance.
+- **The order of the columns.** A vertical stack, for example `vstack`, combines frames by the position of their columns. The checker compares the names and the data types, and Polars still raises for frames whose columns stand in another order.
+
+## Limits of the design
+
+Some limits are a choice, and the design accepts them:
+
+- A join that can rename a column for some callers is an error, not a result. One promise on the declaration removes it.
+- A node that a later release of Polars adds reads as `Unchecked`, under the name of the expression.
+- An expression over several columns whose data types the checker does not know gives `Unchecked`.
+- With `--num-workers`, mypy caches a module before it checks the function bodies. A call from another module can then get the placeholder of an inferred return type on a warm run. A serial run is exact.
+
+## Behaviors of Polars
+
+Some calls are valid for the type stubs of Polars, and Polars refuses them at run time. Some answers depend on a rule of Polars that no statement captures. The checker works around each one that it knows. See [Polars behaviors](../../spec/polars-behaviors/).

@@ -1,0 +1,34 @@
+---
+title: Loading data
+description: Give each reader a schema, so the frame is typed from its first line.
+sidebar:
+  order: 2
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A frame that a reader gives is typed when the call names its schema. Without a schema, Polars finds the data types from the data when the code runs, and the checker cannot know them.
+
+## Readers with a schema
+
+The readers and the constructors that take `schema=` give a typed frame. A `scan_*` reader gives a typed lazy frame:
+
+<Example name="loading_readers" />
+
+These calls read a schema: `pl.read_csv`, `pl.scan_csv`, `pl.read_parquet`, `pl.scan_parquet`, `pl.read_json`, `pl.read_ndjson`, `pl.scan_ndjson`, `pl.from_dict`, `pl.from_dicts`, `pl.from_records` and `pl.from_numpy`.
+
+## Write the schema in the call
+
+The checker reads a dict literal in the call. It does not follow a dict that a variable holds, so the frame stays plain:
+
+<Example name="loading_variable" />
+
+To use one schema in several places, declare a `Columns` class, and check each frame at the boundary with `check_schema`. See [Runtime checks](../runtime/).
+
+## Select from a plain frame
+
+A plain frame has no known columns. A `select` on it states the names that the code needs. The checker gives a typed frame with those names: each column keeps the data type of its `.cast(...)`, or takes `Unchecked`:
+
+<Example name="loading_elevate" />
+
+The setting `elevate_untyped_select` controls this, and it is on by default. See [Configuration](../../reference/configuration/).

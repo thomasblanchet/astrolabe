@@ -1,0 +1,25 @@
+---
+title: 5. Declare reusable expressions
+description: Give a function that takes and returns expressions a type that states the columns it reads.
+sidebar:
+  order: 5
+  label: Declare reusable expressions
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A function can take expressions and return an expression. A declaration states which columns such an expression reads, and which data type it gives.
+
+## Declare the column that an expression reads
+
+`column("price", pl.Float64)` declares an expression that reads the column `price` as a `Float64`, and gives it back:
+
+<Example name="tut_declarations" />
+
+- The first call passes: `pl.col("price")` fits the declaration.
+- `pl.col("quantity")` reads another column.
+- `pl.col("price").sum()` combines the rows into one value, and the declaration works row by row.
+
+The checker checks the declaration where you write it, and the fit of each argument at each call. See [Declare expression types](../../guides/expression-types/) for expressions that read several columns, aggregations and literals.
+
+Next: [6. Check the data at run time](../runtime/).

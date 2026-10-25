@@ -1,0 +1,227 @@
+# The remainder marker spellings in annotation position: Both[...],
+# Suffixed[...], Prefixed[...], Retyped[...] over declared remainder
+# classes. Each case checks two things at once: the annotation
+# round-trips through the codec unchanged, and the slot's record
+# answers absence questions the way the marker's meaning demands.
+
+- case: both_remainder_proves_a_name_absent_when_every_part_proves_it
+  main: |
+    import polars as pl
+    from astrolabe import Both, Columns, other_columns, TypedDataFrame
+
+    A = other_columns(without=["idx"])
+    B = other_columns(without=["idx"])
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # A union holds a column only where one part holds it, so a name
+    # every part excludes is provably absent from the whole union.
+    df: TypedDataFrame[DfSchema, Both[A, B]]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
+    reveal_type(df.with_row_index("idx"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'idx': polars.datatypes.classes.UInt32, 'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
+
+- case: both_remainder_with_one_silent_part_proves_nothing
+  main: |
+    import polars as pl
+    from astrolabe import Both, Columns, other_columns, TypedDataFrame
+
+    A = other_columns(without=["idx"])
+    B = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # B can hold "idx", so the union can too: the add is wrong for at
+    # least one caller and the call falls back.
+    df: TypedDataFrame[DfSchema, Both[A, B]]
+    df.with_row_index("idx")  # E: with_row_index would produce duplicate column "idx"  [duplicate-column]
+
+- case: suffixed_remainder_proves_every_unsuffixed_name_absent
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, Suffixed, TypedDataFrame
+
+    A = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # Every column of the remainder ends in "_r" after the rename, so
+    # any name that does not is provably absent, with no requirement
+    # on A at all.
+    df: TypedDataFrame[DfSchema, Suffixed[A, Literal["_r"]]]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[main.A, Literal['_r']]]"
+    reveal_type(df.with_row_index("plain"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'plain': polars.datatypes.classes.UInt32, 'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[main.A, Literal['_r']]]"
+
+- case: prefixed_remainder_proves_every_unprefixed_name_absent
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, Prefixed, TypedDataFrame
+
+    A = other_columns(without=["idx"])
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # The prefix argument comes first, matching the marker's own
+    # parameter order. A name without the prefix is provably absent; a
+    # prefixed name A does not exclude can still hide in the
+    # remainder, so it stays a duplicate error.
+    df: TypedDataFrame[DfSchema, Prefixed[Literal["p_"], A]]
+    reveal_type(df.with_row_index("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.UInt32, 'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Prefixed[Literal['p_'], main.A]]"
+    df.with_row_index("p_x")  # E: with_row_index would produce duplicate column "p_x"  [duplicate-column]
+
+- case: drop_over_a_suffixed_remainder_translates_the_name_through_the_rename
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, Suffixed, TypedDataFrame
+
+    A = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # Removing "x_r" after the rename removes the column that was "x"
+    # before it, so the minus lands inside the suffix, on the base
+    # name.
+    df: TypedDataFrame[DfSchema, Suffixed[A, Literal["_r"]]]
+    reveal_type(df.drop("x_r", strict=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[astrolabe.remainder.Minus[main.A, Literal['x']], Literal['_r']]]"
+
+- case: drop_of_an_unsuffixed_name_leaves_a_suffixed_remainder_alone
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, Suffixed, TypedDataFrame
+
+    A = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # No base column becomes "plain" after the rename, and dropping
+    # the declared "k" removes nothing from the remainder either: both
+    # filters keep every remainder column, so the slot passes through
+    # unchanged.
+    df: TypedDataFrame[DfSchema, Suffixed[A, Literal["_r"]]]
+    reveal_type(df.drop("plain", strict=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[main.A, Literal['_r']]]"
+    reveal_type(df.drop("k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Suffixed[main.A, Literal['_r']]]"
+
+- case: retyped_remainder_keeps_the_names_and_their_proofs
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, Retyped, TypedDataFrame
+
+    A = other_columns(without=["idx"])
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # Retyping changes no name, so everything provably absent from A
+    # is still provably absent.
+    df: TypedDataFrame[DfSchema, Retyped[A, pl.UInt32]]
+    reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Retyped[main.A, polars.datatypes.classes.UInt32]]"
+    reveal_type(df.with_row_index("idx"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'idx': polars.datatypes.classes.UInt32, 'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Retyped[main.A, polars.datatypes.classes.UInt32]]"
+
+- case: a_retyped_remainder_retypes_each_column_of_a_closed_caller
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import Retyped
+
+    Rest = other_columns()
+
+    class Keys(Columns):
+        k: pl.String
+
+    class Wide(Columns):
+        k: pl.String
+        v: pl.Int64
+        s: pl.String
+
+    def floats(df: TypedDataFrame[Keys, Rest]) -> TypedDataFrame[Keys, Retyped[Rest, pl.Float64]]:
+        raise NotImplementedError
+
+    closed: TypedDataFrame[Wide]
+    # A closed caller binds the remainder to its columns, and the result
+    # gives each of them the new data type.
+    reveal_type(floats(closed))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 's': polars.datatypes.classes.Float64, 'v': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_result_over_a_remainder_that_no_argument_binds_keeps_its_declared_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+    from astrolabe.remainder import Both
+
+    Rest = other_columns()
+    Other = other_columns()
+
+    class Keys(Columns):
+        k: pl.String
+
+    def unbound(df: TypedDataFrame[Keys, Rest]) -> TypedDataFrame[Keys, Other]:
+        raise NotImplementedError
+
+    def joined(df: TypedDataFrame[Keys, Rest]) -> TypedDataFrame[Keys, Both[Rest, Other]]:
+        raise NotImplementedError
+
+    # No argument binds Other, so the checker cannot put the remainder of
+    # the caller in its place, and the result keeps the declared type.
+    def g(wide: TypedDataFrame[Keys, Rest]) -> None:
+        reveal_type(unbound(wide))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.String}, closed=True), main.Other]"
+        reveal_type(joined(wide))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.Other, main.Rest]]"
+
+- case: drop_over_a_retyped_remainder_keeps_the_retype_outermost
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, Retyped, TypedDataFrame
+
+    A = other_columns()
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    # The canonical form fixes the slot order with the retype on the
+    # outside, so the minus folds under it.
+    df: TypedDataFrame[DfSchema, Retyped[A, pl.UInt32]]
+    reveal_type(df.drop("k"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Minus[main.A, Literal['k']], polars.datatypes.classes.UInt32]]"
+
+- case: a_written_union_is_spelled_in_canonical_order
+  main: |
+    import polars as pl
+    from astrolabe import Both, Columns, other_columns, TypedDataFrame
+
+    # A union has no order, so the written order is not kept: the two
+    # annotations below are one type.
+    A = other_columns(only_prefix="a_")
+    B = other_columns(only_prefix="b_")
+
+    class Schema1(Columns):
+        k: pl.Int64
+
+    def swap(df: TypedDataFrame[Schema1, Both[B, A]]) -> TypedDataFrame[Schema1, Both[A, B]]:
+        reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema1, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
+        return df
+
+- case: an_effect_over_a_union_is_spelled_on_each_operand
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, other_columns, Suffixed, TypedDataFrame
+
+    # A suffix over a union and the union of the suffixed operands
+    # denote the same columns, so they are one type (T-10).
+    A = other_columns(only_prefix="a_")
+    B = other_columns(only_prefix="b_")
+
+    class DfSchema(Columns):
+        k: pl.Int64
+
+    def same(
+        df: TypedDataFrame[DfSchema, Suffixed[Both[A, B], Literal["_x"]]],
+    ) -> TypedDataFrame[DfSchema, Both[Suffixed[A, Literal["_x"]], Suffixed[B, Literal["_x"]]]]:
+        reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.DfSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Suffixed[main.A, Literal['_x']], astrolabe.remainder.Suffixed[main.B, Literal['_x']]]]"
+        return df

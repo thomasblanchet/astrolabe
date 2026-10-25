@@ -1,0 +1,28 @@
+---
+title: Lazy frames
+description: Type a lazy frame, and read the two data types that a column can have before collect().
+sidebar:
+  order: 5
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A lazy frame runs nothing until `collect()`. `TypedLazyFrame` is the lazy form of `TypedDataFrame`, and every operation has the same checks.
+
+## Scan, transform, collect
+
+A `scan_*` reader with a schema gives a typed lazy frame. `collect()` gives the typed frame:
+
+<Example name="lazy_scan" />
+
+`lazy()` turns a `TypedDataFrame` into a `TypedLazyFrame`, and keeps the schema.
+
+## Two data types for one column
+
+Polars plans each later step at the data type that `collect_schema()` shows. For a few expressions, that data type differs from the data type of the data. Such a column holds both, as `Planned[run, planner]`, and `collect()` gives the run type:
+
+<Example name="lazy_planned" />
+
+The cumulative sum gives a `Decimal(38, 2)`, and Polars plans it as a `Decimal(10, 2)`. A later step of the lazy frame works at the planned type.
+
+To give the column one data type, cast it: `pl.col("price").cum_sum().cast(pl.Decimal(38, 2))`.

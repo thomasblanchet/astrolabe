@@ -1,0 +1,53 @@
+---
+/**
+ * The landing page.
+ *
+ * The sky sits behind the whole page and scrolls with it. The figures sit in
+ * the content column, so they stay over the hero at every width.
+ */
+import Layout from '../layouts/Layout.astro';
+import Compare from '../components/landing/Compare.astro';
+import Features from '../components/landing/Features.astro';
+import Figures from '../components/landing/Figures.astro';
+import Footer from '../components/landing/Footer.astro';
+import Hero from '../components/landing/Hero.astro';
+import Install from '../components/landing/Install.astro';
+import Nav from '../components/landing/Nav.astro';
+import Sky from '../components/landing/Sky.astro';
+import Tour from '../components/landing/Tour.astro';
+import Why from '../components/landing/Why.astro';
+---
+
+<Layout>
+  <div class="page">
+    <Sky />
+    <div class="column">
+      <Figures />
+      <Nav />
+      <main>
+        <Hero />
+        <Why />
+        <Tour />
+        <Features />
+        <Compare />
+        <Install />
+      </main>
+      <Footer />
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .page {
+    position: relative;
+    overflow-x: clip;
+  }
+
+  .column {
+    position: relative;
+    z-index: 1;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+</style>

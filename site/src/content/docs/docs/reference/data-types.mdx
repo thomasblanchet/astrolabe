@@ -1,0 +1,41 @@
+---
+title: Data types
+description: How a type annotation names each Polars data type, its parameters and its families.
+sidebar:
+  order: 3
+---
+
+A field of a `Columns` class is a type annotation, and a type annotation cannot hold a call such as `pl.Datetime("us")`. A data type with parameters therefore has a marker. At run time, `.schema` turns each marker into the Polars data type.
+
+## Markers
+
+| Polars data type | In a type annotation |
+| -- | -- |
+| `pl.Int64`, `pl.String`, `pl.Boolean` and the other data types with no parameter | The class itself: `pl.Int64` |
+| `pl.Datetime("us")` | `Datetime[Literal["us"], None]` |
+| `pl.Datetime("us", "UTC")` | `Datetime[Literal["us"], Literal["UTC"]]` |
+| `pl.Duration("ms")` | `Duration[Literal["ms"]]` |
+| `pl.Decimal(10, 2)` | `Decimal[Literal[10], Literal[2]]`. The precision can be `None`, for the largest precision. |
+| `pl.Enum(["buy", "sell"])` | `Enum[Literal["buy"], Literal["sell"]]`. The categories belong to the type, in order. |
+| `pl.List(pl.Int64)` | `List[pl.Int64]` |
+| `pl.Array(pl.Int64, 3)` | `Array[pl.Int64, Literal[3]]` |
+| `pl.Struct({"bar": pl.Int64})` | `Struct[Column[Literal["bar"], pl.Int64]]`. Each argument is one field. |
+
+Import the markers from `astrolabe`. `Decimal` and `Enum` have the same names as classes of the standard library. A file that needs both can write `decimal.Decimal` and `enum.Enum`.
+
+A name can hold a data type, as in `Stamp = pl.Datetime("us")`. A declaration that takes a data type as an argument reads it. A field cannot, because mypy refuses a variable in a type annotation. For a field, write a type alias of the marker: `Stamped = Datetime[Literal["us"], None]`.
+
+## Special data types
+
+| Name | Meaning |
+| -- | -- |
+| `Unchecked` | The data type of a column whose name is known and whose data type is not. Each later operation accepts it, and an operation on it gives `Unchecked` again. A field can declare it. |
+| `Planned[Run, Planner]` | A column of a lazy frame that Polars plans at another data type than its data. `collect()` gives `Run`. See [Lazy frames](../../guides/lazy/). |
+| `AnyZone` | In the zone of a `Datetime`, every zone of the unit, the naive one included. |
+| `EveryDType` | In a declaration, a read that accepts any data type. |
+
+## Families
+
+A family is a set of data types, as Polars defines it. `all_of=`, `none_of=`, `some_column(...)` and `OfType[...]` accept a family. `astrolabe` exports the families of Polars: `NumericType`, `IntegerType`, `SignedIntegerType`, `UnsignedIntegerType`, `FloatType`, `TemporalType` and `NestedType`.
+
+A region of a declaration is a set of kinds: data types with their parameters taken away. See [Declare expression types](../../guides/expression-types/).

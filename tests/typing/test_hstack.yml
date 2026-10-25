@@ -1,0 +1,298 @@
+# .hstack(): merging another frame's columns in, side by side. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# `pl.DataFrame.hstack(columns: list[Series] | DataFrame, *, in_place:
+# bool = False) -> DataFrame` (confirmed via inspect.signature; no
+# `pl.LazyFrame.hstack` exists). A `TypedDataFrame`-typed `columns`
+# argument is resolved statically in full. An inline literal list is
+# also recovered, one column per item, by reading each item's own
+# resolved type: `SeriesConstructorHook` (typed_series_constructor.py)
+# narrows a `pl.Series(name, ...)` call to a real `TypedSeries[Literal[name],
+# dtype]`, so this works the same whether that call is written inline or
+# bound to its own local variable first -- with no explicit `dtype=`,
+# the column's own dtype substitutes Unchecked: there is still no way to
+# infer one from `values`' own inferred type. A `list[Series]` passed as
+# a pre-declared variable still falls back to the plain, erased
+# pl.DataFrame: a `list[X]`'s own declared/inferred type does not
+# preserve each element's own precise type the way reading the literal
+# list's own items directly does, the same "cannot check what we cannot
+# see" discipline as everywhere else. `in_place=True` mutates and
+# returns the same receiver object at runtime, but its result schema is
+# identical to `in_place=False`'s (confirmed empirically), so it needs
+# no special handling. A name collision between the two frames raises a
+# real `DuplicateError` at runtime, confirmed by actually running it.
+
+- case: hstack_merges_columns_from_another_typed_dataframe
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = left.hstack(right)
+
+- case: hstack_in_place_has_the_same_result_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        bar: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = left.hstack(right, in_place=True)
+
+- case: hstack_duplicate_column_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.hstack(right)  # E: hstack would produce duplicate column "foo"  [duplicate-column]
+
+- case: hstack_with_series_variable_list_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # A pre-declared list[Series] variable carries no static per-item
+    # column name: unlike the inline literal list case below, there is
+    # no pl.Series(...) call left in the AST at the .hstack() call site
+    # to read a name off at all.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    series_list: list[pl.Series] = [pl.Series("bar", ["x"])]
+    reveal_type(df.hstack(series_list))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: hstack_with_inline_series_list_narrows_names_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # An inline literal list of pl.Series(name, values) calls, right at
+    # the call site, keeps each one's own literal name in the AST: the
+    # names are known even with no pl.Series constructor facade (still
+    # deferred) to infer a dtype from values' own inferred type.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.hstack([pl.Series("bar", ["x"])])
+
+- case: hstack_with_inline_series_list_reports_duplicate_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.hstack([pl.Series("foo", ["x"])])  # E: hstack would produce duplicate column "foo"  [duplicate-column]
+
+- case: hstack_with_variable_bound_inline_series_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # The actual bug this fix targets: a pl.Series(...) call assigned to
+    # a plain variable first, then referenced in the literal list, used
+    # to fall back to the plain, erased pl.DataFrame -- the old
+    # AST-walking recognition only ever saw the call written inline.
+    # SeriesConstructorHook now masks the constructor call's own return
+    # type directly, so the variable's own inferred type already
+    # carries the parametrized TypedSeries marker.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s = pl.Series("bar", ["x"])
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.hstack([s])
+
+- case: hstack_with_inline_series_call_via_non_ref_callee_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # The item is a call through a lambda expression, not a bare
+    # pl.Series reference -- but reading the item's own resolved type
+    # narrows it the same as any other pl.Series(...) call, inline or
+    # not: there is no AST shape left to match against at all.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        x: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.hstack([(lambda: pl.Series("x", [1]))()])
+
+- case: hstack_with_inline_non_series_item_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # A literal list is recognized, but an item whose own resolved type
+    # does not narrow to TypedSeries at all still falls back, matching
+    # every other unresolvable-item shape.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.hstack([1]))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: List item 0 has incompatible type "int"; expected "Series"  [list-item]
+
+- case: hstack_with_inline_series_call_with_no_arguments_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # pl.Series() with no arguments at all is a real, valid call (name
+    # defaults to None), but has no positional argument to read a
+    # literal name off.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.hstack([pl.Series()]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: hstack_with_missing_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.hstack())  # E: Missing positional argument "columns" in call to "hstack" of "DataFrame"  [call-arg] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: hstack_with_plain_dataframe_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    other: pl.DataFrame
+    reveal_type(df.hstack(other))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: hstack_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    other: pl.DataFrame
+    reveal_type(df.hstack(other))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: hstack_on_an_open_frame_needs_the_new_names_free
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        b: pl.Int64
+
+    class OtherSchema(Columns):
+        z: pl.Int64
+
+    Rest = other_columns()
+    NoZ = other_columns(without=["z"])
+    NoB = other_columns(without=["b"])
+
+    def widen(
+        df: TypedDataFrame[FrameSchema, Rest],
+        free: TypedDataFrame[FrameSchema, NoZ],
+        other: TypedDataFrame[OtherSchema],
+        other_open: TypedDataFrame[OtherSchema, NoB],
+    ) -> None:
+        reveal_type(free.hstack([pl.Series("z", [1], dtype=pl.Int64)]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int64, 'z': polars.datatypes.classes.Int64}, closed=True), main.NoZ]"
+        reveal_type(free.hstack(other))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int64, 'z': polars.datatypes.classes.Int64}, closed=True), main.NoZ]"
+        df.hstack([pl.Series("z", [1], dtype=pl.Int64)])  # E: This hstack combines columns differently for some callers: another frame's remainder can hold "z". Exclude the names with without=/without_prefix=  [concat-collision]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] hstack = "possible"
+        free.hstack(other_open)  # E: This hstack combines columns differently for some callers: two remainders can share a name. Declare disjoint_from= on one of them  [concat-collision]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] hstack = "possible"
+
+- case: hstack_with_an_argument_whose_columns_cannot_be_read_falls_back
+  main: |
+    from typing import Any
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    other: TypedDataFrame[Any]  # E: TypedDataFrame[...]/TypedLazyFrame[...] takes a schema class, then an optional remainder: declare the columns in a class that inherits Columns, or with columns("Name", {...}) for names that are not identifiers  [marker-arg]
+    reveal_type(df.hstack(other))  # N: Revealed type is "polars.dataframe.frame.DataFrame"

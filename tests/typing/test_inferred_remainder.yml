@@ -1,0 +1,200 @@
+# InferredRemainder: a frame return type whose declared columns are a
+# promise, and whose remainder comes from the values that the body
+# returns through infer(...).
+#
+# Scope:
+# - Each value must hold every declared column with a data type that
+#   agrees. The check runs at the infer(...) call.
+# - The call gets the union of the values. A value keeps its other
+#   declared columns, and its remainder is written in the caller's terms:
+#   a closed caller gets closed frames, an open caller gets its own
+#   remainder.
+# - InferredRemainder, InferredDataFrame, InferredLazyFrame and
+#   InferredExpr anywhere but the function's own return type are an
+#   [infer-misuse] error.
+
+- case: a_closed_caller_gets_closed_frames_with_its_own_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredRemainder, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class Sales(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+
+    class WithTotal(Columns):
+        price: pl.Float64
+        total: pl.Float64
+
+    class Full(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+        note: pl.String
+
+    def add_total(
+        df: TypedDataFrame[Sales, Rest],
+        keep_qty: bool,
+    ) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        total = (pl.col("price") * pl.col("qty")).alias("total")
+        if keep_qty:
+            return infer(df.with_columns(total))
+        return infer(df.with_columns(total).drop("qty"))
+
+    full: TypedDataFrame[Full]
+    reveal_type(add_total(full, True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64, 'total': polars.datatypes.classes.Float64, 'note': polars.datatypes.classes.String}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'total': polars.datatypes.classes.Float64, 'note': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: an_open_caller_gets_its_own_remainder
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredRemainder, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+    Mine = other_columns()
+
+    class Sales(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+
+    class WithTotal(Columns):
+        price: pl.Float64
+        total: pl.Float64
+
+    def add_total(
+        df: TypedDataFrame[Sales, Rest],
+        keep_qty: bool,
+    ) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        total = (pl.col("price") * pl.col("qty")).alias("total")
+        if keep_qty:
+            return infer(df.with_columns(total))
+        return infer(df.with_columns(total).drop("qty"))
+
+    sales: TypedDataFrame[Sales, Mine]
+    result = add_total(sales, False)
+    reveal_type(result)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64, 'total': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Minus[main.Mine, Literal['total']]] | astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'total': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Minus[main.Mine, Literal['qty'] | Literal['total']]]"
+    # Every member holds the declared columns.
+    reveal_type(result.select("price", "total"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'total': polars.datatypes.classes.Float64}, closed=True), None]"
+    # The second member has no "qty".
+    result.select("qty")  # E: Unknown column "qty"  [unknown-column]
+
+- case: a_value_must_hold_each_declared_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredRemainder, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+    NoTotal = other_columns(without=["total"])
+
+    class Sales(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+
+    class WithTotal(Columns):
+        price: pl.Float64
+        total: pl.Float64
+
+    def from_closed(df: TypedDataFrame[Sales]) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        return infer(df)  # E: Missing required column "total"  [missing-column]
+
+    def from_remainder_without_it(
+        df: TypedDataFrame[Sales, NoTotal],
+    ) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        return infer(df)  # E: Missing required column "total"  [missing-column]
+
+    def from_remainder_that_may_hold_it(
+        df: TypedDataFrame[Sales, Rest],
+    ) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        return infer(df)  # E: Column "total" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "possible"
+
+    def with_another_dtype(
+        df: TypedDataFrame[Sales, Rest],
+    ) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        return infer(df.with_columns(pl.col("qty").alias("total")))  # E: Column "total" has the wrong dtype  [wrong-dtype]
+
+- case: a_lazy_frame_infers_its_remainder_too
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredRemainder, other_columns, TypedLazyFrame
+
+    Rest = other_columns()
+    Mine = other_columns()
+
+    class Sales(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+
+    class WithTotal(Columns):
+        price: pl.Float64
+        total: pl.Float64
+
+    def add_total(lf: TypedLazyFrame[Sales, Rest]) -> TypedLazyFrame[WithTotal, InferredRemainder]:
+        return infer(lf.with_columns((pl.col("price") * 2).alias("total")))
+
+    lf: TypedLazyFrame[Sales, Mine]
+    reveal_type(add_total(lf))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'price': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64, 'total': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Minus[main.Mine, Literal['total']]]"
+
+- case: a_plain_value_makes_the_call_a_plain_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredRemainder, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class Sales(Columns):
+        price: pl.Float64
+        qty: pl.Int64
+
+    class WithTotal(Columns):
+        price: pl.Float64
+        total: pl.Float64
+
+    def rebuilt(df: TypedDataFrame[Sales, Rest]) -> TypedDataFrame[WithTotal, InferredRemainder]:
+        return infer(pl.DataFrame({"price": [1.0], "total": [2.0]}))
+
+    sales: TypedDataFrame[Sales, Rest]
+    reveal_type(rebuilt(sales))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: an_inferred_return_type_outside_the_return_position_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import (
+        Columns,
+        InferredDataFrame,
+        InferredExpr,
+        InferredLazyFrame,
+        InferredRemainder,
+        other_columns,
+        TypedDataFrame,
+    )
+
+    Rest = other_columns()
+
+    class Sales(Columns):
+        price: pl.Float64
+
+    def takes_frame(df: InferredDataFrame) -> None: ...
+    def takes_nested(frames: list[InferredLazyFrame], e: InferredExpr) -> None: ...
+    def takes_remainder(df: TypedDataFrame[Sales, InferredRemainder]) -> None: ...
+    def takes_optional(df: InferredDataFrame | None, pair: tuple[InferredExpr, int]) -> None: ...
+    def returns_nested() -> list[InferredDataFrame]:
+        return []
+
+    sales: TypedDataFrame[Sales, Rest]
+    takes_frame(sales)  # E: InferredDataFrame can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse]
+    takes_nested([], pl.col("price"))  # E: InferredLazyFrame can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse] # E: InferredExpr can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse]
+    takes_remainder(sales)  # E: InferredRemainder can only be used as a function's own return type: declare the remainder of a parameter with other_columns() instead  [infer-misuse]
+    takes_optional(None, (pl.col("price"), 1))  # E: InferredDataFrame can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse] # E: InferredExpr can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse]
+    returns_nested()  # E: InferredDataFrame can only be used as a function's own return type: use an explicit TypeVar for a generic parameter instead  [infer-misuse]
+
+    held: TypedDataFrame[Sales, InferredRemainder]
+    held.select("price")  # E: InferredRemainder can only be used as a function's own return type: declare the remainder of a parameter with other_columns() instead  [infer-misuse]
+
+- case: a_recursive_alias_in_a_signature_holds_no_inferred_return_type
+  main: |
+    type Json = int | str | list[Json] | dict[str, Json]
+
+    def size(value: Json) -> int:
+        return 1
+
+    reveal_type(size([1, {"a": "b"}]))  # N: Revealed type is "int"

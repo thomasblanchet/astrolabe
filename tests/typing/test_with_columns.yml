@@ -1,0 +1,619 @@
+# .with_columns(): adding or replacing columns in a frame. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# Only these shapes are recognized: pl.col(name), optionally wrapped in
+# .alias(new_name) and/or .cast(dtype)
+# (either order), plus the bare-string shorthand (`with_columns("foo")` is
+# valid polars for `with_columns(pl.col("foo"))`), and a binary arithmetic
+# expression between two such operands (see test_arithmetic_expr.yml).
+# Anything else falls back to the plain, erased pl.DataFrame/pl.LazyFrame
+# (no error), the same "cannot check what we cannot see" discipline as
+# select/drop/rename
+# -- never to "schema unchanged", since with_columns can genuinely add or
+# overwrite a column on success, so "unchanged" could claim a column
+# exists, or has a dtype, that it will not.
+#
+# **named_exprs is also recognized: the keyword is always the final
+# output name, overriding any .alias(...) inside the value, confirmed
+# against real polars (df.with_columns(bar=pl.col("foo").alias("ignored"))
+# produces "bar", not "ignored"). A named and positional argument are
+# resolved together, in call order (positional first, then named, matching
+# real polars' own column ordering), so a name collision between the two
+# is caught by the same duplicate check either way.
+
+- case: with_columns_cast_overwrites_in_place
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64))
+
+- case: with_columns_alias_appends_new_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").alias("baz"))
+
+- case: with_columns_alias_then_cast_changes_name_and_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").alias("baz").cast(pl.Float64))
+
+- case: with_columns_double_alias_keeps_the_outermost_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        b: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").alias("a").alias("b"))
+
+- case: with_columns_double_cast_keeps_the_outermost_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64).cast(pl.String))
+
+- case: with_columns_double_cast_on_non_literal_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # pl.col(name) with a non-literal name never narrows to TypedExpr
+    # (ColHook only recognizes a literal string), so the whole chain,
+    # including both .cast(...) steps, is parsed by ColumnExpr's own
+    # AST walk instead. That walk still requires a literal source name
+    # to build a column, so it gives up and the whole call falls back.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "bar"
+    reveal_type(df.with_columns(pl.col(name).cast(pl.Float64).cast(pl.String)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_columns_cast_then_alias_changes_name_and_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64).alias("baz"))
+
+- case: with_columns_bare_string_shorthand_is_a_noop
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    same: TypedDataFrame[FrameSchema] = df.with_columns("bar")
+
+- case: with_columns_multiple_expressions_evaluated_against_original_schema
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64), pl.col("bar").alias("baz"))
+
+- case: with_columns_unknown_source_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_columns(pl.col("missing").alias("baz"))  # E: Unknown column "missing"  [unknown-column]
+
+- case: with_columns_bare_string_unknown_source_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # Tier 4 Milestone 1: pl.col("missing").alias("baz") above now goes
+    # through the new TypedExpr path (both pl.col and .alias are
+    # hooked), so this bare-string-shorthand case is kept to still
+    # exercise ColumnExpr's own AST-walking UnknownColumnError report
+    # directly, since a bare string's own static type is plain str,
+    # never TypedExpr.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_columns("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: with_columns_duplicate_output_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_columns(  # E: with_columns would produce duplicate column "x"  [duplicate-column]
+        pl.col("foo").alias("x"), pl.col("bar").alias("x")
+    )
+
+- case: with_columns_of_an_opaque_member_overwrites_the_name_under_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # rolling_map's output is decided by the function it takes, so the
+    # column comes back under its own name as Unchecked, overwriting
+    # the receiver's "bar" in place.
+    reveal_type(df.with_columns(pl.col("bar").rolling_map(lambda s: s.sum(), 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.String, 'bar': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: with_columns_of_an_aliased_opaque_member_adds_the_alias_under_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # rolling_map's output is Unchecked, and .alias("x") names it: the
+    # frame gains one Unchecked column beside the receiver's own.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        x: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").rolling_map(lambda s: s.sum(), 2).alias("x"))
+
+- case: with_columns_sort_identity_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: pl.Int64
+
+    # .sort() is a pure identity for every dtype, confirmed empirically:
+    # it never changes a column's own dtype.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: pl.Int64
+        sorted: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").sort().alias("sorted"))
+
+- case: with_columns_sort_by_identity_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: pl.Int64
+        key: pl.String
+
+    # .sort_by(by) is a pure identity for every dtype too: sorting by an
+    # arbitrary other expression never changes the receiver's own dtype.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar: pl.Int64
+        key: pl.String
+        sorted: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").sort_by("key", descending=True).alias("sorted"))
+
+- case: with_columns_non_literal_alias_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    new_name: str = "baz"
+    reveal_type(df.with_columns(pl.col("bar").alias(new_name)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_columns_bare_generic_non_literal_name_operand_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+    from astrolabe.expr import TypedExpr
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    # e's own Name is a still-unbound TypeVar, not a literal string: a
+    # bare positional argument has no forced_name to rescue it, so
+    # there is no output name at all to build a result column with.
+    def f[N: str](df: Frame, e: TypedExpr[N, pl.Int64]) -> None:
+        reveal_type(df.with_columns(e))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_columns_cast_with_strict_kwarg_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # Tier 4 Milestone 1: CastOnTypedExprHook reads .cast(dtype)'s own
+    # positional dtype argument directly, so a keyword-only strict=
+    # alongside it no longer breaks recognition -- confirmed narrowing
+    # correctly in place, where the old AST-walking ColumnExpr/DtypeExpr
+    # parsing used to fall back to untyped for this exact shape.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64, strict=False))
+
+- case: with_columns_variable_expression_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # Tier 4 Milestone 1: the motivating case behind the whole redesign.
+    # TypedExpr carries its real type through an ordinary variable
+    # assignment via mypy's own inference, no tracing needed -- this
+    # used to fall back to untyped under the AST-walking resolver
+    # chain, since `expr` is a bare NameExpr at the .with_columns()
+    # call site with no visible pl.col(...) shape to re-parse.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    expr = pl.col("bar").alias("baz")
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(expr)
+
+- case: with_columns_named_expr_appends_with_forced_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(baz=pl.col("bar"))
+
+- case: with_columns_named_expr_overwrites_in_place
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(bar=pl.col("bar").cast(pl.Float64))
+
+- case: with_columns_named_expr_ignores_inner_alias
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(baz=pl.col("bar").alias("ignored"))
+
+- case: with_columns_named_expr_yoda_comparison_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    # A literal-on-the-left ("Yoda condition") equality comparison now
+    # narrows too: `YodaComparisonOpHook` (`_hooks/typed_expr_yoda.py`)
+    # hooks int's own __eq__ directly, making `5 == pl.col("bar")`
+    # itself a real TypedExpr. The `renamed=` keyword still overrides
+    # the comparison's own output name ("bar"), the same as it would
+    # for any other TypedExpr value.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+        renamed: pl.Boolean
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(renamed=5 == pl.col("bar"))
+
+- case: with_columns_mixes_positional_and_named_exprs
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.col("bar").cast(pl.Float64), baz=pl.col("bar"))
+
+- case: with_columns_named_expr_unknown_source_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_columns(baz=pl.col("missing"))  # E: Unknown column "missing"  [unknown-column]
+
+- case: with_columns_named_expr_duplicates_positional_output_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.with_columns(  # E: with_columns would produce duplicate column "x"  [duplicate-column]
+        pl.col("foo").alias("x"), x=pl.col("bar")
+    )
+
+- case: with_columns_kwargs_unpacking_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    mapping: dict[str, pl.Expr] = {}
+    reveal_type(df.with_columns(**mapping))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_columns_cast_overwrites_in_place_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.String
+        bar: pl.Float64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.with_columns(pl.col("bar").cast(pl.Float64))
+
+- case: with_columns_unknown_source_column_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.String
+        bar: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    lf.with_columns(pl.col("missing").alias("baz"))  # E: Unknown column "missing"  [unknown-column]
+
+- case: with_columns_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.with_columns(pl.col("anything")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: with_columns_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.with_columns(pl.col("anything")))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: with_columns_on_a_remainder_only_receiver_builds_the_first_column_fresh
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, other_columns
+
+    Rest = other_columns()
+
+    # The receiver declares no columns at all, so the new column's
+    # Column[...] TypeInfo resolves fresh, and the output name still
+    # leaves the remainder.
+    df: TypedDataFrame[Rest]
+    reveal_type(df.with_columns(pl.lit(True).alias("flag")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'flag': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['flag']]]"

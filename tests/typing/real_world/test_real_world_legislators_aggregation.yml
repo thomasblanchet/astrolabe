@@ -1,0 +1,228 @@
+# Real-world test: `.group_by()`/`.agg()` patterns from polars' own user
+# guide, adapted to astrolabe's typed frame API. Source: pola-rs/polars,
+# `docs/source/src/python/user-guide/expressions/aggregation.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The "US legislators" dataset and its basic/conditional/
+# nested aggregation queries are the documentation's own real teaching
+# example, adapted from a lazy `pl.read_csv(url)` (no static schema) to
+# a declared `TypedDataFrame`; the aggregation logic itself is preserved.
+#
+# Two cases are NOT from the source file: `real_world_legislators_when_then_era_bucket`
+# (branching via `pl.when`/`.then`/`.otherwise`, which the source
+# document does not happen to use) and
+# `real_world_legislators_generic_party_filter` (a Rest-generic helper
+# function, astrolabe's own generic-frame mechanism, which has no
+# equivalent in plain polars at all). Both extend the same dataset with
+# operations this project also needs covered by a realistic example, and
+# are original to this test file, not adapted from any external source.
+
+- case: real_world_legislators_basic_group_by_agg_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class LegislatorsSchema(Columns):
+        first_name: pl.String
+        last_name: pl.String
+        gender: pl.String
+        state: pl.String
+        party: pl.String
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    dataset: Legislators
+
+    class ResultSchema(Columns):
+        first_name: pl.String
+        len: pl.UInt32
+        gender: List[pl.String]
+        last_name: pl.String
+
+    # Short for `pl.col("last_name").first()` in the source docs; kept
+    # as the equivalent method form since JoinHook/GroupByHook only
+    # recognize `pl.col(name).<reducer>()`, not the `pl.first(name)`
+    # function shorthand.
+    result: TypedDataFrame[ResultSchema] = (
+        dataset.group_by("first_name")
+        .agg(pl.len(), pl.col("gender"), pl.col("last_name").first())
+        .sort("len", descending=True)
+        .limit(5)
+    )
+
+- case: real_world_legislators_conditional_party_counts_narrow
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LegislatorsSchema(Columns):
+        state: pl.String
+        party: pl.String
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    dataset: Legislators
+
+    class ResultSchema(Columns):
+        state: pl.String
+        anti: pl.UInt32
+        pro: pl.UInt32
+
+    # A comparison expression, reduced by .sum() -- the same
+    # reducer-dtype table applies to its own computed Boolean dtype as
+    # to a bare column's, per test_group_by.yml's own Tier 4 Slice 2.
+    result: TypedDataFrame[ResultSchema] = (
+        dataset.group_by("state")
+        .agg(
+            (pl.col("party") == "Anti-Administration").sum().alias("anti"),
+            (pl.col("party") == "Pro-Administration").sum().alias("pro"),
+        )
+        .sort("pro", descending=True)
+        .limit(5)
+    )
+
+- case: real_world_legislators_nested_group_by_survives_filter_sort_limit
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LegislatorsSchema(Columns):
+        state: pl.String
+        party: pl.String
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    dataset: Legislators
+
+    class CountedSchema(Columns):
+        state: pl.String
+        party: pl.String
+        count: pl.UInt32
+
+    Counted = TypedDataFrame[CountedSchema]
+    # filter()/sort()/limit() don't change the schema -- the narrowed
+    # type from group_by().agg() must survive all three unchanged.
+    result: Counted = (
+        dataset.group_by("state", "party")
+        .agg(pl.len().alias("count"))
+        .filter(
+            (pl.col("party") == "Anti-Administration")
+            | (pl.col("party") == "Pro-Administration")
+        )
+        .sort("count", descending=True)
+        .limit(5)
+    )
+
+- case: real_world_legislators_helper_function_narrows_via_inferred_expr
+  main: |
+    import polars as pl
+    from astrolabe import Columns, infer, InferredExpr, TypedDataFrame
+
+    class LegislatorsSchema(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    # The source docs build this exact expression inside a reusable
+    # get_name() helper and call it from three different aggregations.
+    # Every hook here reads an argument's own mypy-inferred type, never
+    # its AST shape, so a helper function narrows through .agg() the
+    # same as any other TypedExpr-producing expression -- but only once
+    # it is actually declared to return one. The computed expression's
+    # own real inferred type is a deferred marker tree with no stable,
+    # user-spellable name (BinOp[Literal['+'], ...]), so writing that
+    # type out by hand (or bridging the gap with typing.cast, this
+    # test's own former approach) is exactly the kind of thing a
+    # human can get wrong without mypy ever catching it -- a cast is
+    # trusted blindly. InferredExpr resolves the real computed type
+    # from the function's own body instead, so get_name() needs no
+    # declared type at all beyond the placeholder.
+    def get_name() -> InferredExpr:
+        return infer(pl.col("first_name") + pl.lit(" ") + pl.col("last_name"))
+
+    dataset: Legislators
+
+    class ResultSchema(Columns):
+        first_name: pl.String
+        full_name: pl.String
+
+    result: TypedDataFrame[ResultSchema] = dataset.group_by("first_name").agg(get_name().first().alias("full_name"))
+
+- case: real_world_legislators_helper_function_returning_bare_expr_substitutes_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LegislatorsSchema(Columns):
+        first_name: pl.String
+        last_name: pl.String
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    # Returning bare pl.Expr instead of a declared TypedExpr (no cast,
+    # unlike the case above) means .agg()'s own argument parser cannot
+    # recognize this shape at all -- but the outermost .alias("full_name")
+    # still gives a name to substitute Unchecked under, keeping
+    # "first_name" (the group key) typed instead of losing the whole
+    # result the way this project's own .agg() hook used to.
+    def get_name() -> pl.Expr:
+        return pl.col("first_name") + pl.lit(" ") + pl.col("last_name")
+
+    dataset: Legislators
+
+    class ResultSchema(Columns):
+        first_name: pl.String
+        full_name: Unchecked
+
+    result: TypedDataFrame[ResultSchema] = dataset.group_by("first_name").agg(get_name().first().alias("full_name"))
+
+- case: real_world_legislators_when_then_era_bucket_narrows
+  main: |
+    from datetime import date
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LegislatorsSchema(Columns):
+        last_name: pl.String
+        birthday: pl.Date
+
+    Legislators = TypedDataFrame[LegislatorsSchema]
+
+    dataset: Legislators
+
+    class ResultSchema(Columns):
+        last_name: pl.String
+        birthday: pl.Date
+        era: pl.String
+
+    result: TypedDataFrame[ResultSchema] = dataset.with_columns(
+        pl.when(pl.col("birthday").dt.year() >= 1950)
+        .then(pl.lit("modern"))
+        .otherwise(pl.lit("historical"))
+        .alias("era")
+    )
+
+- case: real_world_legislators_generic_party_filter_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DatasetSchema(Columns):
+        party: pl.String
+
+    # A reusable "filter to one party" helper that works across any
+    # legislator-like frame, regardless of what other columns it has --
+    # astrolabe's own open-frame mechanism, with no equivalent in
+    # plain polars at all.
+    def only_party(
+        dataset: TypedDataFrame[DatasetSchema, Rest],
+        party_name: str,
+    ) -> TypedDataFrame[DatasetSchema, Rest]:
+        return dataset.filter(pl.col("party") == party_name)
+
+    Legislators = TypedDataFrame[DatasetSchema, Rest]
+
+    dataset: Legislators
+    result: Legislators = only_party(dataset, "Anti-Administration")

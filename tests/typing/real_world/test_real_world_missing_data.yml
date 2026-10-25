@@ -1,0 +1,141 @@
+# Real-world test: null/NaN handling from polars' own user guide,
+# adapted to astrolabe's typed frame API. Source: pola-rs/polars,
+# `docs/source/src/python/user-guide/expressions/missing-data.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The `.null_count()`/`.is_null()`/`.fill_null()` (by
+# literal, expression, and strategy)/`.interpolate()`/`.fill_nan()`
+# sequence is the documentation's own real teaching example, adapted
+# from inline `pl.DataFrame({...})` literals to declared
+# `TypedDataFrame`s. Finding and adapting this example is what
+# surfaced a real crash: `.fill_null(strategy="forward")` passes no
+# `value` argument at all, and the hook used to read one unconditionally
+# -- fixed in `_hooks/typed_expr_fill_null.py`, covered directly by
+# `test_typed_expr_fill_null.yml`'s own new case, and exercised again
+# here in its original, real-world shape.
+#
+# One case is NOT from the source file:
+# `real_world_missing_data_all_columns_reducer_expansion_narrows`,
+# covering the source's own closing `pl.all().mean().name.suffix(...)`
+# step. Adapting this example also surfaced a second, smaller gap
+# alongside the `fill_null(strategy=...)` crash above: `pl.all()` (the
+# top-level function) had no dispatch entry at all, unlike
+# `polars.selectors.all()` -- fixed by registering it under its own
+# fullname in `_hooks/dispatch/function.py`'s
+# `_register_selector_constructor_hooks`, reusing the exact same
+# `AllSpecMinter` (covered by `test_selectors.yml`'s own cases). A
+# selector composed with a further transform like `.mean()` used to
+# fall back unconditionally: every selector constructor now returns a
+# real `TypedSelector` marker type that survives assignment and further
+# method/dunder chaining, so `.mean()`/`.name.suffix(...)` now resolve
+# through real per-node hook dispatch instead of falling back, and this
+# case narrows fully. Every matched column's own dtype was already
+# statically known here, so this was always in principle knowable, not
+# a soundness question.
+
+- case: real_world_missing_data_null_count_and_is_null_narrow
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        value: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NullCountDfSchema(Columns):
+        value: pl.UInt32
+
+    null_count_df: TypedDataFrame[NullCountDfSchema] = df.null_count()
+
+    class IsNullDfSchema(Columns):
+        value: pl.Boolean
+
+    is_null_df: TypedDataFrame[IsNullDfSchema] = df.select(pl.col("value").is_null())
+
+- case: real_world_missing_data_fill_null_literal_and_expression_narrow
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        col1: pl.Float64
+        col2: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # A bare literal fill value.
+    fill_literal_df: TypedDataFrame[FrameSchema] = df.with_columns(pl.col("col2").fill_null(3))
+    # A computed expression, cast back to the receiver's own dtype.
+    fill_expression_df: TypedDataFrame[FrameSchema] = df.with_columns(
+        pl.col("col2").fill_null((2 * pl.col("col1")).cast(pl.Int64)),
+    )
+
+- case: real_world_missing_data_fill_null_forward_backward_strategy_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        col1: pl.Float64
+        col2: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class FillForwardBackwardDfSchema(Columns):
+        col1: pl.Float64
+        col2: pl.Int64
+        forward: pl.Int64
+        backward: pl.Int64
+
+    # fill_null(strategy=...) passes no value argument at all -- a
+    # strategy fill never promotes the dtype, since it only ever
+    # copies another value already present in the same column.
+    fill_forward_backward_df: TypedDataFrame[FillForwardBackwardDfSchema] = df.with_columns(
+        pl.col("col2").fill_null(strategy="forward").alias("forward"),
+        pl.col("col2").fill_null(strategy="backward").alias("backward"),
+    )
+
+- case: real_world_missing_data_interpolate_promotes_to_float
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        col1: pl.Float64
+        col2: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class FillInterpolationDfSchema(Columns):
+        col1: pl.Float64
+        col2: pl.Float64
+
+    # Linear interpolation needs fractional values, so an integer
+    # column always promotes to Float64.
+    fill_interpolation_df: TypedDataFrame[FillInterpolationDfSchema] = df.with_columns(pl.col("col2").interpolate())
+
+- case: real_world_missing_data_fill_nan_keeps_float_and_appends
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NanFrameSchema(Columns):
+        value: pl.Float64
+
+    NanFrame = TypedDataFrame[NanFrameSchema]
+
+    nan_df: NanFrame
+
+    class ReplacedDfSchema(Columns):
+        value: pl.Float64
+        replaced: pl.Float64
+
+    replaced_df: TypedDataFrame[ReplacedDfSchema] = nan_df.with_columns(pl.col("value").fill_nan(None).alias("replaced"))
+

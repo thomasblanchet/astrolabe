@@ -1,0 +1,379 @@
+# .unnest(): unwrapping a Struct column's fields into the frame. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# Scope:
+# - Explicit literal string column names: a bare string, or a literal
+#   list/tuple for the first `columns` positional argument, plus
+#   *more_columns (the same dual shape as explode).
+# - columns omitted, or explicitly None, with no *more_columns either:
+#   auto-detects every Struct-typed column in the receiver's schema, in
+#   the receiver's own column order (confirmed against real polars
+#   1.43.2: `columns=None` combined with a non-empty *more_columns does
+#   NOT auto-detect, it uses *more_columns alone; only truly nothing
+#   specified anywhere triggers auto-detect. `columns=[]`, an explicit
+#   empty list, is different again: it unnests nothing, on purpose, and
+#   does not trigger auto-detect either).
+# - Each named or auto-detected column must be Struct-typed. It replaces
+#   the column with its fields, in place, in declared field order.
+# - separator=, when a literal string, renames each unnested field to
+#   `f"{struct_column_name}{separator}{field_name}"`, confirmed against
+#   real polars 1.43.2. Omitted, or explicitly None (its own documented
+#   default), keeps the bare field name.
+
+- case: unnest_struct_column_replaces_with_fields_in_place
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["baz"], pl.String], Column[Literal["qux"], pl.Int64]]
+        quux: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        baz: pl.String
+        qux: pl.Int64
+        quux: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest("bar")
+
+- case: unnest_multiple_struct_columns_via_varargs
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Struct[Column[Literal["x"], pl.Int64]]
+        b: Struct[Column[Literal["y"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest("a", "b")
+
+- case: unnest_multiple_struct_columns_via_list_argument
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Struct[Column[Literal["x"], pl.Int64]]
+        b: Struct[Column[Literal["y"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(["a", "b"])
+
+- case: unnest_multiple_struct_columns_via_tuple_argument
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Struct[Column[Literal["x"], pl.Int64]]
+        b: Struct[Column[Literal["y"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(("a", "b"))
+
+- case: unnest_unknown_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unnest("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: unnest_non_struct_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unnest("foo")  # E: Column "foo" is not a Struct with declared fields, cannot unnest  [wrong-column-shape]
+
+- case: unnest_field_collision_with_existing_column_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["foo"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unnest("bar")  # E: unnest would produce duplicate column "foo"  [duplicate-column]
+
+- case: unnest_with_separator_prefixes_field_names
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        bar_baz: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest("bar", separator="_")
+
+- case: unnest_separator_explicit_none_is_same_as_omitted
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        baz: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest("bar", separator=None)
+
+- case: unnest_non_literal_separator_falls_back_to_untyped
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    sep = "_"
+    reveal_type(df.unnest("bar", separator=sep))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unnest_auto_detects_the_only_struct_column_when_omitted
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        baz: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest()
+
+- case: unnest_auto_detects_with_explicit_none_columns
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        baz: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(columns=None)
+
+- case: unnest_auto_detects_every_struct_column_in_frame_order
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        meta: Struct[Column[Literal["a"], pl.Int64]]
+        other: Struct[Column[Literal["c"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+        c: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest()
+
+- case: unnest_auto_detect_field_collision_between_two_structs_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        meta: Struct[Column[Literal["a"], pl.Int64]]
+        other: Struct[Column[Literal["a"], pl.Int64]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unnest()  # E: unnest would produce duplicate column "a"  [duplicate-column]
+
+- case: unnest_explicit_empty_columns_list_unnests_nothing
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.unnest(columns=[])
+
+- case: unnest_none_columns_with_more_columns_uses_only_more_columns
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        meta: Struct[Column[Literal["a"], pl.Int64]]
+        other: Struct[Column[Literal["c"], pl.Int64]]
+
+    # columns=None combined with a non-empty *more_columns does not
+    # trigger auto-detect: only "meta" is unnested, "other" is left
+    # alone, confirmed against real polars 1.43.2.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        other: Struct[Column[Literal["c"], pl.Int64]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(None, "meta")
+
+- case: unnest_auto_detect_with_no_struct_columns_is_a_noop
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        name: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.unnest()
+
+- case: unnest_unchecked_column_is_refused
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        bar: Unchecked
+
+    # The field names of an Unchecked column are not known, and they
+    # would name the result columns, so the call is refused, as
+    # `.struct.unnest()` refuses it.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.unnest("bar"))  # E: Column "bar" is not a Struct with declared fields, cannot unnest  [wrong-column-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unnest_non_literal_columns_falls_back_to_untyped
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name = "bar"
+    reveal_type(df.unnest(name))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unnest_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.unnest("anything"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unnest_struct_column_replaces_with_fields_in_place_lazy
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        baz: pl.String
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.unnest("bar")

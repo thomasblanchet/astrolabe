@@ -1,0 +1,97 @@
+---
+title: Install and set up
+description: Install the package, then add the plugin to the mypy configuration of your project.
+sidebar:
+  order: 2
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Astrolabe needs Python 3.12 or later, mypy 1.13 or later, and Polars 1.43.2.
+
+## Install the package
+
+<Tabs syncKey="package-manager">
+<TabItem label="uv">
+
+```sh
+uv add git+https://github.com/thomasblanchet/astrolabe
+```
+
+</TabItem>
+<TabItem label="pip">
+
+```sh
+pip install git+https://github.com/thomasblanchet/astrolabe
+```
+
+</TabItem>
+<TabItem label="Poetry">
+
+```sh
+poetry add git+https://github.com/thomasblanchet/astrolabe
+```
+
+</TabItem>
+</Tabs>
+
+## Set up the project
+
+Run this command in the directory of your project:
+
+<Tabs syncKey="package-manager">
+<TabItem label="uv">
+
+```sh
+uv run astrolabe init
+```
+
+</TabItem>
+<TabItem label="pip">
+
+```sh
+astrolabe init
+```
+
+</TabItem>
+<TabItem label="Poetry">
+
+```sh
+poetry run astrolabe init
+```
+
+</TabItem>
+</Tabs>
+
+The command changes `pyproject.toml`:
+
+- It adds the plugin to `[tool.mypy]` and sets `allow_redefinition = true`.
+- It writes a `[tool.astrolabe]` table with every setting at its default, each with a comment.
+
+The command keeps the comments and the format of the file. A second run changes nothing. To see the changes before it writes them, add `--dry-run`. See [CLI](../../reference/cli/) for the other options.
+
+If mypy reads its configuration from `mypy.ini`, `.mypy.ini` or the `[mypy]` section of `setup.cfg`, the command changes nothing. It shows the lines to add to that file.
+
+## Set up by hand
+
+Add these lines to `pyproject.toml`:
+
+```toml title="pyproject.toml"
+[tool.mypy]
+plugins = ["astrolabe.plugin"]
+allow_redefinition = true
+```
+
+The plugin needs `allow_redefinition = true`. The type of an expression that a loop builds settles only when mypy lets the loop rebind its variable. If the setting is off, the plugin logs a warning.
+
+## Run the checker
+
+Run mypy as before:
+
+```sh
+mypy .
+```
+
+The errors of the plugin show wherever mypy runs: in the terminal, in an editor that runs mypy, in pre-commit hooks and in CI. Each error ends with a code in brackets, for example `[unknown-column]`. See [Error codes](../../reference/error-codes/).
+
+Next, type your first frame in the [Quickstart](../quickstart/).

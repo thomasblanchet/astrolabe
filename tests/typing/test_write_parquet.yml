@@ -1,0 +1,126 @@
+# Tier 10 item 4: `DataFrame`/`LazyFrame` write/sink methods -- the
+# *output* half of I/O, which Tier 7 ("I/O beyond read_csv/scan_csv")
+# never actually covered despite its own title. `write_csv`/
+# `write_parquet`/`write_json`/`write_ndjson`/`write_ipc`/
+# `write_ipc_stream`/`write_avro`/`write_excel`/`write_delta`/
+# `write_database`/`write_iceberg`/`write_clipboard`, and `LazyFrame`'s
+# streaming `sink_parquet`/`sink_csv`/`sink_ipc`/`sink_ndjson`/
+# `sink_delta`/`sink_iceberg`/`sink_batches`, each already return their
+# own correct, unnarrowed type via real polars' own stubs (`str | None`,
+# `None`, or `LazyFrame | None`) with nothing for this plugin to narrow:
+# none of these methods produce a `DataFrame`/`LazyFrame` whose schema
+# needs tracking. `write_parquet` alone has a column-referencing
+# parameter of its own worth validating: `partition_by=`, confirmed via
+# `inspect.signature` to be the only one of these methods with one.
+# `WriteParquetPartitionByHook` (`_hooks/write_parquet.py`) reports
+# `UnknownColumnError` for a `partition_by=` name that is not one of the
+# receiver's own declared columns, the same validation `join`'s `on=`
+# already gets -- it never narrows the call's own real return type
+# (always `None`), only adds this one validation.
+
+- case: write_parquet_with_known_partition_by_column_succeeds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.write_parquet("out.parquet", partition_by="a"))  # N: Revealed type is "None"
+
+- case: write_parquet_with_known_partition_by_column_list_succeeds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.write_parquet("out.parquet", partition_by=["a", "b"]))  # N: Revealed type is "None"
+
+- case: write_parquet_with_known_partition_by_column_tuple_succeeds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.write_parquet("out.parquet", partition_by=("a", "b")))  # N: Revealed type is "None"
+
+- case: write_parquet_with_unknown_partition_by_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.write_parquet("out.parquet", partition_by="missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: write_parquet_with_no_partition_by_is_unaffected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.write_parquet("out.parquet"))  # N: Revealed type is "None"
+
+- case: write_parquet_with_non_literal_partition_by_is_unaffected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # A non-literal partition_by is not checked: there is nothing
+    # unsound about skipping a check this plugin cannot perform
+    # statically.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    columns = ["missing"]
+    reveal_type(df.write_parquet("out.parquet", partition_by=columns))  # N: Revealed type is "None"
+
+- case: write_parquet_on_generic_receiver_is_unaffected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    def write(
+        df: TypedDataFrame[DfSchema, Rest],
+    ) -> None:
+        reveal_type(df.write_parquet("out.parquet", partition_by="missing"))  # N: Revealed type is "None"
+
+- case: write_parquet_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.write_parquet("out.parquet", partition_by="missing"))  # N: Revealed type is "None"

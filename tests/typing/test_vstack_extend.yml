@@ -1,0 +1,175 @@
+# .vstack() / .extend(): appending another frame's rows. Written before
+# VstackExtendHook existed. This test is expected to fail (red) until
+# it does.
+#
+# Both require `other`'s schema to already match the receiver's,
+# raising a real SchemaError/ShapeError at runtime otherwise (confirmed
+# empirically: a mismatched dtype raises SchemaError; reordered or
+# extra/missing columns raise ShapeError). frame.py's own `Self`-typed
+# override is always exactly correct for a call that succeeds, but
+# VstackExtendHook still validates the premise and reports
+# SchemaMismatchError when `other`'s schema is resolved and provably
+# does not match. Neither `.vstack()` nor `.extend()` exists on
+# `pl.LazyFrame` (confirmed via inspect.signature), so `TypedLazyFrame`
+# does not override either, and neither is hooked for it.
+
+- case: vstack_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    other: Frame
+    narrowed: Frame = df.vstack(other)
+
+- case: extend_narrows_precisely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    other: Frame
+    narrowed: Frame = df.extend(other)
+
+- case: vstack_decimal_omitted_and_explicit_precision_38_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: Decimal[None, Literal[2]]
+
+    # Decimal[None, ...] and Decimal[Literal[38], ...] are the identical
+    # runtime object (Stage 17), so SchemaEquality now treats them as
+    # the same schema instead of reporting SchemaMismatchError.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: Decimal[Literal[38], Literal[2]]
+
+    Right = TypedDataFrame[RightSchema]
+
+    df: Left
+    other: Right
+    narrowed: Left = df.vstack(other)
+
+- case: vstack_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    other: pl.DataFrame
+    reveal_type(df.vstack(other))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: vstack_mismatched_dtype_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int32
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    df: Left
+    other: Right
+    df.vstack(other)  # E: .vstack() requires an identical schema  [schema-mismatch]
+
+- case: vstack_compares_columns_by_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # A schema has no order, so .vstack() compares the columns by name, as
+    # pl.concat does. A frame whose columns stand in another order at run
+    # time can still raise, which the checker cannot see.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        bar: pl.String
+        foo: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    df: Left
+    other: Right
+    reveal_type(df.vstack(other=other))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.LeftSchema, {'foo': polars.datatypes.classes.Int64, 'bar': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: vstack_reads_other_by_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    class RightSchema(Columns):
+        baz: pl.Int64
+
+    df: TypedDataFrame[LeftSchema]
+    other: TypedDataFrame[RightSchema]
+    df.vstack(other=other)  # E: .vstack() requires an identical schema  [schema-mismatch]
+    df.extend(other=other)  # E: .extend() requires an identical schema  [schema-mismatch]
+    df.merge_sorted(other=other, key="foo")  # E: .merge_sorted() requires an identical schema  [schema-mismatch]
+
+- case: extend_mismatched_dtype_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int32
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    df: Left
+    other: Right
+    df.extend(other)  # E: .extend() requires an identical schema  [schema-mismatch]
+
+- case: extend_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    other: pl.DataFrame
+    reveal_type(df.extend(other))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: vstack_with_no_arguments_is_a_call_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    # The override has the parameters of polars, so mypy reports the
+    # missing frame, as it does for polars itself.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.vstack()  # E: Missing positional argument "other" in call to "vstack" of "TypedDataFrame"  [call-arg]

@@ -1,0 +1,59 @@
+---
+/** The top bar of the landing page: the mark and the links to each part of the site. */
+import BrandIcon from './BrandIcon.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+---
+
+<nav class="nav" aria-label="Main">
+  <a class="brand" href="#top"><BrandIcon />Astrolabe</a>
+  <div class="links">
+    <a href="#tour">How it works</a>
+    <a href="#features">Features</a>
+    <a href={`${base}docs/`}>Documentation</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/thomasblanchet/astrolabe">GitHub</a>
+  </div>
+</nav>
+
+<style>
+  .nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 28px 0;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--star);
+    text-decoration: none;
+    font-family: var(--font-serif);
+    font-size: 24px;
+    font-weight: 600;
+  }
+
+  .brand:hover {
+    color: var(--star);
+  }
+
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+    font-size: 15px;
+  }
+
+  .links a {
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .links a:hover {
+    color: var(--star);
+  }
+</style>

@@ -1,0 +1,49 @@
+---
+title: Inferred return types
+description: Let the checker compute the return type of a function from its body.
+sidebar:
+  order: 7
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A function can let the checker compute its return type from its body. Write an inferred type as the return type, and wrap each returned value in `infer(...)`. At each call, the result is the union of the types of those values. This is the intended way to type the result of a function that changes an open frame: a remainder marker written by hand repeats what the body does.
+
+| Return type | The function returns |
+| -- | -- |
+| `InferredExpr` | Expressions. |
+| `InferredDataFrame` | Frames of the class `DataFrame`. |
+| `InferredLazyFrame` | Frames of the class `LazyFrame`. |
+| `TypedDataFrame[Schema, InferredRemainder]` | A frame with the columns of `Schema`. The checker computes the remainder. |
+
+## Return an expression
+
+The type of an expression is long, and a function with several `return` statements can give several types. `InferredExpr` gives their union, with no union written by hand:
+
+<Example name="inferred_expr" />
+
+The checker does not know which branch runs, so the result is either frame.
+
+## Return a frame
+
+`InferredDataFrame` and `InferredLazyFrame` work in the same way for frames. With two `return` statements, the result is the union of the two frames:
+
+<Example name="tut_inference_frame" />
+
+## Return the declared columns and an inferred remainder
+
+`TypedDataFrame[Schema, InferredRemainder]` declares the columns of the result, and lets the checker compute the remainder from the body. Below, `add_notional` accepts any frame with `price` and `quantity`, and `Rest` stands for the other columns of the caller. At the call, the remainder of the result is `symbol`:
+
+<Example name="tut_inference_remainder" />
+
+Each returned value must hold each column of the declared schema, with a data type that agrees. The checker reports a value that does not, at its `infer(...)`.
+
+## Rules of use
+
+- Write `infer(...)` around the whole value of a `return`.
+- Use an inferred type only as the return type of a function. Anywhere else, for example on a parameter, it is an error.
+- A function with `InferredDataFrame` must return a `DataFrame`, and a function with `InferredExpr` must return expressions.
+
+<Example name="inferred_misuse" />
+
+If one returned value is a plain type that the checker does not track, the whole return type is the plain type. The setting `disallow_implicit_inferred_fallback` makes that an error. See [Configuration](../../reference/configuration/).

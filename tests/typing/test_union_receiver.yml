@@ -1,0 +1,85 @@
+# A method call on a union-typed receiver (for example
+# TypedDataFrame[...] | TypedLazyFrame[...], or two different concrete
+# TypedDataFrame schemas). mypy calls the plugin's method hook once per
+# union member, independently, before combining each member's own
+# result into the call's overall result type. This already works
+# through the existing per-fullname hook dispatch, with no
+# union-specific code in this plugin. .select() is the representative
+# operation exercised here. Every other method hook dispatches the same
+# way and needs no separate coverage.
+
+- case: union_of_different_frame_kinds_narrows_to_a_union
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+    LazyFrame = TypedLazyFrame[FrameSchema]
+
+    df: Frame | LazyFrame
+    reveal_type(df.select("foo"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'foo': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedLazyFrame[TypedDict(main.FrameSchema, {'foo': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: union_of_frames_with_an_identical_result_narrows_to_one_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameASchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    FrameA = TypedDataFrame[FrameASchema]
+
+    class FrameBSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Float64
+
+    FrameB = TypedDataFrame[FrameBSchema]
+
+    df: FrameA | FrameB
+    # Both members narrow "foo" to the exact same result, so mypy
+    # simplifies the union to that one type, not a two-member union.
+    reveal_type(df.select("foo"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: union_member_missing_the_requested_column_still_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameASchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    FrameA = TypedDataFrame[FrameASchema]
+
+    class FrameBSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Float64
+
+    FrameB = TypedDataFrame[FrameBSchema]
+
+    df: FrameA | FrameB
+    # "bar" only exists on FrameA. The FrameA member narrows normally.
+    # The FrameB member's hook call reports the error below and keeps
+    # the requested name under Unchecked, so the union stays precise
+    # member by member.
+    reveal_type(df.select("bar"))  # E: Unknown column "bar"  [unknown-column] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bar': polars.datatypes.classes.String}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'bar': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: a_frame_that_isinstance_narrows_has_no_schema
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, TypedLazyFrame
+
+    def f(x: object, y: pl.LazyFrame) -> None:
+        # isinstance gives the frame type with Any in place of its schema, so
+        # each operation gives the plain frame, and a change of kind keeps Any.
+        if isinstance(x, TypedDataFrame):
+            reveal_type(x.select("a"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+            reveal_type(x.lazy())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[Any, Any]"
+        if isinstance(y, TypedLazyFrame):
+            reveal_type(y.collect())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[Any, Any]"
+            reveal_type(y.select(pl.col("a")))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+            reveal_type(pl.concat([y, y]))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"

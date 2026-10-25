@@ -1,0 +1,8 @@
+# Markdown is never hard-wrapped: one paragraph or list item is one line.
+wrap = "no"
+number = true
+exclude = [".venv/**", "**/node_modules/**", ".mypy_cache/**", ".pytest_cache/**", ".complexipy_cache/**", "spec/lean/.lake/**", ".mutation/**"]
+
+[plugin.tables]
+# Tables stay compact: no padding to align columns.
+compact_tables = true

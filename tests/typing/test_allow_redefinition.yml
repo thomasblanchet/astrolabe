@@ -1,0 +1,106 @@
+# mypy's own `allow_redefinition` setting, combined with astrolabe.
+#
+# Reassigning a schema-narrowing result back to the same, already
+# explicitly-typed variable (`df = df.with_columns(...)`) is a very
+# common pattern, but it fails under mypy's default settings the
+# moment the narrowed schema actually differs from the variable's
+# original declared type: real code narrows on nearly every call, so
+# this bites immediately. This is not an astrolabe limitation -- it is
+# how mypy checks reassignment of an explicitly-typed variable in
+# general. Setting `allow_redefinition = true` in `[tool.mypy]` (a
+# *user's own* mypy config, not astrolabe's) fixes this, confirmed
+# empirically against the installed mypy version by direct testing:
+# `allow_redefinition` and its deprecated alias `allow_redefinition_new`
+# both give the same, modern, flow-sensitive behavior; the distinctly
+# different `allow_redefinition_old` is the legacy, "same block and
+# nesting level only" behavior, and does not help here (it still
+# errors the moment reassignment happens inside any nested `if`/`for`/
+# `while`, not just a branching one).
+#
+# Each case below sets `allow_redefinition = true` via its own
+# `mypy_config:` (which pytest-mypy-plugins merges into the real
+# `pyproject.toml`'s own `[tool.mypy]` table for that one case only,
+# confirmed via direct reading of `pytest_mypy_plugins/configs.py`'s
+# `join_toml_configs`), so this does not change the setting for any
+# other test in this suite.
+
+- case: allow_redefinition_lets_df_be_reassigned_through_a_narrowing_pipeline
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def pipeline(df: Frame) -> None:
+        # Each reassignment narrows to a genuinely different schema:
+        # first the same column widened by round()+1 (still Int64, but
+        # a fresh TypedDataFrame instantiation), then a real rename.
+        # Without allow_redefinition, the second line alone would
+        # already be a mypy error -- see the contrast case below.
+        df = df.with_columns(pl.col("a").round(2) + 1)
+        df = df.rename({"a": "b"})
+        reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: without_allow_redefinition_the_same_reassignment_errors
+  # The project's supported configuration enables redefinition; this
+  # case pins the contrast by disabling it explicitly.
+  mypy_config: |
+    allow_redefinition = false
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def pipeline(df: Frame) -> None:
+        df = df.with_columns(pl.col("a").round(2) + 1)
+        df = df.rename({"a": "b"})  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'b': Int64}), None]", variable has type "TypedDataFrame[FrameSchema, None]")  [assignment]
+
+- case: allow_redefinition_still_reports_a_genuine_unknown_column_error
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def pipeline(df: Frame) -> None:
+        # allow_redefinition only relaxes the reassignment check --
+        # astrolabe's own UnknownColumnError still fires normally.
+        df = df.with_columns(pl.col("a").round(2))
+        df = df.rename({"missing": "b"})  # E: Unknown column "missing"  [unknown-column]
+
+- case: allow_redefinition_across_branches_produces_a_union_type
+  mypy_config: |
+    allow_redefinition = true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    def pipeline(flag: bool, df: Frame) -> None:
+        # A caveat worth documenting: reassigning inside each branch of
+        # an if/else still works, but df's type after the branches
+        # merge is the *union* of what each branch produced, not
+        # either one alone.
+        if flag:
+            df = df.rename({"a": "b"})
+        else:
+            df = df.rename({"a": "c"})
+        reveal_type(df)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Int64}, closed=True), None] | astrolabe.frame.TypedDataFrame[TypedDict({'c': polars.datatypes.classes.Int64}, closed=True), None]"

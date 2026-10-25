@@ -1,0 +1,245 @@
+# `.lazy()` / `.collect()`: converting between TypedDataFrame and
+# TypedLazyFrame. Written before the corresponding `LazyHook`/
+# `CollectHook` exist. This test is expected to fail (red) until
+# plugin.py registers them.
+#
+# Confirmed against the installed real polars 1.43.2 via
+# inspect.signature, not assumed: `pl.DataFrame.lazy(self) -> LazyFrame`
+# and `pl.LazyFrame.collect(...) -> DataFrame | InProcessQuery` both
+# declare a concrete, erased return type, not `Self`. Before this file's
+# hooks existed, `TypedDataFrame[Columns].lazy()` erased straight to
+# plain `pl.LazyFrame`, and `.collect()` erased to plain `pl.DataFrame`,
+# confirmed with a real mypy run.
+#
+# Neither gets a `frame.py` override: `Columns` alone cannot be written
+# as `TypedLazyFrame[Columns]` inside `TypedDataFrame`'s own method
+# bodies, confirmed empirically. `FrameTypeHook`
+# (`_hooks/type_analysis.py`) requires every `TypedDataFrame[...]`/
+# `TypedLazyFrame[...]` argument to be a `Column[...]` or one
+# remainder item; a frame class's own bare `Columns` type parameter,
+# standing for the whole already-resolved schema tuple, matches
+# neither shape and is rejected with `[marker-arg]`.
+# So, like `join`, both operations rely entirely on a
+# real method hook, with no override in `frame.py`, confirmed
+# empirically (a throwaway debug plugin) that `ctx.type` still resolves
+# to the fully-parametrized receiver either way, matching this
+# project's own documented finding that a pass-through override is
+# never required for that. `Frame.other_kind(plugin)`
+# (`_hooks/domain/frame.py`) does the actual conversion: it looks up
+# the other frame kind's `TypeInfo` via `Plugin.lookup_fully_qualified`
+# (the one call in this codebase confirmed reliable for a genuinely
+# fresh lookup) and rebuilds an `Instance` of it, carrying the same
+# schema arguments over unchanged, concrete or still Rest-generic alike.
+#
+# `.collect()` cannot simply always narrow, the way `.lazy()` does: real
+# polars' own `LazyFrame.collect` is *already* overloaded on
+# `background`'s literal value, `background=True` returning
+# `InProcessQuery`, an unrelated class, not a `DataFrame` at all
+# (confirmed empirically: `lf.collect(background=True)` returns a real
+# `polars.lazyframe.in_process.InProcessQuery` instance). `CollectHook`
+# recognizes which arm mypy's own overload resolution already picked by
+# reading `ctx.default_return_type`'s class, narrowing only when it is
+# exactly the plain `DataFrame` overload's result, and passing every
+# other case (`InProcessQuery`, or a non-literal `background`'s own
+# error-recovery type) through unchanged. A non-literal `background`
+# value is not a new gap this plugin introduces: real, unmodified
+# `pl.LazyFrame.collect(background=some_bool)` already reports its own
+# `[call-overload]` error with no astrolabe plugin involved at all
+# (confirmed empirically), since neither of polars' own two overloads
+# accepts a plain, non-literal `bool`. `CollectHook` does not, and
+# structurally cannot, suppress that pre-existing mypy error: the error
+# is reported by mypy's own overload resolution, before and independent
+# of what our method hook returns.
+
+- case: lazy_narrows_to_typed_lazyframe
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedLazyFrame[FrameSchema] = df.lazy()
+
+- case: lazy_narrows_to_typed_lazyframe_on_open_receiver
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame, TypedLazyFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    def func(
+        df: TypedDataFrame[DfSchema, Rest],
+    ) -> TypedLazyFrame[DfSchema, Rest]:
+        return df.lazy()
+
+- case: collect_narrows_to_typed_dataframe_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: TypedDataFrame[LzFrameSchema] = lf.collect()
+
+- case: collect_narrows_to_typed_dataframe_with_explicit_background_false
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    narrowed: TypedDataFrame[LzFrameSchema] = lf.collect(background=False)
+
+- case: collect_with_background_true_returns_in_process_query
+  main: |
+    import polars as pl
+    from polars.lazyframe.in_process import InProcessQuery
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    query: InProcessQuery = lf.collect(background=True)
+
+- case: collect_with_non_literal_background_still_reports_real_polars_overload_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+    flag: bool
+    lf.collect(background=flag)  # E: No overload variant of "collect" of "LazyFrame" matches argument type "bool"  [call-overload] # N: Possible overload variants: # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[True], optimizations: QueryOptFlags = ...) -> InProcessQuery # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[False] = ..., optimizations: QueryOptFlags = ...) -> DataFrame
+
+- case: collect_narrows_to_typed_dataframe_on_open_receiver
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame, TypedLazyFrame
+
+    Rest = other_columns()
+
+    class LfSchema(Columns):
+        foo: pl.Int64
+
+    def func(
+        lf: TypedLazyFrame[LfSchema, Rest],
+    ) -> TypedDataFrame[LfSchema, Rest]:
+        return lf.collect()
+
+- case: lazy_then_collect_round_trips
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    same: Frame = df.lazy().collect()
+
+- case: lazy_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.lazy())  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: collect_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.collect())  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_lazy_frame_plans_a_later_step_at_the_stored_type
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        i8: pl.Int8
+        dec: Decimal[Literal[10], Literal[2]]
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    planned = lf.with_columns(d=pl.col("i8") * pl.col("dec"))
+    reveal_type(planned)  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Planned[astrolabe.frame.Decimal[Literal[38], Literal[2]], astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
+    reveal_type(planned.collect())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(planned.with_columns(o=pl.col("i8").fill_null(pl.col("d"))).collect())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]], 'o': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+    eager = df.with_columns(d=pl.col("i8") * pl.col("dec"))
+    reveal_type(eager.with_columns(o=pl.col("i8").fill_null(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]], 'o': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+- case: a_declared_selection_over_a_lazy_frame_keeps_the_stored_type
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Planned, TypedLazyFrame, same, typed_selection
+
+    class Rows(Columns):
+        d: Planned[pl.Float64, pl.Float32]
+
+    Numbers = typed_selection(cs.numeric(), gives=same)
+
+    # The lazy frame plans the selection at the stored type, Float32, as
+    # it plans cs.numeric() written in place.
+    def picked(lf: TypedLazyFrame[Rows], sel: Numbers) -> None:
+        reveal_type(lf.select(sel.abs()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Rows, {'d': astrolabe.frame.Planned[polars.datatypes.classes.Float64, polars.datatypes.classes.Float32]}, closed=True), None]"
+        reveal_type(lf.select(sel))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Rows, {'d': astrolabe.frame.Planned[polars.datatypes.classes.Float64, polars.datatypes.classes.Float32]}, closed=True), None]"
+        reveal_type(lf.select(cs.numeric().abs()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Rows, {'d': astrolabe.frame.Planned[polars.datatypes.classes.Float64, polars.datatypes.classes.Float32]}, closed=True), None]"
+
+- case: a_declared_planned_column_plans_a_later_step_at_its_stored_type
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, Planned, TypedLazyFrame, column
+
+    Wide = Decimal[Literal[38], Literal[2]]
+    Narrow = Decimal[Literal[10], Literal[2]]
+
+    class Rows(Columns):
+        i8: pl.Int8
+        dec: Narrow
+
+    class Stored(Columns):
+        i8: pl.Int8
+        dec: Narrow
+        d: Planned[Wide, Narrow]
+
+    lf: TypedLazyFrame[Rows]
+    stored: TypedLazyFrame[Stored] = lf.with_columns(d=pl.col("i8") * pl.col("dec"))
+    reveal_type(stored.select(o=pl.col("i8").fill_null(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'o': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+    # A declared column that reads such a column takes its stored type too.
+    Total = column("d", Wide)
+
+    def filled(frame: TypedLazyFrame[Stored], d: Total) -> None:
+        reveal_type(frame.select(o=pl.col("i8").fill_null(d)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'o': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+    wide: TypedLazyFrame[Rows] = lf.with_columns(dec=pl.col("dec").cum_sum())  # E: Incompatible types in assignment (expression has type "TypedLazyFrame[TypedDict({'i8': Int8, 'dec': Planned[Decimal[Literal[38], Literal[2]], Decimal[Literal[10], Literal[2]]]}), None]", variable has type "TypedLazyFrame[Rows, None]")  [assignment]

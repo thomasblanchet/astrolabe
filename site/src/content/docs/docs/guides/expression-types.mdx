@@ -1,0 +1,116 @@
+---
+title: Declare expression types
+description: Give a function that takes or returns expressions a type that states the columns it reads, the column it gives, and how it treats rows.
+sidebar:
+  order: 8
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+In Polars, a function that takes an expression and returns one is a common way to reuse code. A declaration is the type of such an expression. It states the columns that the expression reads, the column that it gives, and whether it works row by row, combines rows, or is a fixed value. You write a declaration once, give it a name, and use the name as the type of a parameter, of a result or of a variable.
+
+## A plain expression loses its type
+
+`pl.Expr` accepts any expression, and it keeps nothing about it. A frame that reads the result then has no known schema, so the checker gives the plain frame and stops tracking its columns:
+
+<Example name="exprtypes_plain" />
+
+## Declare one column
+
+`column(name, dtype)` declares an expression that reads one column and gives it back under its own name, row by row. Below, `Price` is the type of an expression that reads `price` as a `Float64` and gives a `Float64` named `price`. It is the type of the parameter and of the result of `discounted`:
+
+<Example name="exprtypes_column" />
+
+At each call, the checker checks the argument against the declaration:
+
+- `pl.col("quantity")` reads a column that the declaration does not name.
+- The cast gives a `String`, and the declaration gives a `Float64`.
+- `sum()` combines the rows into one value, and the declaration works row by row.
+
+The checker also checks the body against the declaration: `price * 0.9` must give a `Float64` named `price`.
+
+## The frame checks the data types
+
+A call does not know which frame will read its result. So the frame checks that it has the columns that the declaration reads, with their data types. Below, the frame has `price` as an `Int32`, and the declaration reads a `Float64`:
+
+<Example name="exprtypes_frame" />
+
+## Give a new column
+
+`typed_expr(*reads, gives=, named=)` declares an expression that reads some columns and gives a new one. Each read is a `column(...)`, often a name that holds one:
+
+<Example name="exprtypes_new_column" />
+
+`named=` gives the name of the result. With one read and no `named=`, the result has the name of that read. With two reads or more, `named=` is required.
+
+## Accept a family of data types
+
+The data type of a read can be a Polars family, such as `NumericType`, or a set of data types, such as `{pl.Int32, pl.Int64}`. The checker then checks the body at each data type of the family, and a frame can have any of them:
+
+<Example name="exprtypes_region" />
+
+`quantity > 0` gives a `Boolean` at each numeric data type, so the body passes. A `String` is not a number, so the `select` on `texts` is an error.
+
+A read of `Unchecked`, as in `column("quantity", Unchecked)`, accepts every data type. The checker still checks the name of the column and how the expression treats rows. It does not check the data type, so a wrong data type fails only when the code runs.
+
+## Combine rows
+
+`typed_agg(...)` declares an expression that gives one value for each group of rows, as `sum()` does. In `select`, the result is one row. In `agg`, it is one value for each group:
+
+<Example name="exprtypes_agg" />
+
+`typed_lit(gives=)` declares a fixed value that reads no column, for example `pl.lit(1, dtype=pl.Int32)`. An argument must treat rows as its declaration says: a fixed value or an aggregation does not fit a declaration that works row by row.
+
+## A result that depends on the data type
+
+Polars often gives a result whose data type depends on the input. `sum()` gives an `Int64` for an `Int8` or an `Int16`, and keeps the data type of a wider integer. One declaration can give a result for each group of data types: `row(...)` gives one result for some data types. `same` is the data type of the column that the expression reads:
+
+<Example name="exprtypes_rows" />
+
+`SameType` promises the input data type back at each integer type, and `sum()` gives an `Int64` at an `Int16`, so `wrong_total` is an error. `Total` states both results. Each row of one declaration reads the same columns, and no two rows cover the same data type.
+
+## Accept any column
+
+`some_column(region)` reads one column whose name each call chooses. With `gives=same`, the result is that column, with its own data type:
+
+<Example name="exprtypes_any_column" />
+
+The call gives the name: the result of `zscore(pl.col("price"))` is named `price`. An argument must give its column back under the same name, so `.alias("z")` does not fit. Rename the result after the call instead. In the body, the name is not known yet, so the body cannot give the expression to a frame.
+
+## Take a rule from the caller
+
+A schema class can be the reads of a declaration. The argument can then read any column of the class. Below, `flagged` accepts any frame with the columns of `Trades`, and any rule over those columns that gives a `Boolean` named `flag`:
+
+<Example name="exprtypes_rule" />
+
+- The first rule reads `price` and `quantity`, which `Trades` declares. The result keeps the column `venue` of the caller.
+- The second rule reads `venue`. A caller can pass a frame without `venue`, so the declaration does not allow it.
+- `pl.lit(True)` is a fixed value, and the declaration works row by row.
+
+## Variables and plain expressions
+
+The checker checks an annotated variable in the same way as an argument. A plain `pl.Expr` fits no declaration, because the checker does not know its columns:
+
+<Example name="exprtypes_values" />
+
+The error on a plain expression is an unproven result: it passes at the level `asserted` of the setting `allow_unproven`. See [Configuration](../../reference/configuration/).
+
+## Let the body decide the result
+
+`InferredExpr` as a return type lets the checker compute the type of the result from the body. See [Inferred return types](../inferred/). The result keeps the declarations of the parameters, and the frame that reads it checks its data types against them. A parameter has no inferred form, because the body must work for each argument that a caller can pass.
+
+## Read the columns of a schema
+
+`column_of(Trades, "price")` reads `price` at the data type that `Trades` gives it. The declaration then follows the class when that data type changes. `subset_of(Trades, "price", "quantity")` reads several columns.
+
+## Data types with parameters
+
+A read covers kinds: data types with their parameters taken away. `column("t", pl.Datetime("ms"))` reads a `Datetime` column of any time unit and any time zone, and the checker checks the argument at each of them. A fixed result keeps its parameters: `gives=pl.Decimal(38, 2)` gives that one data type. `wrap(pl.List, same)` gives a `List` of the data type of the column, as `implode()` does.
+
+## Rules of a declaration
+
+The checker reports a declaration that breaks a rule of form, where you write it:
+
+<Example name="decl_malformed" />
+
+To apply one expression to each column that a selector picks, declare a selection: see [Selections](../selections/).

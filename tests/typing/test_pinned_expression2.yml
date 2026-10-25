@@ -1,0 +1,428 @@
+# Cases that pin the rules of the expression engine that no other case
+# pinned. Every expected frame is confirmed against real polars.
+
+- case: carrier_arithmetic_reads_each_list_level_and_each_element
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int8]
+        u: pl.List
+        ld: List[Datetime[Literal["us"], None]]
+        ldec: List[pl.Decimal]
+        n: pl.Int16
+        i: pl.Int8
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A list and a number give a list of the number type.
+    reveal_type(df.select(pl.col("l") + pl.col("n")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+
+    # A list with no element type can give any type.
+    reveal_type(df.select(pl.col("l") + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("u") + pl.col("l")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+
+    # Polars raises for a list of datetimes plus a number.
+    df.select(pl.col("ld") + pl.col("n"))  # E: "ld" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone=None) and Int16, and polars raises SchemaError  [unsupported-dtype-op]
+
+    # Two lists of datetimes compare.
+    reveal_type(df.select(pl.col("ld") == pl.col("ld")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ld': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+    # Polars raises for a list of decimals times an integer.
+    df.select(pl.col("ldec") * pl.col("i"))  # E: "ldec" has no result type at this frame's column types: List(Decimal(precision=10, scale=2)) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_refused_cast_to_a_parametrized_target_names_the_cast
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        t: pl.Time
+        l: List[pl.Int8]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Polars cannot cast a time to a datetime.
+    # The error names the cast and the full target type.
+    df.select(pl.col("t").cast(pl.Datetime("us")))  # E: This expression cannot cast from Time to Datetime(time_unit='us', time_zone=None)  [invalid-cast]
+
+    # Polars cannot sum a list column.
+    # The error is not a cast error.
+    df.select(pl.col("l").sum())  # E: "l" has no result type at this frame's column types: `sum` operation not supported for dtype `List(Int8)`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_namespace_member_reads_its_extra_kinds_and_its_element_map
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Array[pl.String, Literal[2]]
+        ai: Array[pl.Int64, Literal[2]]
+        d: pl.Date
+
+    df: TypedDataFrame[FrameSchema]
+
+    # `dt.month` also reads a date column.
+    reveal_type(df.select(pl.col("d").dt.month()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Int8}, closed=True), None]"
+
+    # `arr.join` gives a string for an array of strings.
+    reveal_type(df.select(pl.col("a").arr.join(",")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.String}, closed=True), None]"
+
+    # Polars raises for `arr.join` over an array of integers.
+    df.select(pl.col("ai").arr.join(","))  # E: "ai" has no result type at this frame's column types: join is not supported for the inner type Int64, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_when_then_chain_needs_every_condition_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        c: pl.Boolean
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The condition of a later branch must be a column of the frame.
+    df.select(pl.when(pl.col("c")).then(pl.col("a")).when(pl.col("zz")).then(pl.col("b")).otherwise(pl.col("a")))  # E: Unknown column "zz"  [unknown-column]
+
+    # A chain over a selection gives one column for each picked column.
+    reveal_type(df.select(pl.when(pl.col("c")).then(pl.col("a", "b")).otherwise(pl.col("a"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    # The condition of a chain over a selection must be a column of the frame.
+    df.select(pl.when(pl.col("xx")).then(pl.col("a", "b")).otherwise(pl.col("a")))  # E: Unknown column "xx"  [unknown-column]
+
+- case: a_binary_operator_takes_the_stronger_character
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        g: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A fixed value beside an aggregation gives one value for each group.
+    reveal_type(pl.lit(1) + pl.lit(2).sum())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['pl.lit(1) + pl.lit(2).sum()']]]"
+
+    # An aggregation beside a column works row by row.
+    # In `agg`, a row by row expression gives a list for each group.
+    reveal_type(df.group_by("g").agg(pl.col("a").sum() + pl.col("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.String, 'a': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: a_declared_unchecked_read_still_checks_the_output_type
+  main: |
+    import polars as pl
+    from astrolabe import Unchecked, column, typed_expr
+
+    TrustedQuantity = column("quantity", Unchecked)
+    TrustedFlag = typed_expr(TrustedQuantity, gives=pl.Boolean, named="is_buy")
+
+    # A read of any data type must still give the declared output type.
+    def wrong(quantity: TrustedQuantity) -> TrustedFlag:
+        return quantity.cast(pl.String).alias("is_buy")  # E: This expression does not match its declared type: it makes a String column, but the declared type is Boolean  [expression-fit]
+
+- case: a_struct_field_reads_its_path_through_the_struct_column
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        i8: pl.Int8
+        st: Struct[Column[Literal["p"], pl.Int8], Column[Literal["q"], List[pl.Int16]], Column[Literal["r"], Struct[Column[Literal["x"], pl.Int8], Column[Literal["y"], pl.String]]]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A field gives the type that the struct column declares for it.
+    reveal_type(df.select(pl.col("st").struct.field("p")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.col("st").struct.field("q")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'q': astrolabe.frame.List[polars.datatypes.classes.Int16]}, closed=True), None]"
+
+    # A field of a field reads down the path.
+    reveal_type(df.select(pl.col("st").struct.field("r").struct.field("y")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'y': polars.datatypes.classes.String}, closed=True), None]"
+
+    # A field that is not a struct has no fields.
+    df.select(pl.col("st").struct.field("p").struct.field("z"))  # E: "z" has no result type at this frame's column types: z, and polars raises StructFieldNotFoundError  [unsupported-dtype-op]
+
+    # A field of a cast to a struct has the type of the field of the target.
+    reveal_type(df.select(pl.col("i").cast(pl.Struct({"p": pl.Int8})).struct.field("p")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p': polars.datatypes.classes.Int8}, closed=True), None]"
+
+    # Polars raises for a struct with a field that has no result.
+    df.select(pl.struct(pl.col("i"), pl.col("i8").str.len_chars()))  # E: "i" has no result type at this frame's column types: str.len_chars does not accept Int8, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: a_horizontal_function_joins_its_operands_in_order
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, Duration, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        i16: pl.Int16
+        i: pl.Int64
+        s: pl.String
+        dm: Datetime[Literal["ms"], None]
+        dz: Datetime[Literal["us"], Literal["UTC"]]
+        du: Duration[Literal["ms"]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The sum and the maximum take the supertype of every operand.
+    reveal_type(df.select(pl.sum_horizontal("i8", "i16")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.max_horizontal("i8", "i16")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int16}, closed=True), None]"
+    reveal_type(df.select(pl.max_horizontal("dm", "i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dm': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.sum_horizontal("du", "i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'du': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    # Polars cannot order a string beside a number.
+    df.select(pl.max_horizontal("s", "i8"))  # E: "s" has no result type at this frame's column types: got invalid or ambiguous dtypes: String, Int8, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.max_horizontal("i8", "s"))  # E: "i8" has no result type at this frame's column types: got invalid or ambiguous dtypes: Int8, String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    # Polars cannot cast a duration to the string supertype.
+    df.select(pl.sum_horizontal("du", "s"))  # E: "du" has no result type at this frame's column types: casting from Duration(time_unit='ms') to String not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    # Two datetimes with different time zones have no supertype.
+    df.select(pl.max_horizontal("dm", "dz"))  # E: "dm" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ms', time_zone=None) and Datetime(time_unit='us', time_zone='UTC'), and polars raises SchemaError  [unsupported-dtype-op]
+
+    # The mean of two integers is a Float64.
+    reveal_type(df.select(pl.mean_horizontal("i8", "i16")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: an_element_read_takes_one_dimension_off_a_carrier
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, Datetime, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        ld: List[Datetime[Literal["us"], None]]
+        a3: Array[pl.Int8, Literal[3]]
+        aa: Array[Array[pl.Int8, Literal[2]], Literal[3]]
+        aaa: Array[Array[Array[pl.Int8, Literal[2]], Literal[3]], Literal[4]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # An element of a list keeps the parameters of the element type.
+    reveal_type(df.select(pl.col("ld").list.max()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ld': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.col("ld").list.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ld': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+    # An element of an array keeps the inner dimensions.
+    reveal_type(df.select(pl.col("a3").arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a3': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.col("aa").arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aa': astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("aaa").arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aaa': astrolabe.frame.Array[astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]], Literal[3]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("aaa").arr.first().arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aaa': astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("aa").explode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aa': astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("aaa").arr.to_list()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'aaa': astrolabe.frame.List[astrolabe.frame.Array[astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]], Literal[3]]]}, closed=True), None]"
+
+    # Polars cannot sum an array of arrays.
+    df.select(pl.col("aa").arr.sum())  # E: "aa" has no result type at this frame's column types: arr.sum does not accept Array(Int8, shape=(2,)), and polars raises ComputeError  [unsupported-dtype-op]
+
+    # An element of a stack of arrays is the element of each part.
+    reveal_type(df.select(pl.concat_arr(pl.col("i8"), pl.col("i8")).arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.concat_arr(pl.col("i8"), pl.col("a3")).arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.concat_arr(pl.col("a3"), pl.col("i8")).arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a3': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.concat_arr(pl.col("i8")).arr.first()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+
+- case: a_composed_container_keeps_the_type_of_its_input
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, Duration, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        i: pl.Int64
+        u: Unchecked
+        dm: Datetime[Literal["ms"], None]
+        du: Duration[Literal["ms"]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # `implode` puts the type of its input in a list.
+    reveal_type(df.select(pl.col("i").implode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.select(pl.col("u").implode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+
+    # A list method then reads the element of that list.
+    reveal_type(df.select(pl.col("i").implode().list.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("dm").implode().list.max()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dm': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.List(pl.Int8)).list.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    # Polars raises for a time zone method on a list.
+    df.select(pl.col("dm").implode().dt.convert_time_zone("UTC"))  # E: "dm" has no result type at this frame's column types: expected Datetime, got List(Datetime(time_unit='ms', time_zone=None)), and polars raises ComputeError  [unsupported-dtype-op]
+
+    # The sum of a stack of small integers is an Int64.
+    reveal_type(df.select(pl.concat_arr(pl.col("i8"), pl.col("i8")).arr.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    # A cast to a duration and `diff` keep the time unit of the cast.
+    reveal_type(df.select(pl.col("i").cast(pl.Duration("ms")).diff()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+    # A datetime plus a duration keeps the time unit of the datetime.
+    reveal_type(df.select(pl.col("dm") + pl.col("du")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dm': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+
+- case: two_selections_pair_only_when_they_pick_the_same_columns
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        i16: pl.Int16
+        i: pl.Int64
+        f: pl.Float64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Two selections with the same selector pair column by column.
+    reveal_type(df.select(cs.by_name("i", "f") + cs.by_name("i", "f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+
+    # Two selections with different selectors get no column types.
+    reveal_type(df.select(cs.by_name("i", "f") + cs.by_name("i8", "i16")))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_horizontal_function_joins_the_parameters_of_every_operand
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        dec: Decimal[Literal[5], Literal[2]]
+        i: pl.Int64
+        i8: pl.Int8
+        dm: Datetime[Literal["ms"], None]
+        d: pl.Date
+        t: pl.Time
+
+    df: TypedDataFrame[FrameSchema]
+
+    # An Int64 operand widens the digits of a decimal maximum.
+    reveal_type(df.select(pl.max_horizontal("dec", "i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dec': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.max_horizontal("i", "dec")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.max_horizontal("i8", "dec", "i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+    # An Int8 operand fits in the digits of the decimal.
+    reveal_type(df.select(pl.max_horizontal("dec", "i8")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dec': astrolabe.frame.Decimal[Literal[5], Literal[2]]}, closed=True), None]"
+
+    # A date beside a datetime takes the time unit of the datetime.
+    reveal_type(df.select(pl.min_horizontal("d", "dm")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+
+    # The sum of one operand gives the operand back.
+    reveal_type(df.select(pl.sum_horizontal("d")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(pl.sum_horizontal("t")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': polars.datatypes.classes.Time}, closed=True), None]"
+
+    # Polars cannot add two dates.
+    df.select(pl.sum_horizontal("d", "d"))  # E: "d" has no result type at this frame's column types: add of Date and Date, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    # The mean of one decimal keeps the decimal.
+    # The mean of two decimals is a Float64.
+    reveal_type(df.select(pl.mean_horizontal("dec")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dec': astrolabe.frame.Decimal[Literal[5], Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.mean_horizontal("dec", "dec")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dec': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_binary_operator_joins_the_parameters_of_a_cast_operand
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, Duration, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        dm: Datetime[Literal["ms"], None]
+        du: Duration[Literal["ms"]]
+        l: List[pl.Int64]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Two datetimes subtract to a duration of the coarser time unit.
+    reveal_type(df.select(pl.col("i").cast(pl.Datetime("ms")) - pl.col("dm")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+    reveal_type(df.select(pl.col("dm") - pl.col("i").cast(pl.Datetime("us"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dm': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.Duration("us")) + pl.col("du")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+    reveal_type(df.select(pl.col("dm").cast(pl.Datetime("us")) - pl.col("dm")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'dm': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+    # Two decimals add to the widest digits.
+    reveal_type(df.select(pl.col("i").cast(pl.Decimal(10, 2)) + pl.col("i").cast(pl.Decimal(5, 1))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+    # A list from a cast plus a number is a list.
+    reveal_type(df.select(pl.col("i").cast(pl.List(pl.Int8)) + pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: a_selection_beside_an_expression_needs_every_column_of_the_expression
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        i: pl.Int64
+        f: pl.Float64
+        b: pl.Boolean
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The sort key of the expression must be a column of the frame.
+    df.select(cs.by_name("i", "f") + pl.col("i8").sort_by("zz"))  # E: Unknown column "zz"  [unknown-column]
+    df.select(pl.col("i8").sort_by("zz") + cs.by_name("i"))  # E: Unknown column "zz"  [unknown-column]
+    df.select((cs.by_name("i", "f") + pl.col("i8").sort_by("zz")) + cs.by_name("i", "f"))  # E: Unknown column "zz"  [unknown-column]
+    df.select(cs.by_name("i", "f") + (cs.by_name("i", "f") + pl.col("i8").sort_by("zz")))  # E: Unknown column "zz"  [unknown-column]
+
+    # A known sort key gives the column types.
+    reveal_type(df.select(cs.by_name("i", "f") + pl.col("i8").sort_by("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("i8").sort_by("b") + cs.by_name("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_container_rule_gives_unchecked_for_an_unnamed_part
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        l: List[pl.Int64]
+        lu: List[Unchecked]
+        stu: Struct[Column[Literal["p"], Unchecked]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A list with an element of any type can append to any list type.
+    reveal_type(df.select(pl.col("lu").append(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'lu': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").append(pl.col("lu"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.List[astrolabe.frame.Unchecked]}, closed=True), None]"
+
+    # A struct with a field of any type can give any type.
+    reveal_type(df.select(pl.col("stu") + pl.col("i")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'stu': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['p'], astrolabe.frame.Unchecked]]]}, closed=True), None]"
+
+- case: a_part_with_no_result_makes_the_container_fail
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i8: pl.Int8
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Polars raises for a stack with a part that has no result.
+    df.select(pl.concat_arr(pl.col("i8").str.len_chars(), pl.col("i8")))  # E: "i8" has no result type at this frame's column types: concat_arr dtype mismatch: expected UInt32, got Int8, and polars raises SchemaError  [unsupported-dtype-op]
+
+    # Polars raises for a method on a struct with a field that has no result.
+    df.select(pl.struct(pl.col("i"), pl.col("i8").str.len_chars()).is_null())  # E: "i" has no result type at this frame's column types: str.len_chars does not accept Int8, and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: an_expression_over_a_column_of_any_type_keeps_its_rule
+  main: |
+    import polars as pl
+    from astrolabe import Unchecked, column
+
+    Trusted = column("q", Unchecked)
+
+    def probe(q: Trusted) -> None:
+        # `implode` puts the type of the column in a list.
+        reveal_type(q.implode())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0.implode()'], astrolabe.expr.TypedColumn[Literal['q'], astrolabe.frame.Unchecked]]]"
+
+        # The first element of that list is the type of the column.
+        reveal_type(q.implode().list.first())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal['$0.implode().list.first()'], astrolabe.expr.TypedColumn[Literal['q'], astrolabe.frame.Unchecked]]]"
+
+    # An element of a stack of one column of any type can have any type.
+    reveal_type(pl.concat_arr(pl.col("x")).arr.first())  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.concat_arr(pl.col('x')).arr.first()"]]]"

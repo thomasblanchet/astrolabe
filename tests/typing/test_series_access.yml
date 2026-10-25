@@ -1,0 +1,299 @@
+# The two methods that produce a `pl.Series` from a `pl.DataFrame` by
+# name: `__getitem__` (`df["a"]`) and `.get_column(name)`.
+#
+# Confirmed against real polars 1.43.2, not assumed: `df["a"]`'s
+# string-key overload always returns `Series` (never a scalar or a
+# `DataFrame`); `get_column`'s `default=` overload only widens to `Any`
+# when `default` itself is not a `Series`. `mypy` reports the fullname
+# of the class a call is accessed *through*, not the class that
+# actually defines the method, confirmed by a throwaway probe plugin,
+# so `TypedDataFrame` needs no override of either method for the hooks
+# below to fire only on a `TypedDataFrame` receiver and leave a plain
+# `pl.DataFrame` receiver untouched.
+#
+# `TypedLazyFrame` has neither of these two methods (`LazyFrame` has no
+# `get_column` at all, and its own `__getitem__` only accepts a
+# `slice`), so none of these cases touch `TypedLazyFrame`.
+#
+# Like every other Tier 0-3 operation's initial implementation, this
+# does not extend to a still-generic (`Rest`-containing) receiver.
+#
+# `.to_series(index)` is left unmodeled entirely: a schema is an
+# unordered set of columns, never a positionally-addressable sequence,
+# so there is no sound way to resolve a column by its numeric position.
+# See `to_series_is_left_unmodeled`, below.
+
+- case: getitem_literal_str_key_narrows_to_typed_series
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    other: TypedSeries[Literal["b"], pl.String] = df["b"]
+
+- case: getitem_final_str_key_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    # A Final-declared string variable narrows the same way the
+    # equivalent inline string literal key does (see
+    # getitem_literal_str_key_narrows_to_typed_series, above).
+    NAME: Final = "a"
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = df[NAME]
+
+- case: getitem_unknown_literal_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df["missing"]  # E: Unknown column "missing"  [unknown-column]
+
+- case: getitem_non_literal_str_key_falls_back_to_plain_series
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "a"
+    reveal_type(df[name])  # N: Revealed type is "polars.series.series.Series"
+
+- case: getitem_int_key_narrows_to_receiver_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # df[0] is a pure row selection: verified empirically it resolves
+    # real polars' own bare DataFrame-returning __getitem__ overload,
+    # every column unchanged.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df[0]
+
+- case: getitem_slice_key_narrows_to_receiver_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # df[0:2] resolves the same bare DataFrame-returning overload as
+    # df[0]: a row-count change, not a schema change.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df[0:2]
+
+- case: get_column_literal_name_narrows_to_typed_series
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = df.get_column("a")
+
+- case: get_column_final_str_name_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    # A Final-declared string variable narrows the same way the
+    # equivalent inline string literal does (see
+    # get_column_literal_name_narrows_to_typed_series, above).
+    NAME: Final = "a"
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = df.get_column(NAME)
+
+- case: get_column_unknown_literal_name_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.get_column("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: get_column_non_literal_name_falls_back_to_plain_series
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "a"
+    reveal_type(df.get_column(name))  # N: Revealed type is "polars.series.series.Series"
+
+- case: get_column_with_series_default_still_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    fallback: pl.Series
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = df.get_column("a", default=fallback)
+
+- case: get_column_with_non_series_default_is_unaffected
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.get_column("a", default=None))  # N: Revealed type is "Any"
+
+- case: to_series_is_left_unmodeled
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    # A schema is an unordered set of columns, never a
+    # positionally-addressable sequence: there is no operation that
+    # resolves a column by its numeric position, so .to_series(index)
+    # is left completely unmodeled, its real stub's Series return type
+    # unchanged, regardless of the index, or how concrete the receiver
+    # is.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.to_series(0))  # N: Revealed type is "polars.series.series.Series"
+    reveal_type(df.to_series(-1))  # N: Revealed type is "polars.series.series.Series"
+    reveal_type(df.to_series())  # N: Revealed type is "polars.series.series.Series"
+
+- case: series_access_on_generic_rest_receiver_narrows_known_column
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame, TypedSeries
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    # A declared column's own presence and dtype cannot change based on
+    # what the remainder turns out to hold, so both by-name accessors
+    # narrow here exactly as they would for a fully concrete receiver.
+    df: TypedDataFrame[DfSchema, Rest]
+    by_getitem: TypedSeries[Literal["foo"], pl.Int64] = df["foo"]
+    by_get_column: TypedSeries[Literal["foo"], pl.Int64] = df.get_column("foo")
+
+- case: series_access_by_name_on_generic_rest_receiver_errors_for_an_undeclared_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    # "baz" is not declared, and can legitimately be part of the
+    # remainder at the real call site, the same ambiguity
+    # select/drop/rename already treat as an error by default.
+    df: TypedDataFrame[DfSchema, Rest]
+    df["baz"]  # E: Column "baz" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] get_column = "possible"
+    df.get_column("baz")  # E: Column "baz" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] get_column = "possible"
+
+- case: series_access_by_name_on_open_receiver_errors_for_a_declared_excluded_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns(without=["baz"])
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    # The declaration proves the remainder never contains "baz", so it
+    # is provably absent, not merely ambiguous.
+    df: TypedDataFrame[DfSchema, Rest]
+    df["baz"]  # E: Unknown column "baz"  [unknown-column]
+
+- case: getitem_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df["a"])  # N: Revealed type is "polars.series.series.Series"
+
+- case: get_column_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.get_column("a"))  # N: Revealed type is "polars.series.series.Series"
+
+- case: to_series_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.to_series())  # N: Revealed type is "polars.series.series.Series"

@@ -1,0 +1,373 @@
+# TypedSeries' own methods: `.cast()` (a real hook, dtype-changing) and
+# a Tier-1-style passthrough audit of methods that only reorder,
+# subset, or copy rows and so never change the dtype. Written before
+# `CastHook`/the new `TypedSeries` overrides exist, so every narrowing
+# case here is expected to fail (red) until they are implemented.
+#
+# `.cast()`/`.round()` also check dtype validity, the same as the
+# identical operation on a TypedExpr: confirmed empirically against real
+# polars 1.43.2, `Series(String).cast(pl.Boolean)` raises
+# InvalidOperationError, and `Series(Boolean).round()`/
+# `Series(String).round()` both raise InvalidOperationError (rounding
+# only supports numeric types).
+#
+# Confirmed against real polars 1.43.2, not assumed: `Series.cast`
+# declares `-> Self` despite being dtype-changing. `append`, `extend`,
+# `filter`, `sort`, `rechunk`, `clone`, and `set_sorted` already declare
+# `-> Self` in the real stub, so they should already narrow correctly
+# through plain inheritance, with no new code. `drop_nulls`, `slice`, `head`, `tail`, `limit`, `gather_every`, `top_k`,
+# `bottom_k`, `unique`, `reverse`, `clear`, `round`, `shift`, `shuffle`,
+# and `sample` all declare a plain, non-`Self` `Series` return in the
+# real stub, confirmed to actually preserve dtype at runtime, so each
+# needs a new `Self`-typed override. `alias` and `rename` change the
+# name, so a hook gives the result the new name.
+#
+# TypedSeries carries [Name, DType], matching TypedExpr's own order:
+# `.cast()`/`.round()` both keep the receiver's own name unchanged,
+# whether they succeed or fall back to Unchecked, the same as every
+# single-column TypedExpr per-op hook already carries Name through.
+
+- case: cast_to_bare_class_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    narrowed: TypedSeries[Literal["a"], pl.Float64] = s.cast(pl.Float64)
+
+- case: cast_to_instance_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    narrowed: TypedSeries[Literal["a"], pl.Float64] = s.cast(pl.Float64())
+
+- case: cast_to_variable_dtype_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    target = pl.Float64
+    narrowed: TypedSeries[Literal["a"], pl.Float64] = s.cast(target)
+
+- case: cast_to_an_unread_dtype_keeps_the_name_under_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    # The series takes the data type that the target holds at run time.
+    target: pl.DataType | type[pl.DataType]
+    reveal_type(s.cast(target))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+
+    # A series of a data type in a type variable takes the target of the cast.
+    def generic[D: pl.DataType](g: TypedSeries[Literal["a"], D]) -> None:
+        reveal_type(g.cast(pl.Int64))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], polars.datatypes.classes.Int64]"
+
+- case: cast_on_plain_series_is_unaffected
+  main: |
+    import polars as pl
+
+    s: pl.Series
+    reveal_type(s.cast(pl.Float64))  # N: Revealed type is "polars.series.series.Series"
+
+- case: already_self_typed_methods_narrow_through_plain_inheritance
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    other: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    a: TypedSeries[Literal["a"], pl.Int64] = s.append(other)
+    b: TypedSeries[Literal["a"], pl.Int64] = s.extend(other)
+    c: TypedSeries[Literal["a"], pl.Int64] = s.filter(s)
+    d: TypedSeries[Literal["a"], pl.Int64] = s.sort()
+    e: TypedSeries[Literal["a"], pl.Int64] = s.rechunk()
+    f: TypedSeries[Literal["a"], pl.Int64] = s.clone()
+    g: TypedSeries[Literal["a"], pl.Int64] = s.set_sorted()
+
+- case: new_passthrough_overrides_narrow
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Int64] = df["a"]
+    a: TypedSeries[Literal["a"], pl.Int64] = s.drop_nulls()
+    b: TypedSeries[Literal["renamed"], pl.Int64] = s.alias("renamed")
+    c: TypedSeries[Literal["renamed"], pl.Int64] = s.rename("renamed")
+    d: TypedSeries[Literal["a"], pl.Int64] = s.slice(0, 2)
+    e: TypedSeries[Literal["a"], pl.Int64] = s.head()
+    f: TypedSeries[Literal["a"], pl.Int64] = s.tail()
+    g: TypedSeries[Literal["a"], pl.Int64] = s.limit()
+    h: TypedSeries[Literal["a"], pl.Int64] = s.gather_every(2)
+    i: TypedSeries[Literal["a"], pl.Int64] = s.top_k()
+    j: TypedSeries[Literal["a"], pl.Int64] = s.bottom_k()
+    k: TypedSeries[Literal["a"], pl.Int64] = s.unique()
+    l: TypedSeries[Literal["a"], pl.Int64] = s.reverse()
+    m: TypedSeries[Literal["a"], pl.Int64] = s.clear()
+    n: TypedSeries[Literal["a"], pl.Int64] = s.round()
+    o: TypedSeries[Literal["a"], pl.Int64] = s.shift()
+    p: TypedSeries[Literal["a"], pl.Int64] = s.shuffle()
+    q: TypedSeries[Literal["a"], pl.Int64] = s.sample()
+
+- case: series_cast_blocked_pair_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.String] = df["a"]
+    reveal_type(s.cast(pl.Boolean))  # E: This Series cannot cast from String to Boolean  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+
+- case: a_series_cast_of_objects_to_another_type_is_refused
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        o: pl.Object
+
+    df: TypedDataFrame[FrameSchema]
+    reveal_type(df["o"].cast(pl.String))  # E: This Series cannot cast from Object to String  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['o'], astrolabe.frame.Unchecked]"
+    reveal_type(df["o"].cast(pl.Object))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['o'], polars.datatypes.classes.Object]"
+
+- case: series_cast_valid_pair_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.String] = df["a"]
+    narrowed: TypedSeries[Literal["a"], pl.Int64] = s.cast(pl.Int64)
+
+- case: series_round_on_boolean_receiver_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.Boolean] = df["a"]
+    reveal_type(s.round())  # E: This Series is not numeric or Decimal, cannot .round()  [wrong-column-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+
+- case: series_round_on_string_receiver_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        a: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], pl.String] = df["a"]
+    reveal_type(s.round())  # E: This Series is not numeric or Decimal, cannot .round()  [wrong-column-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+
+- case: series_round_on_unchecked_receiver_keeps_the_marker
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries, Unchecked
+
+    class FrameSchema(Columns):
+        a: Unchecked
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["a"], Unchecked] = df["a"]
+    reveal_type(s.round())  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+
+- case: series_constructor_narrows_name_and_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import TypedSeries
+
+    # The actual bug this fix targets: pl.Series(...)'s own return type
+    # is masked directly (SeriesConstructorHook), so a bound variable
+    # narrows exactly the same as the inline call would.
+    s = pl.Series("price", [1, 2, 3], dtype=pl.Int64)
+    narrowed: TypedSeries[Literal["price"], pl.Int64] = s
+
+- case: series_constructor_with_no_dtype_substitutes_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Unchecked, TypedSeries
+
+    # With no explicit dtype=, the name is still known, but the dtype
+    # cannot be inferred from values' own inferred type -- there is no
+    # real pl.Series constructor facade for that, so Unchecked
+    # substitutes for it instead of losing the whole result.
+    s = pl.Series("price", [1, 2, 3])
+    narrowed: TypedSeries[Literal["price"], Unchecked] = s
+
+- case: series_constructor_with_non_literal_name_falls_back_to_plain_series
+  main: |
+    import polars as pl
+
+    name: str = "price"
+    reveal_type(pl.Series(name, [1, 2, 3]))  # N: Revealed type is "polars.series.series.Series"
+
+- case: series_constructor_with_unresolvable_dtype_substitutes_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Unchecked, TypedSeries
+
+    # dtype= was given, but its own value is not a recognizable dtype
+    # expression: the name is still known, so this substitutes Unchecked
+    # rather than falling all the way back to a plain Series.
+    dtype: pl.DataType | type[pl.DataType]
+    s = pl.Series("price", [1, 2, 3], dtype=dtype)
+    narrowed: TypedSeries[Literal["price"], Unchecked] = s
+
+- case: series_cast_of_a_struct_recasts_every_field
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        s: Struct[Column[Literal["x"], pl.Int64], Column[Literal["y"], pl.Float64]]
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["s"], Struct[Column[Literal["x"], pl.Int64], Column[Literal["y"], pl.Float64]]] = df["s"]
+    recast: TypedSeries[
+        Literal["s"], Struct[Column[Literal["x"], pl.Float64], Column[Literal["y"], pl.Float64]]
+    ] = s.cast(pl.Float64)
+    text: TypedSeries[Literal["s"], pl.String] = s.cast(pl.String)
+    boxed: TypedSeries[
+        Literal["s"], Struct[Column[Literal["x"], List[pl.Int64]], Column[Literal["y"], List[pl.Int64]]]
+    ] = s.cast(pl.List(pl.Int64))
+    l: TypedSeries[Literal["l"], List[pl.Int64]] = df["l"]
+    reveal_type(l.cast(pl.Int64))  # E: This Series cannot cast from List(Int64) to Int64  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['l'], astrolabe.frame.Unchecked]"
+    widened: TypedSeries[Literal["l"], List[pl.Float64]] = l.cast(pl.List(pl.Float64))
+
+- case: a_series_cast_gives_the_data_type_that_polars_gives
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        ls: List[pl.String]
+        li: List[pl.Int64]
+        b: pl.Boolean
+        st: Struct[Column[Literal["a"], pl.String]]
+
+    df: TypedDataFrame[FrameSchema]
+    ls: TypedSeries[Literal["ls"], List[pl.String]] = df["ls"]
+    li: TypedSeries[Literal["li"], List[pl.Int64]] = df["li"]
+    b: TypedSeries[Literal["b"], pl.Boolean] = df["b"]
+    st: TypedSeries[Literal["st"], Struct[Column[Literal["a"], pl.String]]] = df["st"]
+    # A cast reads the element of a list and the fields of a struct.
+    reveal_type(ls.cast(pl.List(pl.Boolean)))  # E: This Series cannot cast from List(String) to List(Boolean)  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['ls'], astrolabe.frame.Unchecked]"
+    reveal_type(ls.cast(pl.List(pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['ls'], astrolabe.frame.List[polars.datatypes.classes.Int64]]"
+    reveal_type(st.cast(pl.Boolean))  # E: This Series cannot cast from Struct({'a': String}) to Boolean  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['st'], astrolabe.frame.Unchecked]"
+    reveal_type(st.cast(pl.List(pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['st'], astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], astrolabe.frame.List[polars.datatypes.classes.Int64]]]]]"
+    # The answer of a cast is not always its target.
+    reveal_type(li.cast(pl.List(pl.Null)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['li'], astrolabe.frame.List[polars.datatypes.classes.Int64]]"
+    reveal_type(b.cast(pl.List(pl.Categorical)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['b'], astrolabe.frame.List[polars.datatypes.classes.UInt32]]"
+
+- case: a_renamed_series_carries_its_new_name_into_hstack
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    class WideSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    wide: TypedDataFrame[WideSchema] = df.hstack([df["a"].alias("b")])
+
+    def rename(name: str) -> None:
+        reveal_type(df["a"].rename(name))  # N: Revealed type is "astrolabe.frame.TypedSeries[str, polars.datatypes.classes.Int64]"
+
+- case: a_series_cast_agrees_with_the_cast_of_an_expression
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        o: pl.Object
+
+    df: TypedDataFrame[FrameSchema]
+    o: TypedSeries[Literal["o"], pl.Object] = df["o"]
+    # Polars casts a column of Python objects only to Object.
+    reveal_type(o.cast(pl.Int64))  # E: This Series cannot cast from Object to Int64  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['o'], astrolabe.frame.Unchecked]"
+    reveal_type(df.select(pl.col("o").cast(pl.Int64)))  # E: This expression cannot cast from Object to Int64  [invalid-cast]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'o': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(o.cast(pl.Object))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['o'], polars.datatypes.classes.Object]"

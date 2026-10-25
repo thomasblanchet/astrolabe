@@ -1,0 +1,1000 @@
+# The fit: calls to user functions whose frame parameters carry a
+# declared remainder. A closed argument binds the declaration to its
+# own leftover columns and every requirement is decided by
+# inspection; an open argument binds its own remainder slot and the
+# requirements are proven from that slot's record. The declared
+# return is evaluated under the binding.
+
+- case: fit_worked_example_closed_caller_gets_a_fully_known_frame
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        quantity: pl.Int64
+
+    class TradesWithNotional(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        quantity: pl.Int64
+        notional: pl.Float64
+
+    Anything = other_columns()
+
+    def add_notional(
+        df: TypedDataFrame[Trades, Anything],
+    ) -> TypedDataFrame[TradesWithNotional, Minus[Anything, Literal["notional"]]]:
+        return df.with_columns(notional=pl.col("price") * pl.col("quantity"))
+
+    class Blotter(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        quantity: pl.Int64
+        venue: pl.String
+        trader: pl.String
+
+    # The caller's two extra columns survive the call, and the result
+    # is a fully known frame: the remainder was bound to
+    # {venue, trader}, minus "notional" leaves them untouched, and
+    # the splice closes the frame.
+    blotter: TypedDataFrame[Blotter]
+    reveal_type(add_notional(blotter))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'price': polars.datatypes.classes.Float64, 'quantity': polars.datatypes.classes.Int64, 'notional': polars.datatypes.classes.Float64, 'trader': polars.datatypes.classes.String, 'venue': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: fit_worked_example_composition_propagates_requirement_and_effect
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Minus, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    class TradesWithNotional(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        notional: pl.Float64
+
+    class SectorRef(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    class Enriched(Columns):
+        symbol: pl.String
+        price: pl.Float64
+        notional: pl.Float64
+        sector: pl.String
+
+    Anything = other_columns()
+    NoSector = other_columns(without=["sector"])
+
+    def add_notional(
+        df: TypedDataFrame[Trades, Anything],
+    ) -> TypedDataFrame[TradesWithNotional, Minus[Anything, Literal["notional"]]]:
+        raise NotImplementedError
+
+    def add_sector(
+        df: TypedDataFrame[TradesWithNotional, NoSector],
+        ref: TypedDataFrame[SectorRef],
+    ) -> TypedDataFrame[Enriched, NoSector]:
+        return df.join(ref, on="symbol")
+
+    # The requirement propagates outward: enrich needs whatever
+    # add_sector needs, and the effect propagates too. The body
+    # type-checks against the declared return with no cast, because
+    # the evaluated call's remainder is the same canonical type.
+    def enrich(
+        df: TypedDataFrame[Trades, NoSector],
+        ref: TypedDataFrame[SectorRef],
+    ) -> TypedDataFrame[Enriched, Minus[NoSector, Literal["notional"]]]:
+        return add_sector(add_notional(df), ref)
+
+- case: fit_worked_example_rejects_a_hidden_forbidden_column
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    NoSector = other_columns(without=["sector"])
+
+    def add_sector(
+        df: TypedDataFrame[Trades, NoSector],
+    ) -> TypedDataFrame[Trades, NoSector]:
+        raise NotImplementedError
+
+    class BlotterWithSector(Columns):
+        symbol: pl.String
+        sector: pl.String
+
+    bad: TypedDataFrame[BlotterWithSector]
+    add_sector(bad)  # E: Remainder "NoSector" must not contain column "sector"  [forbidden-column]
+
+- case: fit_reports_a_missing_required_column_and_a_wrong_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+        price: pl.Float64
+
+    Rest = other_columns()
+
+    def check(df: TypedDataFrame[Trades, Rest]) -> None: ...
+
+    class NoSymbol(Columns):
+        price: pl.Float64
+
+    class WrongPrice(Columns):
+        symbol: pl.String
+        price: pl.Int64
+
+    missing: TypedDataFrame[NoSymbol]
+    check(missing)  # E: Missing required column "symbol"  [missing-column]
+
+    mistyped: TypedDataFrame[WrongPrice]
+    check(mistyped)  # E: Column "price" has the wrong dtype  [wrong-dtype]
+
+- case: fit_open_caller_needs_its_own_record_to_prove_the_requirement
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Trades(Columns):
+        symbol: pl.String
+
+    NoSector = other_columns(without=["sector"])
+    Weaker = other_columns()
+    Stronger = other_columns(without=["sector", "country"])
+    Namespaced = other_columns(only_prefix="x_")
+
+    def add_sector(
+        df: TypedDataFrame[Trades, NoSector],
+    ) -> TypedDataFrame[Trades, NoSector]:
+        raise NotImplementedError
+
+    # A stronger promise satisfies a weaker demand, and a namespace
+    # promise satisfies a demand for any name outside the namespace.
+    stronger: TypedDataFrame[Trades, Stronger]
+    reveal_type(add_sector(stronger))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String}, closed=True), main.Stronger]"
+
+    namespaced: TypedDataFrame[Trades, Namespaced]
+    reveal_type(add_sector(namespaced))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'symbol': polars.datatypes.classes.String}, closed=True), main.Namespaced]"
+
+    weaker: TypedDataFrame[Trades, Weaker]
+    add_sector(weaker)  # E: The argument's own remainder does not prove the requirements of "NoSector". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_dtype_requirement_decided_by_inspection
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Numbers = other_columns(all_of={pl.Int64, pl.Float64})
+
+    def sums(df: TypedDataFrame[Keys, Numbers]) -> TypedDataFrame[Keys, Numbers]:
+        raise NotImplementedError
+
+    class AllNumeric(Columns):
+        k: pl.Int64
+        v: pl.Float64
+
+    class WithText(Columns):
+        k: pl.Int64
+        v: pl.String
+
+    good: TypedDataFrame[AllNumeric]
+    reveal_type(sums(good))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'v': polars.datatypes.classes.Float64}, closed=True), None]"
+
+    bad: TypedDataFrame[WithText]
+    sums(bad)  # E: Remainder "Numbers" must not contain a column of type "String"  [forbidden-column]
+
+- case: fit_an_unchecked_residual_column_passes_every_type_requirement
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Anything = other_columns()
+    Numbers = other_columns(all_of={pl.Int64, pl.Float64})
+
+    def keep(df: TypedDataFrame[Keys, Anything]) -> None:
+        raise NotImplementedError
+
+    def sums(df: TypedDataFrame[Keys, Numbers]) -> None:
+        raise NotImplementedError
+
+    class WithUnchecked(Columns):
+        k: pl.Int64
+        v: Unchecked
+
+    df: TypedDataFrame[WithUnchecked]
+    keep(df)
+    sums(df)
+
+- case: fit_an_unchecked_residual_column_fails_a_requirement_no_type_meets
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Impossible = other_columns(all_of={pl.Int64}, none_of={pl.Int64})
+
+    def none(df: TypedDataFrame[Keys, Impossible]) -> None:
+        raise NotImplementedError
+
+    class WithUnchecked(Columns):
+        k: pl.Int64
+        v: Unchecked
+
+    df: TypedDataFrame[WithUnchecked]
+    none(df)  # E: Remainder "Impossible" must not contain a column of type "Unchecked"  [forbidden-column]
+
+- case: fit_suffixed_return_renames_the_spliced_columns
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Suffixed, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Rest = other_columns()
+
+    def tagged(
+        df: TypedDataFrame[Keys, Rest],
+    ) -> TypedDataFrame[Keys, Suffixed[Rest, Literal["_old"]]]:
+        raise NotImplementedError
+
+    class Snapshot(Columns):
+        k: pl.Int64
+        price: pl.Float64
+
+    # The denoted remainder renames "price" to "price_old"; the
+    # spliced column is rebuilt from the denoted kind.
+    snap: TypedDataFrame[Snapshot]
+    reveal_type(tagged(snap))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'price_old': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: fit_disjointness_between_two_open_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns()
+    R = other_columns(disjoint_from=L)
+
+    def merge(
+        left: TypedDataFrame[Keys, L], right: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, R]]:
+        raise NotImplementedError
+
+    # Two caller declarations whose records prove disjointness
+    # satisfy R's promise; two that cannot leave it unproven.
+    A = other_columns(only_prefix="a_")
+    B = other_columns(only_prefix="b_")
+    one: TypedDataFrame[Keys, A]
+    two: TypedDataFrame[Keys, B]
+    reveal_type(merge(one, two))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
+
+    C = other_columns()
+    D = other_columns()
+    three: TypedDataFrame[Keys, C]
+    four: TypedDataFrame[Keys, D]
+    merge(three, four)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_disjointness_between_two_closed_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns()
+    R = other_columns(disjoint_from=L)
+
+    def merge(
+        left: TypedDataFrame[Keys, L], right: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, R]]:
+        raise NotImplementedError
+
+    class One(Columns):
+        k: pl.Int64
+        a: pl.Int64
+
+    class Two(Columns):
+        k: pl.Int64
+        b: pl.String
+
+    class TwoClash(Columns):
+        k: pl.Int64
+        a: pl.String
+
+    one: TypedDataFrame[One]
+    two: TypedDataFrame[Two]
+    reveal_type(merge(one, two))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+
+    clash: TypedDataFrame[TwoClash]
+    merge(one, clash)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_disjointness_between_a_closed_and_an_open_argument
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns()
+    R = other_columns(disjoint_from=L)
+
+    def merge(
+        left: TypedDataFrame[Keys, L], right: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, R]]:
+        raise NotImplementedError
+
+    class One(Columns):
+        k: pl.Int64
+        a: pl.Int64
+
+    NoA = other_columns(without=["a"])
+    CanHoldA = other_columns()
+
+    one: TypedDataFrame[One]
+    safe: TypedDataFrame[Keys, NoA]
+    merge(one, safe)
+
+    risky: TypedDataFrame[Keys, CanHoldA]
+    merge(one, risky)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_disjointness_from_an_unbound_declaration_is_unproven
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Elsewhere = other_columns()
+    R = other_columns(disjoint_from=Elsewhere)
+
+    def half(df: TypedDataFrame[Keys, R]) -> TypedDataFrame[Keys, R]:
+        raise NotImplementedError
+
+    class One(Columns):
+        k: pl.Int64
+        a: pl.Int64
+
+    # Elsewhere is bound by no parameter of this call, so nothing at
+    # the call site can prove the promise.
+    one: TypedDataFrame[One]
+    half(one)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_within_between_two_closed_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, Suffixed, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+
+    def compare(
+        current: TypedDataFrame[Keys, L], previous: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, Suffixed[R, Literal["_prev"]]]]:
+        raise NotImplementedError
+
+    class Wide(Columns):
+        k: pl.Int64
+        price: pl.Float64
+        qty: pl.Int64
+
+    class Narrow(Columns):
+        k: pl.Int64
+        price: pl.Float64
+
+    class Outside(Columns):
+        k: pl.Int64
+        venue: pl.String
+
+    wide: TypedDataFrame[Wide]
+    narrow: TypedDataFrame[Narrow]
+    reveal_type(compare(wide, narrow))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'price': polars.datatypes.classes.Float64, 'price_prev': polars.datatypes.classes.Float64, 'qty': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    outside: TypedDataFrame[Outside]
+    compare(wide, outside)  # E: Remainder "R" must not contain column "venue"  [forbidden-column]
+
+- case: fit_open_argument_bound_to_its_own_declaration_keeps_its_relations
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, Minus, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns()
+    R = other_columns(disjoint_from=L)
+
+    def merge(
+        left: TypedDataFrame[Keys, L], right: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, R]]:
+        raise NotImplementedError
+
+    # A slot referencing nothing but the demanded declaration keeps
+    # its promises by contract: a shrunk R is still disjoint from L.
+    left: TypedDataFrame[Keys, L]
+    right: TypedDataFrame[Keys, Minus[R, Literal["gone"]]]
+    reveal_type(merge(left, right))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.L, astrolabe.remainder.Minus[main.R, Literal['gone']]]]"
+
+- case: fit_open_argument_with_an_extra_declared_column_falls_back_to_nominal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    class KeysAndMore(Columns):
+        k: pl.Int64
+        extra: pl.String
+
+    Rest = other_columns()
+
+    def check(df: TypedDataFrame[Keys, Rest]) -> None: ...
+
+    # An extra declared column cannot fold into a remainder
+    # expression, so the fit stands aside and the nominal comparison
+    # reports the mismatch.
+    df: TypedDataFrame[KeysAndMore, Rest]
+    check(df)  # E: Argument 1 to "check" has incompatible type "TypedDataFrame[KeysAndMore, Rest]"; expected "TypedDataFrame[Keys, Rest]"  [arg-type]
+
+- case: fit_split_slot_proves_what_every_part_proves
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    NoSector = other_columns(without=["sector"])
+    A = other_columns(all_of=pl.Int64, without=["sector"])
+    B = other_columns(without=["sector"])
+    Open = other_columns()
+
+    def add_sector(
+        df: TypedDataFrame[Keys, NoSector],
+    ) -> TypedDataFrame[Keys, NoSector]:
+        raise NotImplementedError
+
+    # The parts hold the whole remainder, and each part proves "sector" absent.
+    df: TypedDataFrame[Keys, SplitColumns[A, B]]
+    add_sector(df)
+
+    # One part can hold "sector", so the split does not prove it absent.
+    loose: TypedDataFrame[Keys, SplitColumns[A, Open]]
+    add_sector(loose)  # E: The argument's own remainder does not prove the requirements of "NoSector". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_within_with_a_foreign_open_argument_is_unproven
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, Suffixed, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+
+    def compare(
+        current: TypedDataFrame[Keys, L], previous: TypedDataFrame[Keys, R]
+    ) -> TypedDataFrame[Keys, Both[L, Suffixed[R, Literal["_prev"]]]]:
+        raise NotImplementedError
+
+    class Wide(Columns):
+        k: pl.Int64
+        price: pl.Float64
+
+    # The second argument's own declaration proves R's name and type
+    # requirements trivially, but a containment cannot be proven from
+    # a record, which only bounds the names from above.
+    Foreign = other_columns()
+    wide: TypedDataFrame[Wide]
+    foreign: TypedDataFrame[Keys, Foreign]
+    compare(wide, foreign)  # E: The argument's own remainder does not prove the requirements of "R". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_an_open_argument_that_permits_no_column_proves_every_relation
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    L = other_columns(without_suffix="_prev")
+    R = other_columns(within=L)
+    D = other_columns(disjoint_from=L)
+
+    def compare(
+        current: TypedDataFrame[Keys, L], previous: TypedDataFrame[Keys, R]
+    ) -> None:
+        raise NotImplementedError
+
+    def apart(current: TypedDataFrame[Keys, L], other: TypedDataFrame[Keys, D]) -> None:
+        raise NotImplementedError
+
+    class Wide(Columns):
+        k: pl.Int64
+        price: pl.Float64
+
+    # A remainder whose names are all absent, or whose type set is
+    # empty, holds no column for any caller, so it is within every
+    # remainder and disjoint from every remainder (T-12).
+    NoName = other_columns(only=[])
+    NoType = other_columns(all_of=NumericType, none_of=NumericType)
+    wide: TypedDataFrame[Wide]
+    no_name: TypedDataFrame[Keys, NoName]
+    no_type: TypedDataFrame[Keys, NoType]
+    compare(wide, no_name)
+    compare(wide, no_type)
+    apart(wide, no_type)
+
+- case: fit_open_argument_with_a_mismatched_dtype_falls_back_to_nominal
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    class StringKeys(Columns):
+        k: pl.String
+
+    Rest = other_columns()
+
+    def check(df: TypedDataFrame[Keys, Rest]) -> None: ...
+
+    # The names match but the dtypes cannot reconcile, so the fit
+    # stands aside and the nominal comparison reports the mismatch.
+    df: TypedDataFrame[StringKeys, Rest]
+    check(df)  # E: Argument 1 to "check" has incompatible type "TypedDataFrame[StringKeys, Rest]"; expected "TypedDataFrame[Keys, Rest]"  [arg-type]
+
+- case: fit_applies_to_a_method_in_each_call_form
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    NoSector = other_columns(without=["sector"])
+    Open = other_columns()
+    R = other_columns()
+
+    class Service:
+        def run(self, df: TypedDataFrame[Keys, R]) -> TypedDataFrame[Keys, R]:
+            return df
+
+        def strict(self, df: TypedDataFrame[Keys, NoSector]) -> None: ...
+
+        @staticmethod
+        def static(df: TypedDataFrame[Keys, R]) -> TypedDataFrame[Keys, R]:
+            return df
+
+        @classmethod
+        def build(cls, df: TypedDataFrame[Keys, R]) -> TypedDataFrame[Keys, R]:
+            return df
+
+    def f(df: TypedDataFrame[Keys, Open], service: Service) -> None:
+        reveal_type(service.run(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), main.Open]"
+        reveal_type(Service.run(service, df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), main.Open]"
+        reveal_type(Service.static(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), main.Open]"
+        reveal_type(Service.build(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), main.Open]"
+        service.strict(df)  # E: The argument's own remainder does not prove the requirements of "NoSector". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: fit_leaves_a_method_whose_decorator_can_change_it
+  main: |
+    from collections.abc import Callable
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Open = other_columns()
+    R = other_columns()
+
+    def logged[F](function: F) -> F:
+        return function
+
+    class Service:
+        @logged
+        def run(self, df: TypedDataFrame[Keys, R]) -> TypedDataFrame[Keys, R]:
+            return df
+
+    def f(df: TypedDataFrame[Keys, Open], service: Service) -> None:
+        service.run(df)  # E: Argument 1 to "run" of "Service" has incompatible type "TypedDataFrame[Keys, Open]"; expected "TypedDataFrame[Keys, R]"  [arg-type]
+
+- case: fit_decides_a_requirement_on_one_data_type
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, other_columns, TemporalType, TypedDataFrame
+
+    Us = other_columns(all_of=pl.Datetime("us"))
+    NotUs = other_columns(none_of=pl.Datetime("us"))
+    Mixed = other_columns(all_of={pl.Datetime("us"), pl.String})
+    Times = other_columns(all_of=TemporalType)
+    Open = other_columns()
+    Nested = other_columns(all_of=pl.List(pl.Int64))
+    Bad = other_columns(all_of=1)  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    def need_us(df: TypedDataFrame[Keys, Us]) -> None: ...
+    def need_not_us(df: TypedDataFrame[Keys, NotUs]) -> None: ...
+    def need_times(df: TypedDataFrame[Keys, Times]) -> None: ...
+
+    def f(
+        us: TypedDataFrame[Keys, Us],
+        mixed: TypedDataFrame[Keys, Mixed],
+        loose: TypedDataFrame[Keys, Open],
+        not_us: TypedDataFrame[Keys, NotUs],
+    ) -> None:
+        need_times(us)
+        need_us(us)
+        need_not_us(not_us)
+        need_us(mixed)  # E: The argument's own remainder does not prove the requirements of "Us". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+        need_not_us(loose)  # E: The argument's own remainder does not prove the requirements of "NotUs". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+    class GoodSchema(Columns):
+        k: pl.Int64
+        t: Datetime[Literal["us"], None]
+
+    good: TypedDataFrame[GoodSchema]
+
+    class OtherSchema(Columns):
+        k: pl.Int64
+        t: Datetime[Literal["ms"], None]
+
+    other: TypedDataFrame[OtherSchema]
+    need_us(good)
+    need_us(other)  # E: Remainder "Us" must not contain a column of type "Datetime(time_unit='ms', time_zone=None)"  [forbidden-column]
+    need_not_us(good)  # E: Remainder "NotUs" must not contain a column of type "Datetime(time_unit='us', time_zone=None)"  [forbidden-column]
+    need_not_us(other)
+
+- case: a_requirement_reads_a_nested_data_type
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.String
+
+    # A nested constructor call reads its own element, so the
+    # requirement holds of a list column and of nothing else.
+    Lists = other_columns(all_of={pl.List(pl.Int64)})
+
+    def takes_lists(df: TypedDataFrame[Keys, Lists]) -> None: ...
+
+    class Good(Columns):
+        k: pl.String
+        l: List[pl.Int64]
+
+    class Bad(Columns):
+        k: pl.String
+        n: pl.Int64
+
+    good: TypedDataFrame[Good]
+    bad: TypedDataFrame[Bad]
+    takes_lists(good)
+    takes_lists(bad)  # E: Remainder "Lists" must not contain a column of type "Int64"  [forbidden-column]
+
+- case: a_requirement_reads_an_array_and_refuses_an_unreadable_one
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.String
+
+    # An array constructor reads its own element and its own width.
+    Arrays = other_columns(all_of={pl.Array(pl.Int64, 2)})
+
+    # A width that is no literal, and a call that names no element,
+    # are refused rather than widened to the whole kind.
+    width: int
+    Dynamic = other_columns(all_of={pl.Array(pl.Int64, width)})  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg]
+    Bare = other_columns(all_of={pl.List()})  # E: other_columns() all_of= must be a polars data type class, a data type such as pl.Datetime("us"), or a set of them  [marker-arg] # E: Missing positional argument "inner" in call to "List"  [call-arg]
+
+    def takes_arrays(df: TypedDataFrame[Keys, Arrays]) -> None: ...
+
+    class Good(Columns):
+        k: pl.String
+        a: Array[pl.Int64, Literal[2]]
+
+    class Bad(Columns):
+        k: pl.String
+        n: pl.Int64
+
+    good: TypedDataFrame[Good]
+    bad: TypedDataFrame[Bad]
+    takes_arrays(good)
+    takes_arrays(bad)  # E: Remainder "Arrays" must not contain a column of type "Int64"  [forbidden-column]
+
+- case: fit_binds_a_split_parameter_part_by_part
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Numeric = other_columns(all_of=pl.Int64)
+    Rest = other_columns()
+    Open = other_columns()
+
+    # Each part binds to the columns the earlier parts leave, so the
+    # parameter takes any open frame the parts cover.
+    def split(
+        df: TypedDataFrame[Keys, SplitColumns[Numeric, Rest]],
+    ) -> TypedDataFrame[Keys, SplitColumns[Numeric, Rest]]:
+        raise NotImplementedError
+
+    df: TypedDataFrame[Keys, Open]
+    reveal_type(split(df))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Keys, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.SplitColumns[main.Numeric, main.Rest]]"
+
+- case: fit_places_a_closed_argument_column_in_its_first_accepting_part
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    class Closed(Columns):
+        k: pl.Int64
+        n: pl.Int64
+        s: pl.String
+
+    Numeric = other_columns(all_of=pl.Int64)
+    Rest = other_columns()
+
+    # The split places "n" in the numeric part and "s" in the rest,
+    # so each part's own requirement holds at the call.
+    def split(df: TypedDataFrame[Keys, SplitColumns[Numeric, Rest]]) -> None:
+        raise NotImplementedError
+
+    closed: TypedDataFrame[Closed]
+    split(closed)
+
+- case: a_split_with_a_dead_part_is_refused
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Numeric = other_columns(all_of=pl.Int64)
+    Rest = other_columns()
+
+    # A part an earlier part subsumes can never hold a column.
+    shadowed: TypedDataFrame[Keys, SplitColumns[Rest, Numeric]]  # E: SplitColumns[...] part 2 takes no column, because an earlier part accepts every column it accepts  [marker-arg]
+    good: TypedDataFrame[Keys, SplitColumns[Numeric, Rest]]
+
+- case: a_split_part_that_leaves_a_data_type_out_of_a_kind_is_not_checked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    # A part that takes a whole kind less one data type names no
+    # family, so the split's own predicates cannot be built and the
+    # declaration stands unchecked.
+    NotUs = other_columns(none_of=pl.Datetime("us"))
+    Rest = other_columns()
+
+    def split(df: TypedDataFrame[Keys, SplitColumns[NotUs, Rest]]) -> None:
+        raise NotImplementedError
+
+    df: TypedDataFrame[Keys, SplitColumns[NotUs, Rest]]
+    open_frame: TypedDataFrame[Keys, Rest]
+    split(open_frame)  # E: Argument 1 to "split" has incompatible type "TypedDataFrame[Keys, Rest]"; expected "TypedDataFrame[Keys, SplitColumns[NotUs, Rest]]"  [arg-type]
+
+- case: fit_reports_a_column_no_part_of_a_split_takes
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    class Closed(Columns):
+        k: pl.Int64
+        n: pl.Int64
+        s: pl.String
+
+    Numeric = other_columns(all_of=pl.Int64)
+    Texts = other_columns(all_of=pl.String)
+
+    # Every column must reach a part. A caller holding one that no
+    # part accepts is named at the call.
+    def split(df: TypedDataFrame[Keys, SplitColumns[Numeric, Texts]]) -> None:
+        raise NotImplementedError
+
+    ok: TypedDataFrame[Closed]
+    split(ok)
+
+    class Dated(Columns):
+        k: pl.Int64
+        d: pl.Date
+
+    dated: TypedDataFrame[Dated]
+    split(dated)  # E: No part of the split accepts column "d"  [forbidden-column]
+
+- case: fit_reports_a_split_gap_for_an_open_caller
+  main: |
+    import polars as pl
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    Numeric = other_columns(all_of=pl.Int64)
+    Texts = other_columns(all_of=pl.String)
+    Rest = other_columns()
+    Open = other_columns()
+
+    # A caller that promises nothing can hold a column no part takes.
+    def gapped(df: TypedDataFrame[Keys, SplitColumns[Numeric, Texts]]) -> None:
+        raise NotImplementedError
+
+    def whole(df: TypedDataFrame[Keys, SplitColumns[Numeric, Rest]]) -> None:
+        raise NotImplementedError
+
+    df: TypedDataFrame[Keys, Open]
+    gapped(df)  # E: The split leaves a column in no part, and this argument's remainder can hold one. Give the last part other_columns()  [forbidden-column]
+    whole(df)
+
+- case: fit_a_longer_affix_entails_a_shorter_one_only_one_way
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.Int64
+
+    NoAB = other_columns(without_prefix="ab")
+    NoA = other_columns(without_prefix="a")
+    NoBC = other_columns(without_suffix="bc")
+    NoC = other_columns(without_suffix="c")
+
+    def takes_no_ab(frame: TypedDataFrame[Keys, NoAB]) -> None: ...
+    def takes_no_a(frame: TypedDataFrame[Keys, NoA]) -> None: ...
+    def takes_no_bc(frame: TypedDataFrame[Keys, NoBC]) -> None: ...
+    def takes_no_c(frame: TypedDataFrame[Keys, NoC]) -> None: ...
+
+    no_a: TypedDataFrame[Keys, NoA]
+    no_ab: TypedDataFrame[Keys, NoAB]
+    no_c: TypedDataFrame[Keys, NoC]
+    no_bc: TypedDataFrame[Keys, NoBC]
+
+    # No name starts with "a", so no name starts with "ab".
+    takes_no_ab(no_a)
+    takes_no_bc(no_c)
+    # A name such as "ax" does not start with "ab", and it starts with "a".
+    takes_no_a(no_ab)  # E: The argument's own remainder does not prove the requirements of "NoA". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+    takes_no_c(no_bc)  # E: The argument's own remainder does not prove the requirements of "NoC". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+    # A prefix says nothing about a suffix.
+    takes_no_ab(no_c)  # E: The argument's own remainder does not prove the requirements of "NoAB". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+- case: a_column_of_an_abstract_data_type_fits_by_its_family
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from polars.datatypes import FloatType
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    Anything = other_columns()
+    Nums = other_columns(all_of=NumericType)
+    Every = other_columns(all_of=pl.DataType)
+
+    class Trades(Columns):
+        price: pl.Float64
+
+    class Wide(Columns):
+        price: pl.Float64
+        anyd: pl.DataType
+        fl: FloatType
+
+    def need(df: TypedDataFrame[Trades, Anything]) -> None: ...
+    def need_nums(df: TypedDataFrame[Trades, Nums]) -> None: ...
+
+    def f(wide: TypedDataFrame[Wide], every: TypedDataFrame[Trades, Every]) -> None:
+        # A remainder that requires nothing holds a column of any data type.
+        need(wide)
+        # A numeric remainder holds a FloatType column, and not a DataType one.
+        need_nums(wide)  # E: Remainder "Nums" must not contain a column of type "DataType"  [forbidden-column]
+        # all_of=pl.DataType holds every column, so a selection can pick from it.
+        reveal_type(every.select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Trades, {'price': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Every, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+
+- case: a_call_with_one_closed_and_one_open_frame_keeps_each_in_its_own_terms
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Both, Columns, other_columns, Suffixed, TypedDataFrame
+
+    R1 = other_columns()
+    R2 = other_columns()
+    Mine = other_columns()
+
+    class A(Columns):
+        a: pl.Int64
+
+    class B(Columns):
+        b: pl.Int64
+
+    class Full(Columns):
+        a: pl.Int64
+        x: pl.String
+
+    def left_only(
+        left: TypedDataFrame[A, R1],
+        right: TypedDataFrame[B, R2],
+    ) -> TypedDataFrame[A, R1]:
+        return left
+
+    def joined(
+        left: TypedDataFrame[A, R1],
+        right: TypedDataFrame[B, R2],
+    ) -> TypedDataFrame[A, Both[R1, R2]]:
+        raise NotImplementedError
+
+    def suffixed(
+        left: TypedDataFrame[A, R1],
+        right: TypedDataFrame[B, R2],
+    ) -> TypedDataFrame[A, Suffixed[Both[R1, R2], Literal["_x"]]]:
+        raise NotImplementedError
+
+    closed: TypedDataFrame[Full]
+    open_b: TypedDataFrame[B, Mine]
+    # The closed frame's extra column "x" is known by name.
+    reveal_type(left_only(closed, open_b))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.String}, closed=True), None]"
+    # The open frame's remainder "Mine" stays a remainder, without the declared "x".
+    reveal_type(joined(closed, open_b))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Minus[main.Mine, Literal['x']]]"
+    # An effect over the union applies to both halves.
+    reveal_type(suffixed(closed, open_b))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x_x': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Suffixed[astrolabe.remainder.Minus[main.Mine, Literal['x']], Literal['_x']]]"

@@ -1,0 +1,575 @@
+# DtypeExpr's own new capability: a literal call to pl.Datetime/
+# pl.Duration/pl.Decimal/pl.Enum carries its own arguments into
+# astrolabe's own parametrized marker, instead of the plain,
+# argument-less real dtype every other dtype value expression still
+# resolves to. Exercised through two of DtypeExpr's own seven real call
+# sites: `.cast(dtype)` on a TypedExpr receiver (typed_expr_alias_cast.py),
+# and a `schema={...}` dict literal's own values (read_schema.py). A
+# bare class reference (no call at all) stands for the instance that
+# polars builds for it: pl.Datetime is Datetime("us", None). The class
+# pl.Decimal has no such instance inside an expression, and polars
+# raises there. See the "data_type_class" cases at the end.
+#
+# Every one of the four constructors also masks its own call's real
+# return type directly (DtypeConstructorHook, typed_dtype_constructor.py),
+# the same way SelectorConstructorHook masks a polars.selectors
+# constructor call: this is what lets a constructor call's own result,
+# once assigned to a plain variable first, still carry the parametrized
+# marker into .cast(dtype)/schema={...} -- previously a silent
+# corruption (the variable's own arguments were dropped, narrowing to
+# the plain, argless dtype instead). See the "_bound" cases below.
+
+- case: select_cast_to_parametrized_datetime_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    # Date -> Datetime always succeeds regardless of the target's own
+    # time_unit/time_zone, confirmed empirically. Int64 -> Datetime is
+    # deliberately not used here: it is a silent-corruption landmine
+    # (an out-of-range source value produces a silently corrupted value,
+    # crashing the process on later materialization), correctly blocked
+    # by CastCompatibility -- see test_cast_validity.yml's own landmine
+    # cases for that behavior.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime("ms"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_zone_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    # See select_cast_to_parametrized_datetime_narrows above for why the
+    # source column is Date, not Int64.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime("us", "UTC"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']]}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_omitted_arguments_applies_real_defaults
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    # Real polars' own pl.Datetime() defaults time_unit="us", time_zone=None.
+    # See select_cast_to_parametrized_datetime_narrows above for why the
+    # source column is Date, not Int64.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_non_literal_unit_narrows_to_the_bare_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # unit's own declared type satisfies real polars' own TimeUnit
+    # stub, so this is not a mypy [arg-type] error on its own -- but
+    # its own AST node is a plain name reference, not a string literal,
+    # so DtypeConstructorArgs cannot read it. The whole dtype falls back
+    # to the plain, argless real Datetime instead of losing the whole
+    # result: not a partially-unknown Datetime[<unknown>, ...], but not
+    # unrecognized either -- the same as the old argless pl.Datetime.
+    # String -> Datetime is a data-dependent cast pair that always
+    # succeeds statically (only specific runtime formats succeed).
+    unit: Literal["ms"] = "ms"
+
+    class FrameSchema(Columns):
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime(unit))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Datetime}, closed=True), None]"
+
+- case: select_cast_to_bare_datetime_class_narrows_to_microseconds
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.String
+
+    # A bare class reference, with no call at all, stands for the
+    # instance that polars builds for it: Datetime("us", None).
+    # String -> Datetime is a data-dependent cast pair (only specific
+    # formats succeed), so this narrows with no error, unlike casting a
+    # numeric source there.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_duration_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"gap": pl.Duration("ms")}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'gap': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_decimal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"amount": pl.Decimal(10, 2)}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'amount': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_enum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"color": pl.Enum(["red", "blue"])}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'color': astrolabe.frame.Enum[Literal['red'], Literal['blue']]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_bare_duration_class_narrows_to_microseconds
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"gap": pl.Duration}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'gap': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_non_literal_zone_narrows_to_the_bare_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # zone is given, not omitted, but its own AST node is a plain name
+    # reference, not a string literal: a partial-argument failure
+    # (unit resolves, zone does not), falling back to the bare dtype
+    # the same way a fully-unresolvable argument list does.
+    zone: Literal["UTC"] = "UTC"
+
+    class FrameSchema(Columns):
+        s: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime("us", zone))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Datetime}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_decimal_with_omitted_arguments_applies_real_defaults
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    # Real polars' own pl.Decimal() defaults precision=None, scale=0 --
+    # but Decimal.__init__ itself substitutes precision=38
+    # unconditionally when omitted (Stage 17), so this resolves to
+    # Literal[38], not None.
+    reveal_type(pl.read_csv("data.csv", schema={"amount": pl.Decimal()}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'amount': astrolabe.frame.Decimal[Literal[38], Literal[0]]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_decimal_with_non_literal_precision_narrows_to_the_bare_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    # The column's own name is still known outright, and now its own
+    # dtype narrows too, just to the bare, argless Decimal instead of
+    # a partially-unknown Decimal[<unknown>, 2]: DtypeExpr's own
+    # partial-constructor-argument fallback applies here identically,
+    # since read_schema.py's own dict-literal schema values resolve
+    # through the same DtypeExpr.
+    precision: Literal[10] = 10
+    reveal_type(pl.read_csv("data.csv", schema={"amount": pl.Decimal(precision, 2)}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'amount': polars.datatypes.classes.Decimal}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_enum_with_non_literal_categories_narrows_to_the_bare_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    categories: list[str] = ["red", "blue"]
+    reveal_type(pl.read_csv("data.csv", schema={"color": pl.Enum(categories)}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'color': polars.datatypes.classes.Enum}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_enum_with_non_literal_category_item_narrows_to_the_bare_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    reveal_type(pl.read_csv("data.csv", schema={"color": pl.Enum(["red", str(1)])}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'color': polars.datatypes.classes.Enum}, closed=True), None]"
+
+- case: select_cast_to_parametrized_duration_with_extra_positional_argument_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.Int64
+
+    # An extra positional argument beyond Duration's own single real
+    # parameter has nowhere to go once DtypeConstructorArgs's own
+    # positional-name iterator is exhausted, so it is silently dropped
+    # rather than misread as time_unit -- real polars' own stub reports
+    # its own, unrelated error for the call shape itself.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    x = pl.col("s").cast(pl.Duration("ms", "extra"))  # E: Too many arguments for "Duration"  [call-arg]
+    reveal_type(df.select(x))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_value_whose_callee_has_no_fullname_still_resolves_the_old_plain_way
+  main: |
+    import polars as pl
+
+    # dtypes[0]()'s own outer call has an IndexExpr callee, which
+    # carries no fullname attribute at all (unlike a lambda call's own
+    # callee, which does carry one, just an empty one) --
+    # ParametrizedDtypeReaders.reader_for tolerates this and this still
+    # resolves through the old, plain path. A schema={...} dict literal
+    # value, not a .cast(...) argument, since pl.read_csv("data.csv")
+    # never actually runs against a real file, unlike .cast(...) on a
+    # real receiver, which the runtime cross-check does execute.
+    dtypes: list[type[pl.DataType]] = [pl.Int64]
+    reveal_type(pl.read_csv("data.csv", schema={"s": dtypes[0]()}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.DataType}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_parametrized_decimal_with_negative_scale_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    # A leading unary "-" is recognized the same way CallArgs.literal_int
+    # already recognizes it, so a negative literal reads the same as a
+    # plain one.
+    reveal_type(pl.read_csv("data.csv", schema={"amount": pl.Decimal(10, -2)}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'amount': astrolabe.frame.Decimal[Literal[10], Literal[-2]]}, closed=True), None]"
+
+- case: select_cast_to_variable_bound_parametrized_datetime_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    # The actual bug this fix targets: a call to one of the four
+    # parametrized dtype classes, assigned to a plain variable first,
+    # used to silently drop its own arguments (DtypeExpr's own AST-only
+    # recognition only ever saw the call written inline). The
+    # constructor call itself now masks its own result via
+    # DtypeConstructorHook, so the variable's own inferred type already
+    # carries the parametrized marker.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    dt = pl.Datetime("ms")
+    reveal_type(df.select(pl.col("s").cast(dt)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_variable_bound_parametrized_duration_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    dur = pl.Duration("ms")
+    reveal_type(pl.read_csv("data.csv", schema={"gap": dur}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'gap': astrolabe.frame.Duration[Literal['ms']]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_variable_bound_parametrized_decimal_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    dec = pl.Decimal(10, 2)
+    reveal_type(pl.read_csv("data.csv", schema={"amount": dec}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'amount': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+- case: read_csv_with_dict_literal_schema_variable_bound_parametrized_enum_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Column, TypedDataFrame
+
+    categories = pl.Enum(["red", "blue"])
+    reveal_type(pl.read_csv("data.csv", schema={"color": categories}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'color': astrolabe.frame.Enum[Literal['red'], Literal['blue']]}, closed=True), None]"
+
+- case: a_cast_to_a_struct_keeps_its_fields
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Small(Columns):
+        i: pl.Int8
+
+    df: TypedDataFrame[Small]
+    # The target keeps its fields, so a later field read knows its type.
+    reveal_type(df.select(pl.col("i").cast(pl.Struct({"p": pl.String}))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['p'], polars.datatypes.classes.String]]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.Struct({"p": pl.Int8})).struct.field("p")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p': polars.datatypes.classes.Int8}, closed=True), None]"
+    # A value that is not a struct casts only to a struct of one field.
+    df.select(pl.col("i").cast(pl.Struct({"p": pl.Int8, "q": pl.Int8})))  # E: This expression cannot cast from Int8 to Struct({'p': Int8, 'q': Int8})  [invalid-cast]
+
+- case: an_array_of_a_shape_of_several_widths_nests_an_array_for_each
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Small(Columns):
+        x: pl.Int64
+
+    df: TypedDataFrame[Small]
+    reveal_type(pl.Array(pl.Int8, (2, 3)))  # N: Revealed type is "astrolabe.frame.Array[astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[3]], Literal[2]]"
+    reveal_type(pl.Array(pl.Int8, shape=(2,)))  # N: Revealed type is "astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]]"
+    df.select(pl.col("x").cast(pl.Array(pl.Int8, (2, 3))))  # E: This expression cannot cast from Int64 to Array(Int8, shape=(2, 3))  [invalid-cast]
+
+    # A data type in a variable stands in the target, so the error names
+    # what the samples of the variable share, and no one sample.
+    def f(t: pl.DataType) -> None:
+        df.select(pl.col("x").cast(pl.Array(t, 2)))  # E: This expression cannot cast from Int64 to Array  [invalid-cast]
+
+- case: an_array_with_no_shape_is_an_error
+  main: |
+    import polars as pl
+
+    # polars needs the width of an array, and raises TypeError for a call
+    # with no shape, or with the shape None, whatever the element.
+    pl.Array(pl.Int8)  # E: pl.Array() with no shape always raises TypeError: polars needs the width of the array. Pass the shape, for example pl.Array(pl.Int64, shape=2)  [invalid-call-shape]
+    pl.Array(pl.Int8, shape=None)  # E: pl.Array() with no shape always raises TypeError: polars needs the width of the array. Pass the shape, for example pl.Array(pl.Int64, shape=2)  [invalid-call-shape]
+    reveal_type(pl.Array(pl.Int8, 2))  # N: Revealed type is "astrolabe.frame.Array[polars.datatypes.classes.Int8, Literal[2]]"
+
+- case: a_struct_of_fields_in_a_list_keeps_the_plain_type
+  main: |
+    import polars as pl
+
+    # The hook reads a dictionary of fields. A list of `pl.Field` keeps the
+    # plain type of polars.
+    reveal_type(pl.Struct([pl.Field("p", pl.Int8)]))  # N: Revealed type is "polars.datatypes.classes.Struct"
+
+- case: a_data_type_class_stands_for_its_default_instance
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    reveal_type(df.select(pl.col("i").cast(pl.Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(pl.Duration)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None, dtype=pl.Enum)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Enum[tuple[()]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(pl.List)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[polars.datatypes.classes.Null]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(pl.Array)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Array[polars.datatypes.classes.Null, Literal[0]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(pl.Struct)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Struct[tuple[()]]}, closed=True), None]"
+    # A struct with no field takes no column that is not a struct.
+    df.select(pl.col("i").cast(pl.Struct))  # E: This expression cannot cast from Int64 to Struct({})  [invalid-cast]
+    # A class inside a nested data type takes its default too.
+    reveal_type(df.select(pl.lit(None, dtype=pl.List(pl.Datetime))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['us'], None]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None, dtype=pl.Struct({"a": pl.Duration}))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], astrolabe.frame.Duration[Literal['us']]]]]}, closed=True), None]"
+    reveal_type(df.select(pl.struct(pl.col("i"), schema={"i": pl.Datetime})))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['i'], astrolabe.frame.Datetime[Literal['us'], None]]]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").map_batches(lambda s: s, return_dtype=pl.Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.get_column("s").cast(pl.Enum))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['s'], astrolabe.frame.Enum[tuple[()]]]"
+    reveal_type(pl.Series("a", [], dtype=pl.Datetime))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Datetime[Literal['us'], None]]"
+
+- case: a_bare_marker_class_of_astrolabe_stands_for_the_default_instance
+  main: |
+    from typing import Generic, TypeVar
+
+    import polars as pl
+    from astrolabe import Array, Columns, Datetime, Duration, Enum, List, Struct, TypedDataFrame
+
+    T = TypeVar("T")
+
+    class Box(Generic[T]):
+        pass
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars reads a bare marker class as the polars class of the same name.
+    reveal_type(df.select(pl.col("i").cast(Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(Duration)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None, dtype=Enum)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Enum[tuple[()]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(List)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[polars.datatypes.classes.Null]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(Array)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Array[polars.datatypes.classes.Null, Literal[0]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None).cast(Struct)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Struct[tuple[()]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None, dtype=pl.List(List))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[astrolabe.frame.List[polars.datatypes.classes.Null]]}, closed=True), None]"
+    reveal_type(df.select(pl.lit(None, dtype=pl.Struct({"a": Duration}))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], astrolabe.frame.Duration[Literal['us']]]]]}, closed=True), None]"
+    reveal_type(df.select(pl.struct(pl.col("i"), schema={"i": Datetime})))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['i'], astrolabe.frame.Datetime[Literal['us'], None]]]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").map_batches(lambda s: s, return_dtype=Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(df.get_column("i").cast(Datetime))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['i'], astrolabe.frame.Datetime[Literal['us'], None]]"
+    reveal_type(pl.read_csv("data.csv", schema={"a": Datetime}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    # A frame from Python data raises for a list of values, and reads the default for a series or a row.
+    reveal_type(pl.from_dict({"a": pl.Series([None])}, schema={"a": Datetime}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(pl.from_dicts([{"a": None}], schema={"a": Enum}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Enum[tuple[()]]}, closed=True), None]"
+    # A series raises for every bare marker class, whatever the data.
+    reveal_type(pl.Series("a", [], dtype=Datetime))  # E: Datetime is a type annotation, not a data type of polars, and polars raises: pass pl.Datetime(...)  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    pl.Series("a", dtype=List)  # E: List is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    # A generic class that is not a marker class is no data type of polars.
+    pl.Series("a", [1], dtype=Box)  # E: Argument "dtype" to "Series" has incompatible type "type[Box[T]]"; expected "DataTypeClass | DataType | None"  [arg-type]
+
+- case: a_series_or_a_frame_from_python_data_reads_the_decimal_class_as_decimal_38_0
+  main: |
+    import polars as pl
+
+    reveal_type(pl.Series("a", [], dtype=pl.Decimal))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Decimal[Literal[38], Literal[0]]]"
+    reveal_type(pl.from_dict({"a": []}, schema={"a": pl.Decimal}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Decimal[Literal[38], Literal[0]]}, closed=True), None]"
+    # A function that reads a file raises for the class.
+    reveal_type(pl.read_csv("data.csv", schema={"a": pl.Decimal, "b": pl.Int8}))  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'b': polars.datatypes.classes.Int8}, closed=True), None]"
+
+- case: the_data_type_class_decimal_is_refused_in_an_expression
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars raises TypeError: a Decimal in an expression needs its precision.
+    pl.col("i").cast(pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    pl.lit(None, dtype=pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    pl.col("i").map_batches(lambda s: s, return_dtype=pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    pl.repeat(None, 2, dtype=pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    pl.ones(2, dtype=pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    pl.int_range(0, 2, dtype=pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape] # E: Argument "dtype" to "int_range" has incompatible type "type[Decimal]"; expected "type[IntegerType] | IntegerType | DataTypeExpr"  [arg-type]
+    pl.struct(pl.col("i"), schema={"i": pl.Decimal})  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    df.get_column("i").cast(pl.Decimal)  # E: pl.Decimal without a precision is not a data type here, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    # An instance names its precision, and polars takes it.
+    reveal_type(df.select(pl.col("i").cast(pl.Decimal())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Decimal[Literal[38], Literal[0]]}, closed=True), None]"
+
+
+- case: a_marker_class_of_astrolabe_is_refused_as_a_data_type
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Column, Columns, Datetime, Decimal, List, Struct, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        l: List[pl.Int64]
+
+    df: TypedDataFrame[FrameSchema]
+    Wide = List[pl.Float64]
+
+    # polars raises TypeError: a marker is an annotation, not a data type.
+    pl.col("l").cast(List[pl.Float64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.col("l").cast(Wide)  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.col("i").cast(Datetime[Literal["ms"], None])  # E: Datetime[...] is a type annotation, not a data type of polars, and polars raises: pass pl.Datetime(...)  [invalid-call-shape]
+    pl.col("i").cast(Struct[Column[Literal["a"], pl.Int64]])  # E: Struct[...] is a type annotation, not a data type of polars, and polars raises: pass pl.Struct(...)  [invalid-call-shape]
+    pl.col("i").cast(Unchecked)  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape]
+    pl.col("i").cast(Decimal)  # E: Decimal is a type annotation, not a data type of polars, and polars raises: pass pl.Decimal(precision, scale)  [invalid-call-shape]
+    df.get_column("l").cast(List[pl.Float64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.lit(None, dtype=List[pl.Float64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.col("i").map_batches(lambda s: s, return_dtype=Unchecked)  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape]
+    pl.repeat(None, 2, dtype=List[pl.Float64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.struct(pl.col("i"), schema={"i": Unchecked})  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape]
+    reveal_type(pl.read_csv("data.csv", schema={"a": List[pl.Int64], "b": pl.Int8}))  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'b': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(pl.Series("a", [], dtype=List[pl.Int64]))  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    reveal_type(pl.from_dict({"a": []}, schema={"a": Unchecked}))  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pl.from_dicts([{"a": 1}], schema={"a": Unchecked}))  # E: Unchecked is a type annotation, not a data type of polars, and polars raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A nested data type raises for a marker with its arguments when it is built.
+    pl.List(List[pl.Int64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.Array(Datetime[Literal["ms"], None], 2)  # E: Datetime[...] is a type annotation, not a data type of polars, and polars raises: pass pl.Datetime(...)  [invalid-call-shape]
+    pl.Struct({"a": Wide})  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.Field("a", List[pl.Int64])  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    pl.Struct([pl.Field("a", Datetime[Literal["ms"], None])])  # E: Datetime[...] is a type annotation, not a data type of polars, and polars raises: pass pl.Datetime(...)  [invalid-call-shape]
+    pl.Field(name="a", dtype=Wide)  # E: List[...] is a type annotation, not a data type of polars, and polars raises: pass pl.List(...)  [invalid-call-shape]
+    # A field keeps Unchecked and the bare class Decimal until a later use.
+    reveal_type(pl.Field("a", Unchecked))  # N: Revealed type is "polars.datatypes.classes.Field"
+    reveal_type(pl.Field("a", List))  # N: Revealed type is "polars.datatypes.classes.Field"
+
+- case: a_user_subclass_of_a_data_type_is_read_by_its_name_or_refused
+  main: |
+    from typing import Generic, TypeVar
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    T = TypeVar("T")
+
+    class Tagged(pl.Int64, Generic[T]): ...
+    class Plain(pl.Int64): ...
+    class Int64(pl.Int64): ...
+    class Datetime(pl.Datetime): ...
+    class Rows(pl.List): ...
+    class Box(Generic[T]): ...
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # pl.Series raises ValueError for a subclass of a scalar kind, whatever its name.
+    reveal_type(pl.Series("a", [1], dtype=Tagged))  # E: Tagged subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    reveal_type(pl.Series("a", [1], dtype=Int64))  # E: Int64 subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    reveal_type(pl.Series("a", [1], dtype=Plain()))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    # It ignores a subclass of List, Array or Struct, so the values decide.
+    reveal_type(pl.Series("a", [1], dtype=Rows))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]"
+    # A class that is no data type at all is mypy's own error.
+    reveal_type(pl.Series("a", [1], dtype=Box))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['a'], astrolabe.frame.Unchecked]" # E: Argument "dtype" to "Series" has incompatible type "type[Box[T]]"; expected "DataTypeClass | DataType | None"  [arg-type]
+
+    # Elsewhere polars reads the class by its name, and raises for a name that no kind has.
+    df.select(pl.col("i").cast(Plain))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape]
+    pl.lit(None, dtype=Tagged)  # E: Tagged subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape]
+    pl.col("i").map_batches(lambda s: s, return_dtype=Plain)  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape]
+    pl.List(Plain)  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape]
+    df.select(cs.by_dtype(Plain))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape]
+    reveal_type(pl.read_csv("data.csv", schema={"a": Plain}))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A frame built from Python data refuses or ignores the class, as the data decides.
+    reveal_type(pl.from_dict({"a": pl.Series([1])}, schema={"a": Plain}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    # pl.from_dicts reads the class by its name for every data.
+    reveal_type(pl.from_dicts([{"a": 1}], schema={"a": Plain}))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pl.from_dicts([{"a": 1}], schema={"a": Plain()}))  # E: Plain subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pl.from_dicts([{"a": 1}], schema={"a": Rows}))  # E: Rows subclasses a data type of polars, but polars does not read it as a data type here, and raises: pass a data type of polars  [invalid-call-shape] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(pl.from_dicts([{"a": 1}], schema={"a": Int64}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").cast(Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    # An instance of such a class holds parameters that its type does not show.
+    reveal_type(df.select(pl.col("i").cast(Datetime())))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df["i"].cast(Datetime()))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['i'], astrolabe.frame.Unchecked]"
+    reveal_type(pl.read_csv("data.csv", schema={"a": Int64, "b": Datetime}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    reveal_type(pl.List(Int64))  # N: Revealed type is "astrolabe.frame.List[polars.datatypes.classes.Int64]"
+    reveal_type(df.select(cs.by_dtype(Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'i': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_series_casts_an_integer_to_a_date_or_a_datetime
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        j: pl.Int32
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars casts both. A value out of range raises only when polars
+    # shows it, so the data decides, as the expression path also says.
+    reveal_type(df.get_column("i").cast(pl.Datetime("us")))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['i'], astrolabe.frame.Datetime[Literal['us'], None]]"
+    reveal_type(df.get_column("j").cast(pl.Date))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['j'], polars.datatypes.classes.Date]"
+    reveal_type(df.select(pl.col("i").cast(pl.Datetime("us"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+- case: a_struct_of_a_field_type_in_a_variable_keeps_the_names_of_its_fields
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        b: pl.Int64
+
+    def f(df: TypedDataFrame[Schema], t: pl.DataType, s: pl.Struct) -> None:
+        # A field type that the checker cannot read is Unchecked, and the name stays.
+        reveal_type(pl.Struct({"x": t}))  # N: Revealed type is "astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['x'], astrolabe.frame.Unchecked]]]"
+        # The cast gives the type that t holds, so the column is Unchecked, and no field is invented.
+        out = df.select(pl.col("b").cast(pl.Struct({"x": t})))
+        reveal_type(out)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Unchecked}, closed=True), None]"
+        reveal_type(out.select(pl.col("b").struct.field("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+        # A struct in a variable can hold exactly the field that the code reads.
+        reveal_type(df.select(pl.col("b").cast(s)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Unchecked}, closed=True), None]"
+        reveal_type(df.select(pl.col("b").cast(s).struct.field("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+        # Polars casts a value that is not a struct only to a struct of one field.
+        df.select(pl.col("b").cast(pl.Struct({})))  # E: This expression cannot cast from Int64 to Struct({})  [invalid-cast]

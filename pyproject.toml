@@ -1,0 +1,157 @@
+[project]
+name = "astrolabe"
+version = "0.1.0"
+description = "A mypy plugin for statically checking Polars DataFrame/LazyFrame column names and dtypes."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "polars==1.43.2",
+    "mypy>=1.13",
+    "greenery>=4.2.2",
+    "tomlkit>=0.13",
+]
+
+[project.scripts]
+astrolabe = "astrolabe._cli:InitCommand.main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=7.1.0",
+    "pytest-mypy-plugins>=3.1",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.7",
+    "types-pyyaml>=6.0.12.20260724",
+    "complexipy>=7.0.1",
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
+    "mdformat-myst>=0.3.0",
+    "cosmic-ray>=8.7",
+]
+numpy = [
+    "numpy>=2.5.3",
+]
+
+# mypy 2.3.1 publishes no compiled wheel for macOS on x86_64, so uv
+# installs the pure-Python wheel there. That mypy runs the suite about
+# four times slower. The constraint holds the lock at 2.3.0, which has
+# the wheel. It applies only to this project, not to the users of the
+# plugin.
+[tool.uv]
+constraint-dependencies = ["mypy<2.3.1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/astrolabe"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["spec/lean/.lake", ".mutation"]
+target-version = "py312"
+preview = true
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "B", "TID", "C90", "PT", "RET", "FURB",
+    "T20", "LOG", "G", "PL", "SIM", "TC", "PTH", "SLF",
+    "UP", "RUF", "TRY", "ERA", "EM", "S", "DOC", "D"
+]
+ignore = ["magic-value-comparison", "no-self-use"]
+[tool.ruff.lint.per-file-ignores]
+# Test function names document the test by pytest convention. Docstrings
+# on every test function and test package would repeat the name in
+# prose. Tests also deliberately reach into astrolabe's private _hooks/
+# _markers submodules to unit-test them directly, not through the
+# public API.
+"tests/**/*.py" = [
+    "assert",
+    "undocumented-public-function",
+    "undocumented-public-package",
+    "import-private-name",
+]
+# spec/tests/ holds the executable evidence for spec/'s three documents. It
+# asserts like any other test suite. Unlike tests/, every class and function
+# in it carries a docstring, because the reference model it builds is read
+# alongside the documents it supports.
+# The tests of the pattern reader also compute real machine signatures
+# through the engine's own name-language facade, a private module by design.
+"spec/tests/**/*.py" = ["assert", "import-private-name"]
+# spec/tools/ builds and checks the trees of the census with the engine's
+# own rules rather than a second copy of them, from the private modules
+# that state them.
+"spec/tools/**/*.py" = ["import-private-name"]
+# TypedDataFrame/TypedLazyFrame/TypedSeries each wrap real polars
+# classes one thin, Self-typed override per real public method (`select`,
+# `filter`, `head`, and so on). This is an inherent 1:1 mirroring shape,
+# not a God-object accumulating unrelated responsibilities, so the
+# too-many-public-methods count is expected to exceed the default
+# threshold and grow as more real polars methods are covered.
+"src/astrolabe/frame.py" = ["too-many-public-methods"]
+# site/examples/ holds the code examples of the website. Each one is a
+# snippet that a reader copies: it calls mypy's reveal_type, which is not a
+# Python name, and it carries no docstrings.
+"site/examples/*.py" = ["undefined-name", "D", "commented-out-code"]
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "spec", "src/astrolabe", "tools"]
+# pytest-mypy-plugins does not find pyproject.toml by itself, so the
+# option names it, or every .yml case would need its own `mypy_config:`
+# block to load the plugin. --doctest-modules runs the doctests of
+# src/astrolabe. --mypy-same-process runs the mypy build of each .yml case
+# inside the pytest process, because coverage.py cannot see a subprocess,
+# and the __call__ of a hook runs only in a .yml case.
+# --cov/--cov-report measure coverage on every plain `uv run pytest`, so
+# fail_under = 100 holds by default.
+# -n auto runs the suite on every CPU core through pytest-xdist, and
+# pytest-cov combines the coverage data of the workers. The root
+# conftest.py gives every worker its own pytest-mypy-plugins cache
+# directory, because one shared directory breaks under several workers.
+# Pass `-n 2` to hold the memory down, or `-n 0` for a serial run, for
+# example to debug one case.
+addopts = "--mypy-pyproject-toml-file=pyproject.toml --doctest-modules --mypy-same-process --cov=astrolabe --cov=tools --cov-report=term-missing -n auto"
+
+[tool.coverage.run]
+source = ["astrolabe"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+skip_covered = false
+fail_under = 100
+
+[[tool.mypy.overrides]]
+# greenery ships no py.typed marker, so its regular-language types arrive as
+# Any. Only two modules touch it, and each wraps every call it makes: the
+# engine's name-language facade, and spec/tests/' reference model.
+module = ["greenery.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# cosmic-ray ships no py.typed marker. The mutation harness is the only
+# caller, and it keeps every cosmic-ray object private to one class.
+module = ["cosmic_ray.*"]
+ignore_missing_imports = true
+
+[tool.mypy]
+plugins = ["astrolabe.plugin"]
+strict = true
+# The supported configuration: the convergence theorem for loop-built
+# expressions (T-18 in spec/OPERATIONS.md) rests on redefinition.
+allow_redefinition = true
+
+[tool.complexipy]
+max-complexity-allowed = 10
+exclude = ["spec/lean/.lake/**", ".mutation/**", "site/node_modules/**"]

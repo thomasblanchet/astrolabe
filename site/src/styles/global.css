@@ -1,0 +1,117 @@
+/* The base styles of the landing page.
+ *
+ * Each section of the page holds its own styles. This file holds only what
+ * several sections share: the page itself, the buttons, the small labels
+ * above a section, the cards and the inline code.
+ */
+
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--navy);
+  color: var(--text);
+  font: 400 17px/1.65 var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--gold-bright);
+}
+
+a:hover {
+  color: var(--gold-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-bright);
+  outline-offset: 2px;
+}
+
+.eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 24px;
+  border-radius: 6px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button.primary {
+  background: var(--gold);
+  color: var(--navy);
+}
+
+.button.primary:hover {
+  background: var(--gold-bright);
+  color: var(--navy);
+}
+
+.button.secondary {
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  color: var(--star);
+  font-weight: 400;
+}
+
+.button.secondary:hover {
+  border-color: var(--gold);
+  color: var(--star);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px;
+  border-radius: 10px;
+  background: var(--navy-raised);
+  border: 1px solid rgba(212, 175, 55, 0.15);
+}
+
+.card h3 {
+  margin: 0;
+  color: var(--star);
+}
+
+.card p {
+  margin: 0;
+}
+
+.ic {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(143, 195, 255, 0.1);
+  color: var(--code-call);
+  white-space: nowrap;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

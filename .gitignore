@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Caches of the tools
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.complexipy_cache/
+.coverage
+.mutation/
+
+# The website: dependencies, caches and the build
+site/node_modules/
+site/.astro/
+site/dist/
+
+# Lean: the build and the downloaded mathlib cache
+spec/lean/.lake/
+
+# Local files
+.DS_Store
+*.code-workspace
+out.parquet/
+.claude/settings.local.json

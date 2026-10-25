@@ -1,0 +1,134 @@
+# Real-world test: dtype casting and List operations from polars' own
+# user guide, adapted to astrolabe's typed frame API. Source:
+# pola-rs/polars,
+# `docs/source/src/python/user-guide/expressions/casting.py` and
+# `docs/source/src/python/user-guide/expressions/lists.py`
+# (https://github.com/pola-rs/polars), MIT License, Copyright (c) 2020
+# Ritchie Vink. The numeric/string/date casting rules and the weather-
+# station `str.split()`/`.list.head()`/`.list.tail()`/`.list.slice()`/
+# `.list.eval()` example are the documentation's own real teaching
+# examples, combined into one narrative (clean raw sensor readings, then
+# cast them) and layered onto declared `TypedDataFrame`s instead of
+# inline `pl.DataFrame({...})` literals.
+
+- case: real_world_casting_numeric_widen_and_narrow
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NumbersSchema(Columns):
+        integers: pl.Int64
+        floats: pl.Float64
+
+    Numbers = TypedDataFrame[NumbersSchema]
+
+    df: Numbers
+
+    class ResultSchema(Columns):
+        integers_as_floats: pl.Float32
+        floats_as_integers: pl.Int32
+
+    result: TypedDataFrame[ResultSchema] = df.select(
+        pl.col("integers").cast(pl.Float32).alias("integers_as_floats"),
+        pl.col("floats").cast(pl.Int32).alias("floats_as_integers"),
+    )
+
+- case: real_world_casting_downcast_with_columns_keeps_names
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NumbersSchema(Columns):
+        integers: pl.Int64
+        floats: pl.Float64
+
+    Numbers = TypedDataFrame[NumbersSchema]
+
+    df: Numbers
+
+    class ResultSchema(Columns):
+        integers: pl.Int16
+        floats: pl.Float32
+
+    result: TypedDataFrame[ResultSchema] = df.with_columns(
+        pl.col("integers").cast(pl.Int16),
+        pl.col("floats").cast(pl.Float32),
+    )
+
+- case: real_world_casting_string_roundtrip_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class NumbersSchema(Columns):
+        integers_as_strings: pl.String
+        floats_as_strings: pl.String
+        floats: pl.Float64
+
+    Numbers = TypedDataFrame[NumbersSchema]
+
+    df: Numbers
+
+    class ResultSchema(Columns):
+        integers_as_strings: pl.Int32
+        floats_as_strings: pl.Float64
+        floats: pl.String
+
+    result: TypedDataFrame[ResultSchema] = df.select(
+        pl.col("integers_as_strings").cast(pl.Int32),
+        pl.col("floats_as_strings").cast(pl.Float64),
+        pl.col("floats").cast(pl.String),
+    )
+
+- case: real_world_weather_split_readings_narrows_to_list_string
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class WeatherSchema(Columns):
+        station: pl.String
+        temperatures: pl.String
+
+    Weather = TypedDataFrame[WeatherSchema]
+
+    weather: Weather
+
+    class ResultSchema(Columns):
+        station: pl.String
+        temperatures: List[pl.String]
+
+    # str.split() converts the receiver's own scalar String directly
+    # into a fresh List[String], via MethodTransform's own
+    # direct_promotion="to_list" mode (no inner extraction needed,
+    # unlike .arr.to_list()'s identically-named inner_promotion mode).
+    result: TypedDataFrame[ResultSchema] = weather.with_columns(pl.col("temperatures").str.split(" "))
+
+- case: real_world_weather_list_head_tail_slice_keep_inner_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class WeatherSchema(Columns):
+        station: pl.String
+        temperatures: List[pl.String]
+
+    Weather = TypedDataFrame[WeatherSchema]
+
+    weather: Weather
+
+    class ResultSchema(Columns):
+        station: pl.String
+        temperatures: List[pl.String]
+        head: List[pl.String]
+        tail: List[pl.String]
+        two_next_to_last: List[pl.String]
+
+    # .list.head()/.list.tail()/.list.slice() keep the same List[D]
+    # unchanged, the same "no inner_promotion" identity rule
+    # .list.unique()/.list.reverse() already use.
+    result: TypedDataFrame[ResultSchema] = weather.with_columns(
+        pl.col("temperatures").list.head(3).alias("head"),
+        pl.col("temperatures").list.tail(3).alias("tail"),
+        pl.col("temperatures").list.slice(-3, 2).alias("two_next_to_last"),
+    )
+

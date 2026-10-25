@@ -1,0 +1,333 @@
+---
+/**
+ * Astrolabe next to the runtime validation libraries for Polars.
+ *
+ * Each claim in the rows was checked with mypy against the releases that
+ * the note under the table names. Check them again before a change of the
+ * note.
+ */
+type Mark = 'yes' | 'no' | 'partly';
+
+interface Cell {
+  mark: Mark;
+  /** A short note under the mark. */
+  note?: string;
+  /** The note is code. */
+  code?: boolean;
+}
+
+interface Row {
+  title: string;
+  /** The explanation, with `code` between backticks. */
+  detail: string;
+  cells: [Cell, Cell, Cell, Cell];
+}
+
+const LIBRARIES = ['Astrolabe', 'pandera', 'patito', 'dataframely'];
+const LABEL = 'checks the schema label, not the columns';
+const no: Cell = { mark: 'no' };
+const yes: Cell = { mark: 'yes' };
+
+const GROUPS: [string, Row[]][] = [
+  [
+    'When mypy runs',
+    [
+      {
+        title: 'Every column reference',
+        detail: 'A column that the frame does not have is an error wherever the code reads it: in `select`, `pl.col`, joins and group keys.',
+        cells: [yes, no, no, no],
+      },
+      {
+        title: 'Schema tracked through every transform',
+        detail: 'Each operation updates the schema, so the code is checked at every step, not only where a frame enters a function.',
+        cells: [yes, no, no, no],
+      },
+      {
+        title: 'Data types in operations',
+        detail: 'A filter needs a Boolean, join keys must have the same type, and arithmetic must fit the column types.',
+        cells: [yes, no, no, no],
+      },
+      {
+        title: 'Function arguments checked by their columns',
+        detail: 'A call passes when the frame has the columns that the parameter declares, wherever the frame comes from.',
+        cells: [yes, { mark: 'partly', note: LABEL }, no, { mark: 'partly', note: LABEL }],
+      },
+      {
+        title: 'Functions that accept extra columns',
+        detail: 'A function names only the columns it reads. The caller’s other columns pass through to the result, still typed.',
+        cells: [yes, no, no, no],
+      },
+    ],
+  ],
+  [
+    'When the code runs',
+    [
+      {
+        title: 'No required overhead',
+        detail: 'Type safety adds nothing to the pipeline at run time: no validation pass and no wrapper around Polars.',
+        cells: [yes, no, no, no],
+      },
+      {
+        title: 'Columns and data types',
+        detail: 'Check a frame from outside against its declared type.',
+        cells: [{ mark: 'yes', note: 'check_schema', code: true }, yes, yes, yes],
+      },
+      {
+        title: 'Cast a frame to its schema',
+        detail: 'Convert each column to its declared data type.',
+        cells: [{ mark: 'yes', note: 'force_schema', code: true }, yes, yes, yes],
+      },
+      {
+        title: 'Values',
+        detail: 'Nulls, ranges, uniqueness and custom rules on the data.',
+        cells: [no, yes, yes, yes],
+      },
+    ],
+  ],
+];
+
+function detail(text: string): string {
+  return text
+    .split('`')
+    .map((piece, index) => (index % 2 === 1 ? `<span class="ic">${piece}</span>` : piece))
+    .join('');
+}
+
+const SYMBOL: Record<Mark, string> = { yes: '✓', no: '–', partly: '◐' };
+---
+
+<section id="compare" class="compare">
+  <p class="eyebrow">how Astrolabe compares</p>
+  <p class="intro">
+    Validation libraries check data at run time, only where the code calls a check, and only on the paths that run. Astrolabe analyzes every code
+    path and every step, without running your code.
+  </p>
+  <div class="frame">
+    <table class="cmp">
+      <thead>
+        <tr>
+          <th class="corner"></th>
+          {LIBRARIES.map((name, index) => <th scope="col" class={index === 0 ? 'ours' : ''}>{name}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {
+          GROUPS.map(([group, rows]) => (
+            <>
+              <tr class="cmp-group">
+                <th scope="rowgroup" colspan="5">{group}</th>
+              </tr>
+              {rows.map((row) => (
+                <tr class="cmp-row">
+                  <th scope="row" class="cmp-feat">
+                    <span class="feat-title">{row.title}</span>
+                    <span class="feat-detail" set:html={detail(row.detail)} />
+                  </th>
+                  {row.cells.map((cell, index) => (
+                    <td data-label={LIBRARIES[index]} class={index === 0 ? 'ours' : ''}>
+                      <span class={`mark ${cell.mark}`} aria-label={cell.mark}>{SYMBOL[cell.mark]}</span>
+                      {cell.note && (
+                        <span class="cell-note">{cell.code ? <span class="ic">{cell.note}</span> : cell.note}</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="checked">Checked with mypy 2.4 against pandera 0.35, patito 0.8 and dataframely 3.1.</p>
+</section>
+
+<style>
+  .compare {
+    padding: 0 0 96px;
+  }
+
+  .eyebrow {
+    margin-bottom: 12px;
+  }
+
+  .intro {
+    margin: 0 0 28px;
+    max-width: 46rem;
+    font-size: 18px;
+  }
+
+  .frame {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid rgba(212, 175, 55, 0.15);
+    background: var(--navy-raised);
+  }
+
+  .cmp {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: collapse;
+    font-size: 15px;
+    line-height: 1.45;
+  }
+
+  thead th {
+    padding: 16px 14px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.25);
+    font-weight: 600;
+    text-align: center;
+    vertical-align: bottom;
+    white-space: nowrap;
+    color: var(--star);
+  }
+
+  thead th.corner {
+    text-align: left;
+  }
+
+  thead th.ours {
+    color: var(--gold);
+  }
+
+  .ours {
+    background: rgba(212, 175, 55, 0.06);
+  }
+
+  .cmp-group th {
+    padding: 18px 18px 8px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--gold);
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+  }
+
+  .cmp-row {
+    transition: background 0.15s;
+  }
+
+  .cmp-row:hover {
+    background: rgba(212, 175, 55, 0.08);
+  }
+
+  .cmp-feat {
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+    text-align: left;
+    vertical-align: middle;
+    font-weight: 400;
+    min-width: 280px;
+  }
+
+  .feat-title {
+    display: block;
+    color: var(--star);
+    font-weight: 500;
+  }
+
+  .feat-detail {
+    display: block;
+    margin-top: 3px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+
+  td {
+    padding: 14px 12px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+    text-align: center;
+    vertical-align: middle;
+    min-width: 104px;
+  }
+
+  .mark.yes {
+    color: var(--gold);
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  .mark.no {
+    color: var(--faint);
+    font-size: 18px;
+  }
+
+  .mark.partly {
+    color: var(--text);
+    font-size: 15px;
+  }
+
+  .cell-note {
+    display: block;
+    margin-top: 2px;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--muted);
+  }
+
+  .checked {
+    margin: 14px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  @media (max-width: 720px) {
+    .cmp {
+      min-width: 0;
+    }
+
+    thead {
+      display: none;
+    }
+
+    tbody,
+    tr {
+      display: block;
+    }
+
+    tr.cmp-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-bottom: 1px solid rgba(212, 175, 55, 0.12);
+    }
+
+    .cmp-row:hover {
+      background: none;
+    }
+
+    th.cmp-feat {
+      grid-column: 1 / -1;
+      display: block;
+      min-width: 0;
+      border-bottom: none;
+      padding: 14px 16px 4px;
+    }
+
+    td {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 2px;
+      min-width: 0;
+      border-bottom: none;
+      padding: 6px 4px 12px;
+    }
+
+    td::before {
+      content: attr(data-label);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    tr.cmp-group th {
+      display: block;
+    }
+  }
+</style>

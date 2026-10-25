@@ -1,0 +1,214 @@
+# .explode(): each named List or Array column takes its inner data type,
+# in place.
+#
+# The names are literal strings: a bare string, or a literal list or tuple
+# for the first `columns` argument, as in polars' own
+# `explode(columns, *more_columns)`. Each named column must be a List or
+# an Array. An open receiver keeps its remainder.
+
+- case: explode_list_column_unwraps_to_inner_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.explode("bar")
+
+- case: explode_array_column_unwraps_to_inner_dtype
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        bar: Array[pl.Int64, Literal[3]]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.explode("bar")
+
+- case: explode_multiple_columns_via_varargs
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: List[pl.Int64]
+        b: List[pl.String]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.explode("a", "b")
+
+- case: explode_multiple_columns_via_list_argument
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: List[pl.Int64]
+        b: List[pl.String]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.explode(["a", "b"])
+
+- case: explode_multiple_columns_via_tuple_argument
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: List[pl.Int64]
+        b: List[pl.String]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.explode(("a", "b"))
+
+- case: explode_unknown_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.explode("missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: explode_non_list_or_array_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.explode("foo")  # E: Column "foo" is not List/Array, cannot explode  [wrong-column-shape]
+
+- case: explode_empty_columns_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: List[pl.Int64]
+
+    # Real polars raises InvalidOperationError unconditionally for this
+    # shape -- confirmed empirically, no data involved.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.explode([])  # E: explode() with no columns to explode always raises  [invalid-call-shape]
+
+- case: explode_unchecked_column_narrows_silently
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        bar: Unchecked
+
+    # An Unchecked column's true dtype might legitimately be List/Array,
+    # so exploding it stays Unchecked rather than reporting an error.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.explode("bar")
+
+- case: explode_non_literal_column_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    column_name: str
+    reveal_type(df.explode(column_name))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: explode_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.explode("anything"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: explode_list_column_unwraps_to_inner_dtype_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        foo: pl.Int64
+        bar: List[pl.Int64]
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.explode("bar")
+
+- case: explode_on_an_open_frame_keeps_the_remainder
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        a: List[pl.Int64]
+        b: pl.Int64
+
+    Rest = other_columns()
+
+    def unroll(df: TypedDataFrame[FrameSchema, Rest]) -> None:
+        reveal_type(df.explode("a"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), main.Rest]"
+        df.explode("zz")  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] explode = "possible"

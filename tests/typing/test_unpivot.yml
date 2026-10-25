@@ -1,0 +1,529 @@
+# .unpivot(): folding named columns into variable/value pairs. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# Scope, confirmed against real polars 1.43.2 before writing these cases:
+# - index=/on= must both be literal names (a bare string, a literal
+#   list, or a Final-declared variable holding either) for this hook to
+#   narrow. A polars.selectors argument, or one that cannot be read
+#   statically, falls back to the plain, erased pl.DataFrame/pl.LazyFrame.
+# - index columns pass through unchanged, in call-site order, not the
+#   frame's own declared order.
+# - index omitted defaults to [] (nothing passes through). on omitted
+#   defaults to "every declared column not in index" -- an asymmetric
+#   pair of defaults.
+# - variable (always pl.String) and value (the promoted common
+#   supertype of every folded column's own dtype, never erroring at
+#   runtime: for example Int64+String promotes to String) are always
+#   appended. Two numbers take the supertype that polars measures for
+#   the pair (Int32 beside UInt32 gives Int64), as the "diagonal_relaxed"
+#   concat does.
+# - variable_name=None/value_name=None passed explicitly behaves
+#   identically to omitting them.
+# - on=[] (a real empty list, whether explicit or defaulted from an
+#   index= covering every declared column) narrows: this shape has zero
+#   dependency on any other column, always giving variable: String,
+#   value: Null, confirmed against real polars 1.43.2.
+# - A receiver with an unresolved Rest still narrows when on=/index=
+#   are both explicit and every named column is in the receiver's own
+#   declared portion. Only "on omitted" needs a fully declared receiver.
+
+- case: unpivot_narrows_with_on_defaulted_to_everything_else
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(index="id")
+
+- case: unpivot_narrows_with_on_given_explicitly
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on="x", index="id")
+
+- case: unpivot_index_columns_follow_call_site_order_not_declared_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        z: pl.Int64
+        y: pl.Int64
+        x: pl.Int64
+        val: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+        z: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on="val", index=["x", "y", "z"])
+
+- case: unpivot_index_omitted_defaults_to_nothing_passed_through
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot()
+
+- case: unpivot_numeric_and_string_columns_promote_value_to_string
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=["a", "b"], index="id")
+
+- case: unpivot_narrows_with_on_given_as_a_tuple
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+        b: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.String
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=("a", "b"), index="id")
+
+- case: unpivot_final_declared_arguments_narrow_like_inline_literals
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    ON: Final = "x"
+    INDEX: Final = "id"
+    VAR: Final = "kind"
+    VAL: Final = "amount"
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        kind: pl.String
+        amount: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=ON, index=INDEX, variable_name=VAR, value_name=VAL)
+
+- case: unpivot_custom_variable_and_value_names
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        kind: pl.String
+        amount: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on="x", index="id", variable_name="kind", value_name="amount")
+
+- case: unpivot_explicit_none_variable_and_value_names_are_same_as_omitted
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on="x", index="id", variable_name=None, value_name=None)
+
+- case: unpivot_duplicate_name_within_index_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unpivot(index=["id", "id"], on="x")  # E: unpivot would produce duplicate column "id"  [duplicate-column]
+
+- case: unpivot_variable_name_collision_with_value_name_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unpivot(index="id", on="x", variable_name="v", value_name="v")  # E: unpivot would produce duplicate column "v"  [duplicate-column]
+
+- case: unpivot_variable_name_collision_with_index_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unpivot(index="id", on="x", variable_name="id")  # E: unpivot would produce duplicate column "id"  [duplicate-column]
+
+- case: unpivot_unknown_index_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unpivot(index="missing", on="x")  # E: Unknown column "missing"  [unknown-column]
+
+- case: unpivot_unknown_on_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.unpivot(index="id", on="missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: unpivot_explicit_empty_on_narrows_to_variable_string_value_null
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    # An empty on= is a real, deterministic shape: variable/value are
+    # always String/Null, with zero dependency on any other column.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Null
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(index="id", on=[])
+
+- case: unpivot_on_omitted_with_index_covering_everything_narrows_to_variable_string_value_null
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+        variable: pl.String
+        value: pl.Null
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(index=["id", "x"])
+
+- case: unpivot_empty_on_on_a_columnless_receiver_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # No declared column at all to reuse a Column[...] TypeInfo from --
+    # ColumnRef.build_fresh's own "no model column available" path.
+    Frame = TypedDataFrame[()]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: pl.Null
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=[])
+
+- case: unpivot_generic_dtype_columns_narrow_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Pair[D: pl.DataType](Columns):
+        x: D
+        y: D
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: Unchecked
+
+    def func[D: pl.DataType](df: TypedDataFrame[Pair[D]]) -> None:
+        # A column's own dtype can be a bare, still-unresolved type
+        # variable inside a dtype-generic function, not yet a concrete
+        # Instance DTypePromotion can fold -- the folded value column's
+        # own dtype substitutes Unchecked, keeping "variable" typed.
+        narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=["x", "y"], index=[])
+
+- case: unpivot_mixed_signedness_int32_uint32_value_narrows_to_int64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int32
+        b: pl.UInt32
+
+    # Int32 beside UInt32 promotes to Int64, the supertype that polars
+    # measures for the pair.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=["a", "b"])
+
+- case: unpivot_unreconcilable_dtypes_value_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: pl.Date
+        b: List[pl.Int64]
+
+    # Date and List(Int64) have no common data type, and polars raises
+    # for the pair. "value" becomes Unchecked, and the rest of the
+    # result keeps its types.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on=["a", "b"])
+
+- case: unpivot_of_an_unchecked_column_gives_an_unchecked_value
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        b: pl.Boolean
+        u: Unchecked
+
+    df: TypedDataFrame[FrameSchema]
+    # The value column takes the supertype of the columns, which an
+    # Unchecked column decides: a String beside an Int64 gives String.
+    reveal_type(df.unpivot(on=["u", "i"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'variable': polars.datatypes.classes.String, 'value': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.unpivot(on=["i", "u"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'variable': polars.datatypes.classes.String, 'value': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A Boolean beside a number takes the number, in either order.
+    reveal_type(df.unpivot(on=["b", "i"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'variable': polars.datatypes.classes.String, 'value': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.unpivot(on=["i", "b"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'variable': polars.datatypes.classes.String, 'value': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: unpivot_selector_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.unpivot(cs.numeric(), index="id"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unpivot_non_literal_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    name: str = "x"
+    reveal_type(df.unpivot(name, index="id"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unpivot_rest_generic_receiver_narrows_when_on_and_index_are_explicit
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+
+    class NarrowedSchema(Columns):
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.unpivot(on="foo", index=[])
+
+- case: unpivot_rest_generic_receiver_falls_back_when_on_is_omitted
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        foo: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.unpivot(index="foo"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unpivot_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.unpivot(index="id")
+
+- case: unpivot_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.unpivot())  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: unpivot_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.unpivot())  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"

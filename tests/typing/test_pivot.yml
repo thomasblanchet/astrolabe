@@ -1,0 +1,817 @@
+# .pivot(): spreading one column's distinct values into new columns.
+# Written before the corresponding get_method_hook implementation
+# exists. This test is expected to fail (red) until plugin.py
+# implements it.
+#
+# Scope, confirmed against real polars 1.43.2 before writing these cases:
+# - Narrows when `on` is a single literal column name, a single-element
+#   literal list of one (identical to a bare string, confirmed
+#   empirically), or a polars.selectors argument matching exactly one
+#   column -- and `on_columns` is a literal list of scalar values.
+#   `on_columns` fully and exclusively determines the pivoted column
+#   names, independent of the receiver's actual data. A non-string
+#   element stringifies the same way real polars does: Python's own
+#   str() for an int or a float, but lowercase "true"/"false" for a
+#   bool. A genuinely multi-column `on` (2+ literal names, or a selector
+#   matching 2+ columns) stays unrecognized.
+# - `DataFrame.pivot()` with `on_columns` omitted stays a genuine
+#   non-goal (falls back): only that shape still needs real data to
+#   compute `on_columns`.
+# - index columns pass through unchanged, in call-site order.
+# - values omitted defaults to "every declared column not in on/index".
+#   values omitted with zero remaining columns always raises in real
+#   polars, confirmed empirically, reported as InvalidCallShapeError.
+# - Column naming: bare `on_columns` value for exactly one values column
+#   under the default column_naming="auto"; `f"{values}{separator}{on}"`
+#   otherwise (column_naming="combine", or more than one values column).
+# - Each pivoted column's own dtype matches ReducerDtype's own already-
+#   tested reducer rules (shared with .agg()). aggregate_function
+#   omitted, explicitly None, or "item", all behave as identity (source
+#   dtype unchanged), confirmed empirically. A values column whose own
+#   dtype cannot be resolved (a still-generic function's own unbound
+#   TypeVar) substitutes Unchecked for just that pivoted column.
+# - A receiver with an unresolved Rest still narrows when on/index/values
+#   are all explicit and every named column is in the receiver's own
+#   declared portion.
+
+- case: pivot_narrows_with_single_values_column_auto_naming
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v1: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+        b: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a", "b"], index="id", values="v1")
+
+- case: pivot_narrows_with_multiple_values_columns_prefixed_naming
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v1: pl.Int64
+        v2: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        v1_a: pl.Int64
+        v1_b: pl.Int64
+        v2_a: pl.Float64
+        v2_b: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a", "b"], index="id", values=["v1", "v2"])
+
+- case: pivot_column_naming_combine_prefixes_even_a_single_values_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v1: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        v1_a: pl.Int64
+        v1_b: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a", "b"], index="id", values="v1", column_naming="combine")
+
+- case: pivot_custom_separator_is_honored
+  main: |
+    import polars as pl
+    from astrolabe import Columns, columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v1: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    NarrowedSchema = columns("NarrowedSchema", {"id": pl.Int64, "v1|a": pl.Int64})
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(
+        on="cat", on_columns=["a"], index="id", values="v1", column_naming="combine", separator="|"
+    )
+
+- case: pivot_values_omitted_defaults_to_every_remaining_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v1: pl.Int64
+        v2: pl.Float64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        v1_a: pl.Int64
+        v2_a: pl.Float64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id")
+
+- case: pivot_values_omitted_with_zero_remaining_columns_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+
+    # Real polars raises InvalidOperationError unconditionally when
+    # there are no remaining columns left to default values to,
+    # confirmed empirically.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.pivot(on="cat", on_columns=["a"], index="id"))  # E: pivot() with no values columns always raises  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_aggregate_function_sum_matches_reducer_dtype_rules
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int8
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="sum")
+
+- case: pivot_aggregate_function_len_matches_reducer_dtype_rules
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.UInt32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="len")
+
+- case: pivot_aggregate_function_first_matches_reducer_dtype_rules
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="first")
+
+- case: pivot_aggregate_function_omitted_behaves_as_identity
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int8
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v")
+
+- case: pivot_aggregate_function_explicit_none_is_same_as_omitted
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int8
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function=None)
+
+- case: pivot_aggregate_function_item_is_identity_and_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    # "item" is a real, valid PivotAgg value polars accepts: it selects
+    # the single value per cell, dtype-identity, confirmed empirically
+    # (its own runtime failures are data-dependent, not schema-dependent).
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="item")
+
+- case: pivot_generic_dtype_values_column_narrows_to_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class Sales[D: pl.DataType](Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: D
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: Unchecked
+
+    def func[D: pl.DataType](df: TypedDataFrame[Sales[D]]) -> None:
+        # A `values` column's own dtype can be a bare, still-unresolved
+        # type variable inside a dtype-generic function, not yet a
+        # concrete Instance ReducerDtype can resolve -- this pivoted
+        # column's own dtype substitutes Unchecked, keeping "id" typed.
+        narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(
+            on="cat", on_columns=["a"], index="id", values="v", aggregate_function="sum"
+        )
+
+- case: pivot_aggregate_function_sum_on_string_values_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.String
+
+    # sum() requires a numeric-or-Boolean (or extended-family) source,
+    # confirmed empirically that real polars raises InvalidOperationError
+    # for a String source -- pivot() had no gate at all here before,
+    # giving a confidently wrong String result instead of reporting this.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="sum")  # E: Column "v" is not numeric or Boolean, cannot pivot(aggregate_function='sum')  [wrong-column-shape]
+
+- case: pivot_index_columns_follow_call_site_order_not_declared_order
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        z: pl.Int64
+        y: pl.Int64
+        x: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        x: pl.Int64
+        y: pl.Int64
+        z: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index=["x", "y", "z"], values="v")
+
+- case: pivot_final_declared_arguments_narrow_like_inline_literals
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    ON: Final = "cat"
+    INDEX: Final = "id"
+    VALUES: Final = "v"
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on=ON, on_columns=["a"], index=INDEX, values=VALUES)
+
+- case: pivot_duplicate_name_between_index_and_pivoted_column_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.pivot(on="cat", on_columns=["a"], index="a", values="v")  # E: pivot would produce duplicate column "a"  [duplicate-column]
+
+- case: pivot_unknown_on_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.pivot(on="missing", on_columns=["a"], index="id", values="v")  # E: Unknown column "missing"  [unknown-column]
+
+- case: pivot_unknown_index_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.pivot(on="cat", on_columns=["a"], index="missing", values="v")  # E: Unknown column "missing"  [unknown-column]
+
+- case: pivot_unknown_values_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.pivot(on="cat", on_columns=["a"], index="id", values="missing")  # E: Unknown column "missing"  [unknown-column]
+
+- case: pivot_on_single_element_list_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    # A single-element literal list for `on` is identical to a bare
+    # string, confirmed empirically. A genuinely multi-element `on`
+    # stays unrecognized (see pivot_on_multi_element_list_with_flat_on_columns_errors
+    # and this file's own header comment).
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on=["cat"], on_columns=["a"], index="id", values="v")
+
+- case: pivot_on_single_element_tuple_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    # A single-element literal tuple for `on` is identical to a bare
+    # string, the same as a single-element list.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on=("cat",), on_columns=["a"], index="id", values="v")
+
+- case: pivot_on_multi_element_list_with_flat_on_columns_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        cat2: pl.String
+        v: pl.Int64
+
+    # A genuinely multi-element `on` stays unrecognized as a single
+    # column, but a list-literal on_columns= can never be the right
+    # shape for it either: real polars requires a pl.DataFrame/Series
+    # value there once on= names more than one column, confirmed
+    # empirically, no data involved.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.pivot(on=["cat", "cat2"], on_columns=["a"], index="id", values="v")  # E: pivot() with on= naming more than one column and a list literal on_columns= always raises  [invalid-call-shape]
+
+- case: pivot_with_an_expression_in_on_columns_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+    # Polars builds a series of the values. An expression makes an
+    # Object series, which polars cannot cast, at every frame.
+    reveal_type(df.pivot(on="s", index="a", values="a", on_columns=[pl.lit("x")]))  # E: pivot() with an expression in on_columns= always raises: polars cannot turn an expression into a column name. Pass the values, for example on_columns=["x"]  [invalid-call-shape]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    df.lazy().pivot(on="s", index="a", values="a", on_columns=("x", pl.col("s")))  # E: pivot() with an expression in on_columns= always raises: polars cannot turn an expression into a column name. Pass the values, for example on_columns=["x"]  [invalid-call-shape]
+    label = pl.lit("x")
+    df.pivot(on="s", index="a", values="a", on_columns=[label])  # E: pivot() with an expression in on_columns= always raises: polars cannot turn an expression into a column name. Pass the values, for example on_columns=["x"]  [invalid-call-shape]
+
+- case: pivot_on_multi_element_list_with_on_columns_omitted_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        cat2: pl.String
+        v: pl.Int64
+
+    # Omitted on_columns= is the genuinely unknowable implicit form
+    # (computed from real data), a deliberate non-goal -- distinct from
+    # a list literal, which is provably the wrong shape for a
+    # multi-element on=.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.pivot(on=["cat", "cat2"], index="id", values="v"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_non_string_on_columns_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.Int64
+        v: pl.Int64
+
+    # A non-string on_columns= element narrows: real polars stringifies
+    # it into the pivoted column's own name, confirmed empirically --
+    # here, the int values 1 and 2 become the column names "1" and "2".
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    NarrowedSchema = columns("NarrowedSchema", {"id": pl.Int64, "1": pl.Int64, "2": pl.Int64})
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=[1, 2], index="id", values="v")
+
+- case: pivot_boolean_on_columns_narrows_to_lowercase_names
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.Boolean
+        v: pl.Int64
+
+    # A bool on_columns= element stringifies to lowercase "true"/"false",
+    # confirmed empirically -- not Python's own str(True) == "True".
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        true: pl.Int64
+        false: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=[True, False], index="id", values="v")
+
+- case: pivot_on_columns_with_one_unresolvable_element_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.Int64
+        v: pl.Int64
+
+    # A call expression's own value cannot be read statically, so the
+    # whole on_columns= list stays unresolvable, not just that element.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.pivot(on="cat", on_columns=[1, len("ab")], index="id", values="v"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_on_columns_with_final_declared_element_narrows
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.Int64
+        v: pl.Int64
+
+    # A Final-declared variable's own tracked value resolves statically,
+    # the same as a written-inline literal.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    SECOND: Final = 2
+
+    NarrowedSchema = columns("NarrowedSchema", {"id": pl.Int64, "1": pl.Int64, "2": pl.Int64})
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=[1, SECOND], index="id", values="v")
+
+- case: pivot_series_on_columns_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.Int64
+        v: pl.Int64
+
+    # A pl.Series on_columns= is a real, accepted shape in real polars,
+    # but this hook can only read a list/tuple literal statically --
+    # distinct from the genuinely-invalid bare-scalar shape, which
+    # mypy's own polars stub already rejects before this hook runs.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    names = pl.Series([1, 2])
+    reveal_type(df.pivot(on="cat", on_columns=names, index="id", values="v"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_on_non_literal_non_selector_expression_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    # `on` is one AST node, but not a literal string/list (name is not
+    # Final) and not a recognized polars.selectors call, so applies()
+    # itself is False.
+    Frame = TypedDataFrame[FrameSchema]
+
+    name: str = "cat"
+    df: Frame
+    reveal_type(df.pivot(name, on_columns=["a"], index="id", values="v"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_on_columns_omitted_on_dataframe_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.pivot(on="cat", index="id", values="v"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_rest_generic_receiver_narrows_when_on_index_and_values_are_explicit
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.pivot(on="cat", on_columns=["a"], index="id", values="v")
+
+- case: pivot_rest_generic_receiver_falls_back_when_values_is_omitted
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+
+    class DfSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    df: TypedDataFrame[DfSchema, Rest]
+    reveal_type(df.pivot(on="cat", on_columns=["a"], index="id"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        a: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.pivot(on="cat", on_columns=["a"], index="id", values="v")
+
+- case: pivot_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.pivot(on="cat", on_columns=["a"]))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_on_plain_lazyframe_is_unaffected
+  main: |
+    import polars as pl
+
+    lf: pl.LazyFrame
+    reveal_type(lf.pivot(on="cat", on_columns=["a"]))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame"
+
+- case: pivot_aggregate_function_with_no_rule_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        cat: pl.String
+        v: pl.Int64
+
+    # polars accepts only its own pivot aggregations; a name no rule
+    # serves leaves the call plain, beside mypy's own argument error.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.pivot(on="cat", on_columns=["a"], index="id", values="v", aggregate_function="count"))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "aggregate_function" to "pivot" of "DataFrame" has incompatible type "Literal['count']"; expected "Literal['min', 'max', 'first', 'last', 'sum', 'mean', 'median', 'len', 'item'] | Expr | None"  [arg-type]
+
+- case: pivot_with_no_index_keeps_every_other_column_as_the_index
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        on: pl.String
+        v: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    class PivotedSchema(Columns):
+        i: pl.Int64
+        a: pl.Int64
+        b: pl.Int64
+
+    pivoted: TypedDataFrame[PivotedSchema] = df.pivot(on="on", values="v", on_columns=["a", "b"])
+
+    NoAB = other_columns(without=["a", "b"])
+
+    def spread(frame: TypedDataFrame[FrameSchema, NoAB]) -> None:
+        reveal_type(frame.pivot(on="on", values="v", on_columns=["a", "b"]))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64}, closed=True), main.NoAB]"
+
+- case: pivot_with_neither_index_nor_values_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        on: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+    # The error is reported once, and the call keeps the plain frame.
+    reveal_type(df.pivot(on="on", on_columns=["a", "b"]))  # E: pivot() with neither index nor values always raises  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: pivot_with_no_index_over_an_open_frame_needs_the_new_names_free
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        on: pl.String
+        v: pl.Int64
+
+    Rest = other_columns()
+
+    def spread(frame: TypedDataFrame[FrameSchema, Rest]) -> None:
+        reveal_type(frame.pivot(on="on", values="v", on_columns=["a"]))  # E: The result of "pivot" has no known schema: the undeclared columns of the frame can hold the name, or not  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] pivot = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"

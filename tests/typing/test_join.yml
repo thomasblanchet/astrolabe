@@ -1,0 +1,2057 @@
+# .join(): joining two frames on shared or matching key columns. Written
+# before the corresponding get_method_hook implementation exists. This
+# test is expected to fail (red) until plugin.py implements it.
+#
+# Scope: how="inner"/"left"/"right"/"full"/"semi"/"anti"/"cross".
+# on=/left_on=/right_on= are literal strings, bare pl.col(name)
+# expressions, or lists
+# mixing either. suffix= is a literal string. coalesce= is a literal
+# bool or omitted (the literal None is the same as omitted, its own
+# documented default).
+#
+# A bare pl.col(name) key behaves identically to passing its own
+# literal name directly, confirmed empirically against real polars
+# 1.43.2: same coalescing, same dtype rule. A transforming key
+# (pl.col(name).str.to_lowercase(), .cast(...), or any
+# other chaining beyond a bare column reference) always forces
+# coalescing off for the *whole* call, confirmed empirically that real
+# polars silently overrides even an explicit coalesce=True request the
+# same way (with its own UserWarning) -- an uncoalesced keyed join
+# already merges every column from both sides verbatim, so a
+# transforming key's own output is simply the underlying real column
+# it reads from, untouched by the transformation (confirmed empirically
+# with a dtype-changing .cast(...) key, whose own output column keeps
+# the *source* column's dtype, not the cast's target). This needs no
+# name or dtype resolution for the transforming key itself at all: see
+# `_JoinKeyResolver.has_transforming_key`'s own docstring.
+# how="outer" is a deprecated alias for "full" that real polars still
+# accepts, and is normalized to "full" before this hook resolves the
+# call, confirmed against real polars 1.43.2.
+#
+# coalesce's effective default depends on how: inner/left/right default
+# to coalescing (drop the redundant key), full defaults to keeping both
+# keys, confirmed against real polars 1.43.2. how="right"'s coalesced
+# key uses the *right* side's key name, not the left's, and is
+# positioned after every left non-key column but before any right
+# non-key column, also confirmed against real polars 1.43.2 -- a
+# genuinely different layout from inner/left/full's coalesced case,
+# which keeps the left side's key name and position. how="cross" takes
+# no keys at all: its result is always every column from both sides,
+# suffixed on collision, regardless of coalesce=.
+#
+# A join key pair needs the same family to reconcile, not an exact
+# dtype match: any integer width with any integer width (signed and
+# unsigned freely mixed), or Float32 with Float64, confirmed against
+# real polars 1.43.2. A family-incompatible pair reports
+# [join-key-dtype] and falls back. Every layout except
+# how="full"+coalesce=True keeps whichever side it already keeps
+# verbatim, with no widening, confirmed against real polars 1.43.2 even
+# when the kept side is the narrower one. how="full"+coalesce=True
+# alone promotes a same-family pair to its own closed-form supertype:
+# same signedness widens to the wider side; mixed signed/unsigned keeps
+# the signed side unchanged if it is already wider, else promotes to a
+# signed integer at double the unsigned side's own width.
+
+- case: join_inner_merges_and_suffixes_collision
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+        qux: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+        baz_right: pl.Int64
+        qux: pl.Float64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo")
+
+- case: join_suffixed_right_column_collides_with_existing_left_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        bar_right: pl.Int64
+
+    # right's "bar" collides with left's own "bar", so it gets suffixed
+    # to "bar_right" -- but left already has its own "bar_right" column,
+    # so the suffixed name collides too.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        bar: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.join(right, on="foo")  # E: join would produce duplicate column "bar_right"  [duplicate-column]
+
+- case: join_inner_final_str_on_narrows_like_inline_literal
+  main: |
+    from typing import Final, Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # A Final-declared string variable for on= narrows the same way
+    # the equivalent inline string literal does (see
+    # join_inner_merges_and_suffixes_collision, above).
+    KEY: Final = "foo"
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+        qux: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+        baz_right: pl.Int64
+        qux: pl.Float64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=KEY)
+
+- case: join_left_merges_and_suffixes_collision
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+        qux: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+        baz_right: pl.Int64
+        qux: pl.Float64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="left")
+
+- case: join_semi_returns_left_unchanged
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    joined: TypedDataFrame[LeftSchema] = left.join(right, on="foo", how="semi")
+
+- case: join_anti_returns_left_unchanged
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    joined: TypedDataFrame[LeftSchema] = left.join(right, on="foo", how="anti")
+
+- case: join_left_on_right_on_drops_right_key_entirely
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        quux: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on="foo", right_on="quux")
+
+- case: join_left_on_non_literal_falls_back_to_untyped_silently
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+
+    # left_on's own value cannot be read statically -- nothing concrete
+    # is known to check a length mismatch against, so this stays a
+    # silent fallback rather than reporting an error.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        quux: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left_on_value: str
+    reveal_type(
+        left.join(right, left_on=left_on_value, right_on="quux")  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    )
+
+- case: join_left_on_right_on_length_mismatch_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # Real polars raises InvalidOperationError unconditionally for this
+    # shape -- confirmed empirically, no data involved.
+    left.join(right, left_on=["a", "b"], right_on=["c"])  # E: join() with left_on=/right_on= of different lengths raises InvalidOperationError: the number of columns given as join key should be equal  [invalid-call-shape]
+
+- case: join_on_and_left_on_together_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    # Real polars raises ValueError unconditionally for this shape --
+    # confirmed empirically, no data involved.
+    left.join(right, on="a", left_on="a")  # E: join() with on= and left_on=/right_on= raises ValueError: cannot use "on" in conjunction with "left_on" or "right_on"  [invalid-call-shape]
+
+- case: join_cross_with_on_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    # Real polars raises ValueError unconditionally for this shape --
+    # confirmed empirically, no data involved.
+    left.join(right, how="cross", on="a")  # E: join() with how="cross" and a join key argument raises ValueError: cross join should not pass join keys  [invalid-call-shape]
+
+- case: join_cross_with_left_on_right_on_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    left.join(right, how="cross", left_on="a", right_on="a")  # E: join() with how="cross" and a join key argument raises ValueError: cross join should not pass join keys  [invalid-call-shape]
+
+- case: join_non_literal_suffix_with_no_collision_still_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # suffix's own text is only ever read when a right-side column
+    # actually collides with an existing left-side name. Here it does
+    # not, so a non-literal suffix does not need to be resolved.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        qux: pl.Float64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    suffix_value: str
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        qux: pl.Float64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", suffix=suffix_value)
+
+- case: join_multi_key_on_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=["a", "b"])
+
+- case: join_multi_key_on_tuple
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=("a", "b"))
+
+- case: join_bare_col_key_behaves_like_its_own_literal_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        d: pl.String
+
+    # left_on=pl.col("a") behaves identically to left_on="a", confirmed
+    # empirically against real polars 1.43.2: same coalescing (the
+    # left side's own key name and position are kept, the right side's
+    # key is dropped), same dtype rule.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("a"), right_on="c")
+
+- case: join_bare_col_key_on_both_sides
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        d: pl.String
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("a"), right_on=pl.col("c"))
+
+- case: join_bare_col_key_in_multi_key_list
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    # A list mixing a literal string and a bare pl.col(name), resolved
+    # element by element.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=["a", pl.col("b")])
+
+- case: join_variable_bound_bare_col_key_on_one_side_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # A join key first bound to a variable, then passed by reference,
+    # narrows the same as writing pl.col("a") inline -- the actual bug
+    # this reader was built to fix: the receiver's own already-resolved
+    # TypedExpr type is read directly, not just the AST shape at the
+    # join() call site itself.
+    x = pl.col("a")
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        d: pl.String
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=x, right_on="c")
+
+- case: join_variable_bound_bare_col_key_on_both_sides_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    x = pl.col("a")
+    y = pl.col("c")
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        d: pl.String
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=x, right_on=y)
+
+- case: join_variable_bound_bare_col_key_in_multi_key_list_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # A list mixing a literal string and a variable-bound bare
+    # pl.col(name), resolved element by element.
+    z = pl.col("b")
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=["a", z])
+
+- case: join_variable_bound_bare_col_key_via_on_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    # on= applies the same variable-bound key to both sides.
+    w = pl.col("a")
+    joined: TypedDataFrame[LeftSchema] = left.join(right, on=w)
+
+- case: a_join_key_with_an_alias_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    df: TypedDataFrame[Schema]
+    # Polars refuses an alias anywhere in the tree of a key, in a
+    # variable too, and the schema of a lazy join raises as well.
+    reveal_type(df.join(df, on=pl.col("a").alias("b")))  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    df.join(df, on=pl.col("a").alias("x") + 1)  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    df.join(df, left_on=pl.col("a").alias("x"), right_on="a")  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    df.join(df, on=["a", pl.struct(pl.col("b").alias("x"))])  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    df.lazy().join(df.lazy(), on=pl.col("a").over(pl.col("b").alias("q")))  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    alias_key = pl.col("a").alias("z")
+    df.join(df, left_on=pl.col("a"), right_on=alias_key)  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    # A rename through `.name` is no alias, and the key transforms its
+    # column, so coalescing is off.
+    reveal_type(df.join(df, on=pl.col("a").name.suffix("x")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_join_key_that_changes_the_rows_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    df: TypedDataFrame[Schema]
+    # A key must work value by value at each node, or give one value.
+    df.join(df, on=pl.col("a").shift(1))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, left_on=pl.col("a").over("b"), right_on="a")  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.col("a") + pl.col("b").sum())  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.col("a").is_in(pl.col("b").implode()))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    reveal_type(df.join(df, on=pl.col("a").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.join(df, on=pl.col("a").is_in([1])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_join_key_reads_a_function_of_the_user_by_the_flags_of_its_call
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    df: TypedDataFrame[Schema]
+    flag: bool
+    # Polars reads from the call whether the function works value by value
+    # and whether it gives one value. map_batches takes both from its flags.
+    df.join(df, on=pl.col("a").map_batches(lambda s: s, return_dtype=pl.Int64))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.col("a").rolling_map(lambda s: s.sum(), window_size=1))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.col("a").shift(1).map_batches(lambda s: s, return_dtype=pl.Int64, is_elementwise=True))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    reveal_type(df.join(df, on=pl.col("a").map_batches(lambda s: s, return_dtype=pl.Int64, is_elementwise=True)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.join(df, on=pl.col("a").map_batches(lambda s: s.max(), return_dtype=pl.Int64, returns_scalar=True)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.join(df, on=pl.col("a").map_elements(lambda v: v, return_dtype=pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A function of pl that takes a function of the user has the same flags.
+    # fold and reduce never work value by value, and cum_fold names its
+    # result with an alias.
+    df.join(df, on=pl.fold(pl.lit(0), lambda acc, x: acc + x, [pl.col("a"), pl.col("b")]))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.reduce(lambda acc, x: acc + x, [pl.col("a"), pl.col("b")]))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.map_groups([pl.col("a")], lambda s: s[0]))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]
+    df.join(df, on=pl.cum_fold(pl.lit(0), lambda acc, x: acc + x, [pl.col("a"), pl.col("b")]))  # E: join() with an alias in a join key raises InvalidOperationError: 'alias' is not allowed in a join key, use 'with_columns' first  [invalid-call-shape]
+    reveal_type(df.join(df, on=pl.fold(pl.lit(0), lambda acc, x: acc + x.sum(), [pl.col("a")], returns_scalar=True)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.join(df, on=pl.map_batches([pl.col("a"), pl.col("b")], lambda s: s[0] + s[1], is_elementwise=True)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A rename by a function of the user is no alias, and works value by value.
+    reveal_type(df.join(df, on=pl.col("a").name.map(lambda n: n)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    # The checker cannot see what pipe calls, so the run decides.
+    reveal_type(df.join(df, on=pl.col("a").pipe(lambda e: e + 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A flag in a variable can hold either value, so the run decides.
+    reveal_type(df.join(df, on=pl.col("a").map_batches(lambda s: s, return_dtype=pl.Int64, is_elementwise=flag)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'a_right': polars.datatypes.classes.Int64, 'b_right': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_declared_join_key_leaves_the_join_to_the_caller
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, column
+
+    class Schema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    A = column("a", pl.Int64)
+
+    def f(df: TypedDataFrame[Schema], key: A) -> None:
+        # The declaration fixes what the key computes, and not its tree.
+        # A caller can pass pl.col("a").cast(pl.Int64), which keeps both
+        # keys, or pl.col("a").alias("a"), which raises.
+        reveal_type(df.join(df, on=key))  # E: The result of "join" has no known schema: the caller can pass a join key of another form, which changes the join  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        df.join(df, left_on=key + 0, right_on="a")  # E: The result of "join" has no known schema: the caller can pass a join key of another form, which changes the join  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"
+
+- case: join_variable_bound_cast_col_key_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    # cast_key's own DType marker is Cast[SchemaLookup["a"], Int32], not
+    # a bare SchemaLookup at all, so this is not read as a bare key
+    # either -- consistent with pl.col("a").cast(pl.Int32) written
+    # inline, which ColumnExpr's own cast_dtype field also excludes
+    # from "bare".
+    cast_key = pl.col("a").cast(pl.Int32)
+    reveal_type(left.join(right, left_on=pl.col("a"), right_on=cast_key))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_generic_declared_key_leaves_the_join_to_the_caller
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+    from astrolabe.expr import TypedExpr
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    # key is a declared expression, which fixes what the key computes
+    # and not its tree, so the caller decides the join.
+    def f[N: str](left: Left, right: Right, key: TypedExpr[N, pl.Int64]) -> None:
+        reveal_type(left.join(right, on=key))  # E: The result of "join" has no known schema: the caller can pass a join key of another form, which changes the join  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_transforming_key_narrows_with_coalescing_forced_off
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.String
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.String
+        d: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.String
+        b: pl.String
+        c: pl.String
+        d: pl.String
+
+    # A transforming key (here .str.to_lowercase()) forces coalescing
+    # off for the whole call, confirmed empirically -- "c" is kept as
+    # its own ordinary column rather than dropped/merged into "a".
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("a"), right_on=pl.col("c").str.to_lowercase())
+
+- case: join_transforming_key_keeps_source_dtype_not_transformed_dtype
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        k: pl.Int64
+        k_right: pl.String
+        v: pl.Int64
+
+    # right_on's own key casts "k" to Int64 for matching, but the
+    # output column keeps "k"'s own *source* dtype (String), confirmed
+    # empirically against real polars 1.43.2 -- the cast never actually
+    # changes the merged result's own schema. "k" collides with the
+    # left side's own "k", so it is suffixed the normal way.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("k"), right_on=pl.col("k").cast(pl.Int64))
+
+- case: join_transforming_key_overrides_explicit_coalesce_true
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        k: pl.Int64
+        k_right: pl.String
+        v: pl.Int64
+
+    # Real polars silently overrides an explicit coalesce=True request
+    # for a transforming key (with its own UserWarning), confirmed
+    # empirically -- both key columns still appear, exactly as if
+    # coalesce=False had been passed.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("k"), right_on=pl.col("k").cast(pl.Int64), coalesce=True)
+
+- case: join_transforming_key_via_on_forces_coalesce_off
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        k: pl.String
+        k_right: pl.String
+
+    # on= applies the same key to both sides -- a transforming key
+    # there is detected the same way as for left_on=/right_on=.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=pl.col("k").str.to_lowercase())
+
+- case: join_transforming_key_inside_multi_key_list_forces_coalesce_off
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        a: pl.Int64
+        b: pl.String
+        a_right: pl.Int64
+        b_right: pl.String
+
+    # A list with one bare key and one transforming key still forces
+    # coalescing off for the whole call -- "a" is not coalesced either,
+    # even though it is itself a perfectly ordinary bare key.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on=["a", pl.col("b").str.to_lowercase()])
+
+- case: join_key_built_from_two_columns_forces_coalesce_off
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        k: pl.Int64
+        a: pl.Int64
+        b: pl.Int64
+
+    # A join key with no single traceable source column (built from
+    # two columns) still narrows: it is simply detected as
+    # transforming, forcing coalescing off, and every real column on
+    # both sides appears verbatim, confirmed empirically against real
+    # polars 1.43.2.
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on=pl.col("k"), right_on=pl.col("a") + pl.col("b"))
+
+- case: join_bare_col_key_missing_from_other_side_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        c: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # on=pl.col("a") requires the exact same name on both sides, the
+    # same as on="a" already does -- "a" is not one of Right's own
+    # columns.
+    left.join(right, on=pl.col("a"))  # E: Unknown column "a" in right frame  [unknown-column]
+
+# A declared column is a key as a bare column read is: its name on both sides.
+- case: join_declared_column_key_does_not_decide_the_merge
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, column
+
+    Key = column("k", pl.Int64)
+
+    class LeftSchema(Columns):
+        k: pl.Int64
+        a: pl.String
+
+    class RightSchema(Columns):
+        k: pl.Int64
+        b: pl.Float64
+
+    # A caller can pass pl.col("k").cast(pl.Int64), which keeps both
+    # keys, so the declared key does not decide the merge.
+    def joined(left: TypedDataFrame[LeftSchema], right: TypedDataFrame[RightSchema], key: Key) -> None:
+        reveal_type(left.join(right, on=key))  # E: The result of "join" has no known schema: the caller can pass a join key of another form, which changes the join  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_custom_suffix_is_honored
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+        baz_R: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", suffix="_R")
+
+- case: join_no_key_arguments_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        a: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        a: pl.Int64
+        b: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    # Real polars itself requires on= or left_on=+right_on= for a
+    # keyed how, raising ValueError at runtime if all three are
+    # omitted -- neither the literal-string nor the bare-pl.col(name)
+    # reading path has anything to resolve, so this falls back.
+    reveal_type(left.join(right))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_missing_other_argument_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.join(on="id"))  # E: Missing positional argument "other" in call to "join" of "DataFrame"  [call-arg] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_non_literal_how_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    how_value: str
+    reveal_type(left.join(right, on="foo", how=how_value))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "join" of "DataFrame" has incompatible type "str"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross', 'outer']"  [arg-type]
+
+- case: join_unrecognized_how_value_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="foo", how="left_semi"))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "join" of "DataFrame" has incompatible type "Literal['left_semi']"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross', 'outer']"  [arg-type]
+
+- case: join_non_literal_suffix_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Left = TypedDataFrame[LeftSchema]
+    Right = TypedDataFrame[LeftSchema]
+
+    left: Left
+    right: Right
+    suffix_value: str
+    reveal_type(left.join(right, on="foo", suffix=suffix_value))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_missing_key_on_left_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.join(right, on="missing")  # E: Unknown column "missing" in left frame  [unknown-column]
+
+- case: join_missing_key_on_right_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.join(right, on="foo")  # E: Unknown column "foo" in right frame  [unknown-column]
+
+- case: join_mismatched_key_dtype_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # Int64 and String share no family, confirmed against real polars
+    # 1.43.2 (raises SchemaError at runtime), so this reports
+    # [join-key-dtype] and falls back.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.String
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="foo"))  # E: Join key "foo" is Int64 on the left and String on the right  [join-key-dtype] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_mismatched_parametrized_datetime_unit_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: Datetime[Literal["us"], None]
+        bar: pl.String
+
+    # Datetime["us"] and Datetime["ms"] are now two distinct,
+    # parametrized types (astrolabe.frame.Datetime[Unit, Zone]), so
+    # ordinary Instance equality already tells them apart with no
+    # change to join.py itself: real polars raises SchemaError joining
+    # on mismatched time units.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: Datetime[Literal["ms"], None]
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="foo"))  # E: Join key "foo" is Datetime on the left and Datetime on the right  [join-key-dtype] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_matching_parametrized_datetime_unit_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: Datetime[Literal["us"], None]
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: Datetime[Literal["us"], None]
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        foo: Datetime[Literal["us"], None]
+        bar: pl.String
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = left.join(right, on="foo")
+
+- case: join_key_struct_with_unchecked_field_reconciles_to_the_concrete_side
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        foo: Struct[Column[Literal["a"], Unchecked]]
+        bar: pl.String
+
+    # UncheckedCompatibility now recurses structurally into a container's
+    # own type arguments, not just the whole column at its own top
+    # level: a join key typed Struct[...] with one Unchecked field
+    # reconciles with the other side's own concrete field dtype, the
+    # same way a bare Unchecked key already reconciled with any concrete
+    # dtype.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: Struct[Column[Literal["a"], pl.Int64]]
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class NarrowedSchema(Columns):
+        foo: Struct[Column[Literal["a"], pl.Int64]]
+        bar: pl.String
+        baz: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = left.join(right, on="foo")
+
+- case: join_how_outer_normalizes_to_full
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # "outer" is a deprecated alias for "full" that real polars still
+    # accepts at runtime, confirmed against real polars 1.43.2, and this
+    # hook normalizes it to "full" before resolving the call -- so it
+    # narrows the same way how="full" already does, including "full"'s
+    # own default of keeping both key columns.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="outer")
+
+- case: join_coalesce_non_literal_falls_back_to_untyped
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    coalesce_value: bool
+    reveal_type(left.join(right, on="foo", coalesce=coalesce_value))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_coalesce_false_keeps_both_key_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", coalesce=False)
+
+- case: join_coalesce_true_matches_the_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", coalesce=True)
+
+- case: join_coalesce_explicit_none_matches_the_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", coalesce=None)
+
+- case: join_inner_same_family_different_width_keys_narrows_to_the_left_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # Int64 and Int32 share the integer family, so this reconciles, but
+    # inner's coalesced key keeps the left side's own dtype verbatim --
+    # real polars never widens here, confirmed against real polars
+    # 1.43.2, even though the right side is narrower.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int32
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo")
+
+- case: join_how_right_merges_coalesced_by_default
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # how="right"'s coalesced key sits after every left non-key column,
+    # but before any right non-key column -- a different layout from
+    # inner/left/full's coalesced case, confirmed against real polars
+    # 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        bar: pl.String
+        foo: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="right")
+
+- case: join_how_right_uses_the_right_sides_key_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        lid: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        rid: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        bar: pl.String
+        rid: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on="lid", right_on="rid", how="right")
+
+- case: join_how_right_coalesced_key_suffix_produces_a_duplicate_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        lid: pl.Int64
+        rid: pl.String
+        rid_right: pl.Int64
+
+    # The coalesced key's own name ("rid") collides with a left-side
+    # non-key column also named "rid", so it is suffixed to "rid_right"
+    # -- but the left side already has its own "rid_right" column too,
+    # so the suffixed name collides again. This is caught by the
+    # duplicate-output-name check every hook shares, not by this hook's
+    # own suffixing, confirmed against real polars 1.43.2 (which raises
+    # DuplicateError for this exact call).
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        rid: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.join(right, left_on="lid", right_on="rid", how="right")  # E: join would produce duplicate column "rid_right"  [duplicate-column]
+
+- case: join_how_right_same_family_different_width_keys_narrows_to_the_right_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int32
+        bar: pl.String
+
+    # Int32 and Int64 share the integer family, so this reconciles, but
+    # how="right"'s coalesced key keeps the right side's own dtype
+    # verbatim -- real polars never widens here, confirmed against real
+    # polars 1.43.2, even though the left side is narrower.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        bar: pl.String
+        foo: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="right")
+
+- case: join_how_right_uncoalesced_matches_left_style_layout
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # coalesce=False's column layout is the same across every keyed how,
+    # confirmed against real polars 1.43.2: only row selection differs
+    # at runtime, not the schema shape.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="right", coalesce=False)
+
+- case: join_how_right_coalesced_key_colliding_with_left_column_is_suffixed
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        lid: pl.Int64
+        rid: pl.String
+
+    # The coalesced key's own name (the right side's key name, "rid")
+    # collides with a left-side non-key column also named "rid", so it
+    # gets the same suffixing every other colliding right-side name
+    # gets, confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        rid: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        rid: pl.String
+        rid_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, left_on="lid", right_on="rid", how="right")
+
+- case: join_how_full_default_keeps_both_key_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # full's own default is *not* to coalesce, unlike inner/left/right,
+    # confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full")
+
+- case: join_how_full_coalesce_true_merges_keys
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_promotes_mixed_signedness_to_double_width
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # how="full"+coalesce=True is the one layout that actually promotes
+    # a same-family key pair, via its own closed-form supertype rule:
+    # mixed signed/unsigned, with the unsigned side at least as wide as
+    # the signed side, promotes to a signed integer at double the
+    # unsigned side's own width, confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.UInt64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int128
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_keeps_the_signed_side_when_already_wider
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # The signed side (Int64) is already wider than the unsigned side
+    # (UInt8) here, so how="full"+coalesce=True's own supertype rule
+    # keeps it unchanged rather than doubling the unsigned width,
+    # confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.UInt8
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_promotes_floats_to_the_wider_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Float32
+        bar: pl.String
+
+    # how="full"+coalesce=True's own supertype rule widens a same-family
+    # float pair the same way every other layout would keep the wider
+    # side, confirmed against real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Float64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Float64
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_promotes_same_signedness_unsigned_to_the_wider_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.UInt8
+        bar: pl.String
+
+    # Two unsigned integers share the same signedness, so
+    # how="full"+coalesce=True's own supertype rule just widens to the
+    # wider side, the same as the signed-signed case, confirmed against
+    # real polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.UInt16
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.UInt16
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_mixed_signedness_promotion_is_symmetric
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.UInt64
+        bar: pl.String
+
+    # how="full"+coalesce=True's own mixed-signedness supertype rule
+    # does not depend on which side is "left" -- an unsigned left key
+    # paired with a signed right key promotes to the same Int128 a
+    # signed-left/unsigned-right pair would, confirmed against real
+    # polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int128
+        bar: pl.String
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="full", coalesce=True)
+
+- case: join_how_full_coalesce_true_cross_family_key_dtype_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # how="full"+coalesce=True's own promotion only covers a same-family
+    # pair. Int64 and String share no family, confirmed against real
+    # polars 1.43.2 (raises SchemaError at runtime), so this still
+    # reports [join-key-dtype] and falls back -- a deliberate remaining
+    # gap, not a new promotion.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.String
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="foo", how="full", coalesce=True))  # E: Join key "foo" is Int64 on the left and String on the right  [join-key-dtype] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_how_cross_merges_every_column_from_both_sides
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # cross takes no keys at all, so its result is always every column
+    # from both sides, suffixed on collision, confirmed against real
+    # polars 1.43.2.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, how="cross")
+
+- case: join_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    left: pl.DataFrame
+    right: pl.DataFrame
+    reveal_type(left.join(right, on="foo"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_inner_merges_and_suffixes_collision_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+
+    Left = TypedLazyFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+        qux: pl.Float64
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        baz: pl.Int64
+        baz_right: pl.Int64
+        qux: pl.Float64
+
+    joined: TypedLazyFrame[JoinedSchema] = left.join(right, on="foo")
+
+- case: join_missing_key_on_left_errors_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedLazyFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedLazyFrame[RightSchema]
+
+    left: Left
+    right: Right
+    left.join(right, on="missing")  # E: Unknown column "missing" in left frame  [unknown-column]
+
+- case: join_on_unchecked_key_reconciles_to_the_concrete_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        id: Unchecked
+        a: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        id: pl.Int64
+        b: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        id: pl.Int64
+        a: pl.String
+        b: pl.String
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="id")
+
+- case: join_on_unchecked_key_how_full_coalesce_true_reconciles_to_the_concrete_side
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class LeftSchema(Columns):
+        id: Unchecked
+        a: pl.String
+
+    # how="full"+coalesce=True's own supertype rule needs two resolved,
+    # family-compatible dtypes -- an Unchecked side has no family to
+    # promote against, so this falls through to preferring the concrete
+    # side unchanged, the same as every other layout.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        id: pl.Int64
+        b: pl.String
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        id: pl.Int64
+        a: pl.String
+        b: pl.String
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="id", how="full", coalesce=True)
+
+- case: join_key_dtype_unresolved_typevar_falls_back_to_untyped_silently
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Ids[T: pl.DataType](Columns):
+        id: T
+
+    # A generic function's own unbound key dtype is neither a resolved
+    # Instance nor Unchecked, so it cannot be checked for family
+    # compatibility -- left unresolved rather than reporting an error
+    # against a dtype nothing concrete is known about.
+    def join_generic[T: pl.DataType](
+        left: TypedDataFrame[Ids[T]],
+        right: TypedDataFrame[Ids[pl.Int64]],
+    ) -> None:
+        reveal_type(left.join(right, on="id"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+# Each predicate of `join_where` gives `Boolean` over the columns of both
+# frames, a column of the other frame under its name after the suffix.
+- case: join_where_checks_each_predicate_over_the_joined_columns
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Left(Columns):
+        s: pl.Int64
+        a: pl.String
+        x: pl.Int64
+
+    class Right(Columns):
+        b: pl.Int64
+        x: pl.Int64
+
+    left: TypedDataFrame[Left]
+    right: TypedDataFrame[Right]
+    left.join_where(right, pl.col("a") > pl.col("b"))  # E: "a" has no result type at this frame's column types: cannot compare String with Int64, and polars raises ComputeError  [unsupported-dtype-op]
+    left.join_where(right, pl.col("s") + pl.col("b"))  # E: Column "s" is not Boolean, cannot .join_where()  [wrong-column-shape]
+    left.join_where(right, pl.col("zz") > 1)  # E: Unknown column "zz"  [unknown-column]
+    reveal_type(left.join_where(right, pl.col("x") > pl.col("x_right")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.String, 'x': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'x_right': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_planned_join_key_must_agree_at_both_types
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedLazyFrame
+
+    class Rows(Columns):
+        dec: Decimal[Literal[10], Literal[2]]
+
+    class Narrow(Columns):
+        d: Decimal[Literal[10], Literal[2]]
+
+    class Wide(Columns):
+        d: Decimal[Literal[38], Literal[2]]
+
+    lf: TypedLazyFrame[Rows]
+    narrow: TypedLazyFrame[Narrow]
+    wide: TypedLazyFrame[Wide]
+    planned = lf.with_columns(d=pl.col("dec").cum_sum())
+    planned.join(narrow, on="d")  # E: Join key "d" is Decimal on the left and Decimal on the right  [join-key-dtype]
+    planned.join(wide, on="d")  # E: Join key "d" is Decimal on the left and Decimal on the right  [join-key-dtype]
+    planned.join_asof(narrow, on="d")  # E: Join key "d" is Decimal on the left and Decimal on the right  [join-key-dtype]
+    reveal_type(planned.join(planned, on="d"))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Planned[astrolabe.frame.Decimal[Literal[38], Literal[2]], astrolabe.frame.Decimal[Literal[10], Literal[2]]], 'dec_right': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"

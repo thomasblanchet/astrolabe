@@ -1,0 +1,55 @@
+---
+/** Three panels on why a team adopts Astrolabe. */
+---
+
+<section id="why" class="why">
+  <div class="card">
+    <svg aria-hidden="true" width="36" height="36" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16 3.5l10.5 4v7.5c0 6.6-4.4 11.4-10.5 13.5C9.9 26.4 5.5 21.6 5.5 15V7.5z"></path>
+      <path d="M17.5 9l-4.5 7.5h5l-2 6.5"></path>
+    </svg>
+    <h3>Speed <em>and</em> type safety</h3>
+    <p>Don’t compromise. Keep the speed and expressiveness of dataframes, with the correctness guarantees of statically typed code.</p>
+  </div>
+  <div class="card">
+    <svg aria-hidden="true" width="36" height="36" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="10" cy="11" r="4"></circle>
+      <path d="M3 27c0-4.2 3.1-7 7-7s7 2.8 7 7"></path>
+      <rect x="19" y="9" width="10" height="8.5" rx="2"></rect>
+      <path d="M24 9V5.5"></path>
+      <circle cx="24" cy="4.5" r="1" fill="#d4af37"></circle>
+      <path d="M18.5 27c0-3.6 2.4-6 5.5-6s5.5 2.4 5.5 6"></path>
+    </svg>
+    <h3>Guardrails and context</h3>
+    <p>Types give people and coding agents up-to-date context and requirements, and the checker validates every refactor across all code paths.</p>
+  </div>
+  <div class="card">
+    <svg aria-hidden="true" width="36" height="36" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M26 4.5C16 5.5 9 12.5 8.5 23l4.5-1.2C20 19.5 24.5 13 26 4.5z"></path>
+      <path d="M26 4.5L5 27"></path>
+      <path d="M14 17.5l5.5-.6M17.5 12.8l5.5-.8"></path>
+    </svg>
+    <h3>Plain Polars, no overhead</h3>
+    <p>You write ordinary Polars, and a typed frame is an ordinary <span class="ic">DataFrame</span> at run time. No new API, no cost to your pipeline.</p>
+  </div>
+</section>
+
+<style>
+  .why {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    padding: 0 0 96px;
+  }
+
+  h3 {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    font-weight: 600;
+  }
+
+  p {
+    font-size: 16px;
+    line-height: 1.6;
+  }
+</style>

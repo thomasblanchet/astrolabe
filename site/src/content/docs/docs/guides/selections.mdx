@@ -1,0 +1,32 @@
+---
+title: Selections
+description: Apply one expression to every column that a selector picks, and declare its type.
+sidebar:
+  order: 9
+---
+
+import Example from '../../../../components/docs/Example.astro';
+
+A selector picks columns by name or by data type, for example `cs.numeric()`. A selection is a selector with operations after it, for example `cs.numeric().round(2)`. The type of a selection carries the selector, one result for each data type that it picks, and a rename. So an operation applies it to the declared columns and to the remainder alike.
+
+## Declare the type of a selection
+
+`typed_selection(selector, gives=)` declares a selection. `gives=same` keeps the data type of each column:
+
+<Example name="sel_typed" />
+
+`typed_agg_selection(...)` declares a selection that gives one value for each group, for example `cs.numeric().sum()`. Where the result depends on the data type of a column, give `row(...)` parts in place of `gives=`.
+
+## Rename the columns of a selection
+
+A selection gives one column for each column that it picks. `.name.suffix()` and `.name.prefix()` keep different names different:
+
+<Example name="sel_names" />
+
+`.alias()` cannot name several columns, so it is an error on a selection that picks several columns. A rewrite of each whole name, for example `.name.to_lowercase()`, applies to each picked column. If it turns two names into one, the checker reports `[duplicate-column]`, because Polars refuses two columns with one name.
+
+## Read other columns
+
+A selection can read other columns: `cs.numeric() + pl.col("fee")` adds `fee` to each picked column, and `cs.numeric().sum().over("desk")` sums each one by desk. The frame must declare `fee` and `desk`.
+
+`.struct.unnest()` spreads the fields of a struct expression, and `.name.keep()` gives an expression back the name of its first column.

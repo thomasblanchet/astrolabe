@@ -1,0 +1,312 @@
+# Selection declarations: `typed_selection(selector, rows, suffix=|
+# prefix=)` and `typed_agg_selection(selector, rows)`. The rows
+# partition the matched column's own type, so each `row` takes one
+# region. A selection argument fits a declared selection when its
+# selector picks nothing the declared selector rejects, its code
+# answers the declared outcome at every declared cell it can match,
+# and the affix and the character are equal.
+
+- case: selection_declarations_spell_the_selection_type
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import FloatType, IntegerType, row, same, typed_agg_selection, typed_selection
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Texts = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+    Means = typed_agg_selection(cs.numeric(), row(FloatType, gives=same), row(IntegerType, gives=pl.Float64))
+    Named = typed_selection(pl.col("bid", "ask"), gives=same, prefix="p_")
+    Every = typed_selection(pl.all(), gives=same)
+    Some = typed_selection(cs.numeric() & ~cs.by_name("n"), gives=same)
+    Keyed = typed_selection(cs.by_name("bid", require_all=False), gives=same)
+    Stamped = typed_selection(cs.by_dtype(pl.Datetime("ms")), gives=same)
+
+    def f(r: Rounded, t: Texts, m: Means, n: Named, e: Every, s: Some, k: Keyed, d: Stamped) -> None:
+        reveal_type(r)  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]"
+        reveal_type(t)  # N: Revealed type is "astrolabe.expr.TypedSelection[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.NumericType, polars.datatypes.classes.String]], astrolabe.expr.Affix[Literal[''], Literal['_s'], None]]"
+        reveal_type(m)  # N: Revealed type is "astrolabe.expr.TypedAggSelection[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.expr.Rows[astrolabe.expr.Row[polars.datatypes.classes.FloatType, astrolabe.expr.Same[astrolabe.expr.Blank]], astrolabe.expr.Row[polars.datatypes.classes.IntegerType, polars.datatypes.classes.Float64]], None]"
+        reveal_type(n)  # N: Revealed type is "astrolabe.expr.TypedSelection[astrolabe.remainder.OneOf[Literal['ask'] | Literal['bid']], astrolabe.expr.Rows[astrolabe.expr.Row[astrolabe.expr.EveryDType, astrolabe.expr.Same[astrolabe.expr.Blank]]], astrolabe.expr.Affix[Literal['p_'], Literal[''], None]]"
+        reveal_type(e)  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Never]]]"
+        reveal_type(s)  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['n']]]]]"
+        reveal_type(k)  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.remainder.OneOf[Literal['bid']]]"
+        reveal_type(d)  # N: Revealed type is "astrolabe.expr.TypedSelector[astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['ms'], None]]]"
+
+- case: a_body_is_judged_by_the_selection_fit
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import FloatType, IntegerType, row, same, typed_agg_selection, typed_selection
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Texts = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+    Means = typed_agg_selection(cs.numeric(), row(FloatType, gives=same), row(IntegerType, gives=pl.Float64))
+
+    def rounded(sel: Rounded) -> Rounded:
+        return sel.round(2)
+
+    def texts(sel: Rounded) -> Texts:
+        return sel.cast(pl.String).name.suffix("_s")
+
+    def means(sel: Rounded) -> Means:
+        return sel.mean()
+
+    def wrong_character(sel: Rounded) -> Rounded:
+        return sel.sum()  # E: This expression does not match its declared type: it combines rows into one value, but the declared type works row by row  [expression-fit]
+
+    def wrong_affix(sel: Rounded) -> Texts:
+        return sel.cast(pl.String)  # E: This expression does not match its declared type: it adds nothing to the column names, but the declared type adds the suffix "_s"  [expression-fit]
+
+- case: a_call_is_judged_by_the_selection_fit
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, column, other_columns, same, typed_selection
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Texts = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+
+    def rounded(sel: Rounded) -> Rounded:
+        return sel.round(2)
+
+    def texts(sel: Texts) -> Texts:
+        return sel
+
+    rounded(cs.numeric())
+    rounded(cs.float())
+    rounded(cs.numeric().round(2))
+    rounded(cs.string())  # E: Argument "sel" does not match its declared type: it selects columns the declared type does not allow  [expression-fit]
+    rounded(pl.all())  # E: Argument "sel" does not match its declared type: it selects columns the declared type does not allow  [expression-fit]
+    rounded(cs.numeric().sum())  # E: Argument "sel" does not match its declared type: it combines rows into one value, but the declared type works row by row  [expression-fit]
+    rounded(cs.numeric().cast(pl.String))  # E: Argument "sel" does not match its declared type: it makes a String column, but the declared type is Decimal(precision=10, scale=2)  [expression-fit]
+    rounded(cs.numeric().name.suffix("_r"))  # E: Argument "sel" does not match its declared type: it adds the suffix "_r", but the declared type adds nothing to the column names  [expression-fit]
+    rounded(pl.col("a"))  # E: Argument "sel" does not match its declared type: this value is not a selection of columns  [expression-fit] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+    Price = column("price", pl.Float64)
+
+    def from_column(price: Price) -> None:
+        rounded(price + 1)  # E: Argument "sel" does not match its declared type: this value is not a selection of columns  [expression-fit] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+
+    texts(cs.numeric().cast(pl.String).name.suffix("_s"))
+    texts(cs.numeric().name.suffix("_s"))  # E: Argument "sel" does not match its declared type: it makes a Decimal(precision=10, scale=2) column, but the declared type is String  [expression-fit]
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        ask: pl.Float64
+
+    Rest = other_columns()
+    quotes: TypedDataFrame[Quotes]
+    reveal_type(quotes.select(rounded(cs.numeric())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64}, closed=True), None]"
+
+    def open(df: TypedDataFrame[Quotes, Rest]) -> None:
+        reveal_type(df.select(rounded(cs.numeric())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'ask': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(texts(cs.numeric().cast(pl.String).name.suffix("_s"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid_s': polars.datatypes.classes.String, 'ask_s': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Suffixed[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], Literal['_s']], polars.datatypes.classes.String]]"
+
+# A declared selection passed on keeps its declaration: at each column
+# that it picks, it gives its declared type under its renamed name. The
+# fit compares those with the parameter, as it compares a code.
+- case: a_declared_selection_passed_on_is_judged_by_its_declaration
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import same, typed_selection
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Floats = typed_selection(cs.float(), gives=same)
+    Strs = typed_selection(cs.numeric(), gives=pl.String)
+    Texts = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+    Again = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+
+    def rounded(sel: Rounded) -> Rounded:
+        return sel
+
+    def floats(sel: Floats) -> Floats:
+        return sel
+
+    def again(sel: Again) -> Again:
+        return sel
+
+    def run(sel: Rounded, few: Floats, strs: Strs, texts: Texts) -> None:
+        rounded(few)
+        floats(sel)  # E: Argument "sel" does not match its declared type: it selects columns the declared type does not allow  [expression-fit]
+        rounded(strs)  # E: Argument "sel" does not match its declared type: it makes a String column, but the declared type is Decimal(precision=10, scale=2)  [expression-fit]
+        rounded(texts)  # E: Argument "sel" does not match its declared type: it adds the suffix "_s", but the declared type adds nothing to the column names  [expression-fit]
+        again(texts)
+        rounded(sel.round(2))
+        rounded(sel.cast(pl.String))  # E: Argument "sel" does not match its declared type: it makes a String column, but the declared type is Decimal(precision=10, scale=2)  [expression-fit]
+
+# A kind such as `Datetime` stands for each of its units and zones, so
+# a selection must give the declared answer at each of them. A unit cast
+# gives `ms` where the picked column is `ns`.
+- case: a_selection_fits_at_each_data_type_of_a_kind
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import same, typed_selection
+
+    Stamps = typed_selection(cs.datetime(), gives=same)
+    Listed = typed_selection(cs.by_dtype(pl.List), gives=same)
+
+    def stamps(sel: Stamps) -> Stamps:
+        return sel
+
+    def listed(sel: Listed) -> Listed:
+        return sel
+
+    stamps(cs.datetime())
+    stamps(cs.datetime().dt.cast_time_unit("ms"))  # E: Argument "sel" does not match its declared type: it makes a Datetime(time_unit='ms', time_zone=None) column, but the declared type is Datetime(time_unit='ns', time_zone=None)  [expression-fit]
+    listed(cs.by_dtype(pl.List))
+
+- case: a_malformed_selection_declaration_registers_nothing
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from typing import Any
+    from astrolabe import Unchecked, row, same, typed_agg_selection, typed_selection
+
+    def make() -> Any: ...
+
+    Empty = typed_selection(gives=same)  # E: Malformed declaration: a selector comes first  [malformed-declaration] # E: Missing positional argument "selector" in call to "typed_selection"  [call-arg]
+    NotNegatable = typed_selection(~cs.first(), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+    NoLiteral = typed_selection(cs.by_name(3), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration] # E: Argument 1 to "by_name" has incompatible type "int"; expected "str | Collection[str]"  [arg-type]
+    NoSelector = typed_selection(3, gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+    NoGives = typed_selection(cs.numeric())  # E: Malformed declaration: gives= is required  [malformed-declaration]
+    Overlap = typed_selection(cs.numeric(), row(pl.Int64, gives=same), row(pl.Int64, gives=pl.Float64))  # E: Malformed declaration: two rows cover the same cell. Make the rows disjoint  [malformed-declaration]
+    Named = typed_selection(cs.numeric(), gives=same, named="z")  # E: Malformed declaration: unexpected keyword named=  [malformed-declaration] # E: Unexpected keyword argument "named" for "typed_selection"  [call-arg] # N: "typed_selection" defined in "astrolabe.declare"
+    AggAffix = typed_agg_selection(cs.numeric(), gives=same, suffix="_x")  # E: Malformed declaration: unexpected keyword suffix=  [malformed-declaration] # E: Unexpected keyword argument "suffix" for "typed_agg_selection"  [call-arg] # N: "typed_agg_selection" defined in "astrolabe.declare"
+    BareRegion = typed_selection(cs.numeric(), pl.Int64, gives=same)  # E: Malformed declaration: after the selector, every part is row(region, gives=...)  [malformed-declaration]
+    NoRegion = typed_selection(cs.numeric(), row(gives=same))  # E: Malformed declaration: a row of a selection takes one region  [malformed-declaration]
+    Trusted = typed_selection(cs.numeric(), row(Unchecked, gives=same))  # E: Malformed declaration: a selection's row takes a region, never Unchecked  [malformed-declaration]
+    BadAffix = typed_selection(cs.numeric(), gives=same, suffix=3)  # E: Malformed declaration: suffix= and prefix= must be string literals  [malformed-declaration] # E: Argument "suffix" to "typed_selection" has incompatible type "int"; expected "str | None"  [arg-type]
+    Positional = typed_selection(cs.first(), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+    Outside = typed_selection(cs.numeric(), row(pl.String, gives=same))  # E: Malformed declaration: a read has an empty region. Give it at least one data type  [malformed-declaration]
+    BadGives = typed_selection(cs.numeric(), gives=1)  # E: Malformed declaration: gives= must be a data type, same or wrap(...)  [malformed-declaration]
+    Called = typed_selection(make()(), gives=same)  # E: Malformed declaration: a selector is written with cs.*, pl.all() or pl.col(names...)  [malformed-declaration]
+
+    def f(a: NoSelector) -> None: ...  # E: Variable "main.NoSelector" is not valid as a type  [valid-type] # N: See https://mypy.readthedocs.io/en/stable/common_issues.html#variables-vs-type-aliases
+
+- case: a_selection_declaration_waits_for_a_deferred_class
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, row, same, typed_selection
+
+    Rows = typed_selection(cs.numeric(), row(Deferred, gives=same))  # E: Malformed declaration: a selection's row takes a region, never Unchecked  [malformed-declaration] # E: Name "Deferred" is used before definition  [used-before-def]
+
+    class Deferred(Columns):
+        n: Later
+
+    Later = pl.Int64
+
+# A frame reads a declared selection at each column that its selector
+# picks. A keyword cannot rename its several outputs, a picked column
+# outside its rows has no result, and so does a kind of the remainder
+# outside its rows.
+- case: a_declared_selection_meets_the_columns_and_the_remainder_of_a_frame
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns, row, same, typed_selection
+    from astrolabe.frame import Decimal
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Texts = typed_selection(cs.numeric(), row(pl.Int64, gives=pl.String))
+
+    class Trades(Columns):
+        price: Decimal[Literal[10], Literal[2]]
+        k: pl.Int64
+
+    class Counts(Columns):
+        k: pl.Int64
+
+    Rest = other_columns()
+
+    def picked(
+        df: TypedDataFrame[Trades],
+        counts: TypedDataFrame[Counts, Rest],
+        cols: Rounded,
+        texts: Texts,
+    ) -> None:
+        reveal_type(df.select(x=cols))  # E: A selection has several outputs, which .alias() cannot rename: use .name.suffix() or .name.prefix()  [selection-rename] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.Unchecked}, closed=True), None]"
+        df.select(texts)  # E: "price" has no result type at this frame's column types  [unsupported-dtype-op]
+        counts.select(texts)  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op]
+
+- case: a_declared_selection_over_the_undeclared_columns_reads_each_kind
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns, row, same, typed_selection
+
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Strings = typed_selection(cs.numeric(), gives=pl.String)
+    Texts = typed_selection(cs.all(), row(pl.Int64, gives=pl.String))
+    Rest = other_columns()
+    Lists = other_columns(all_of={pl.Int64, pl.List})
+
+    class Counts(Columns):
+        k: pl.String
+        a: pl.Int64
+
+    class Loose(Columns):
+        k: pl.String
+        u: Unchecked
+
+    class Ints(Columns):
+        n: pl.Int64
+
+    def run(
+        counts: TypedDataFrame[Counts, Rest],
+        loose: TypedDataFrame[Loose],
+        lists: TypedDataFrame[Ints, Lists],
+        cols: Rounded,
+        strings: Strings,
+        texts: Texts,
+    ) -> None:
+        # In agg, a selection that works row by row gives a list of the
+        # values of each column it picks.
+        reveal_type(counts.group_by("k").agg(cols))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'a': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], astrolabe.frame.List[astrolabe.frame.Unchecked]]]"
+        # The selector picks the column declared Unchecked only where its data
+        # are numbers, so the data decide the columns of the result.
+        reveal_type(loose.select(cols))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+        # with_columns keeps the column either way, with the type that the
+        # answer and its own type share, and a sort key changes no column.
+        reveal_type(loose.with_columns(strings))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Loose, {'k': polars.datatypes.classes.String, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+        reveal_type(loose.sort(cols))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Loose, {'k': polars.datatypes.classes.String, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+        # The checker has no sample for a List that the undeclared columns
+        # can hold, so the declaration reads as Unchecked there.
+        reveal_type(lists.select(texts))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[main.Lists, astrolabe.frame.Unchecked]]"
+
+# A code that reads a declared selection is a selection: the frame expands
+# the declared selector, and at each picked column the parameter has its
+# declared type and its renamed name.
+- case: a_code_that_reads_a_declared_selection_expands_at_the_frame
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, InferredExpr, TypedDataFrame, TypedLazyFrame, infer, other_columns, same, typed_selection
+
+    Texts = typed_selection(cs.numeric(), gives=pl.String, suffix="_s")
+    Rounded = typed_selection(cs.numeric(), gives=same)
+    Rest = other_columns()
+
+    class Prices(Columns):
+        k: pl.String
+        a: pl.Int64
+        b: pl.Float32
+
+    def lengths(texts: Texts) -> InferredExpr:
+        return infer(texts.str.len_chars())
+
+    def run(df: TypedDataFrame[Prices], wide: TypedDataFrame[Prices, Rest], texts: Texts, rounded: Rounded) -> None:
+        reveal_type(df.select(texts.str.len_chars()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a_s': polars.datatypes.classes.UInt32, 'b_s': polars.datatypes.classes.UInt32}, closed=True), None]"
+        reveal_type(df.select(lengths(cs.numeric().cast(pl.String).name.suffix("_s"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a_s': polars.datatypes.classes.UInt32, 'b_s': polars.datatypes.classes.UInt32}, closed=True), None]"
+        reveal_type(wide.select(rounded.abs()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.group_by("k").agg(rounded.sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float32}, closed=True), None]"
+        # A declared selection beside another selector picks columns that the
+        # argument of the caller decides, so the call gives the plain frame.
+        reveal_type(df.select(rounded + cs.numeric()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+    def lazily(lf: TypedLazyFrame[Prices], rounded: Rounded) -> None:
+        reveal_type(lf.select(rounded.abs()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float32}, closed=True), None]"

@@ -1,0 +1,97 @@
+---
+/** Six cards on what the checker does. */
+---
+
+<section id="features" class="features">
+  <p class="eyebrow">features</p>
+  <div class="grid">
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 3.5l10.5 4v7.5c0 6.6-4.4 11.4-10.5 13.5C9.9 26.4 5.5 21.6 5.5 15V7.5z"></path>
+        <path d="M11.5 15.8l3.2 3.2 6-6.5"></path>
+      </svg>
+      <h3>Formally defined and proven</h3>
+      <p>The type grammar is a consistent system with a written specification. Its core theorems are proved in Lean, and its data-type rules are tested against Polars.</p>
+    </div>
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 4l12 6-12 6-12-6z"></path>
+        <path d="M4 16l12 6 12-6"></path>
+        <path d="M4 22l12 6 12-6"></path>
+      </svg>
+      <h3>Broad Polars coverage</h3>
+      <p>
+        Data frames, lazy frames, expressions and selectors, through <span class="ic">select</span>, <span class="ic">join</span>,
+        <span class="ic">group_by</span>, <span class="ic">unpivot</span> and more, each with the schema that Polars gives.
+      </p>
+    </div>
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="13.5" cy="13.5" r="8.5"></circle>
+        <path d="M20 20l8 8"></path>
+        <path d="M9.8 13.8l2.6 2.6 5-5.2"></path>
+      </svg>
+      <h3>Checks at run time, too</h3>
+      <p>
+        For data that comes from outside, <span class="ic">check_schema</span> verifies a frame against its declared type at run time, and
+        <span class="ic">force_schema</span> casts it to that type.
+      </p>
+    </div>
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4v7M20 4v7"></path>
+        <path d="M8 11h16v4a8 8 0 0 1-16 0z"></path>
+        <path d="M16 23v5"></path>
+      </svg>
+      <h3>Set up in one command</h3>
+      <p>
+        <span class="ic">astrolabe init</span> adds the plugin to your mypy configuration in one step. It then runs wherever mypy runs: your editor,
+        pre-commit hooks and CI.
+      </p>
+    </div>
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 4v24M10 28h12M6 9h20"></path>
+        <path d="M6 9l-4 9a4 4 0 0 0 8 0z"></path>
+        <path d="M26 9l-4 9a4 4 0 0 0 8 0z"></path>
+      </svg>
+      <h3>Honest and pragmatic</h3>
+      <p>Not every schema is known before the code runs, and that’s fine. The checker marks such a frame or column as unknown, and every other check still applies.</p>
+    </div>
+    <div class="card">
+      <svg aria-hidden="true" width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="#d4af37" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 8h24M4 16h24M4 24h24"></path>
+        <circle cx="11" cy="8" r="2.6" fill="#0b1020"></circle>
+        <circle cx="21" cy="16" r="2.6" fill="#0b1020"></circle>
+        <circle cx="14" cy="24" r="2.6" fill="#0b1020"></circle>
+      </svg>
+      <h3>Choose your strictness</h3>
+      <p>One setting decides how strict the checker is with steps it cannot fully verify: lenient for an existing codebase, strict for new code, adjustable per operation.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .features {
+    padding: 0 0 96px;
+  }
+
+  .eyebrow {
+    margin-bottom: 24px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  p {
+    font-size: 15px;
+  }
+</style>

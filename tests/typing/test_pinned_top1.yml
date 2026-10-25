@@ -1,0 +1,659 @@
+# Cases that pin rules which a mutation audit found loose. Some cases write
+# their own pyproject.toml through `files:`, so that the case can set the
+# [tool.astrolabe] settings. The file then replaces the one that
+# pytest-mypy-plugins writes, and must register the plugin again.
+
+- case: gate_never_reports_a_checker_gap_and_names_the_level_none
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Vw[T: pl.DataType](Columns):
+        v: T
+        w: pl.Int64
+
+    def f[T: pl.DataType](df: TypedDataFrame[Vw[T]]) -> None:
+        # The level "never" reports a checker gap. The note names the level "none", which lets the gap pass.
+        df.select(pl.cum_sum_horizontal("w", "w").alias("bad"))  # E: Column "bad" of "select" is Unchecked: the checker does not model this case  [implicitly-unchecked] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "none"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: gate_none_reports_a_stated_and_an_omitted_reason_with_their_levels
+  main: |
+    import polars as pl
+    from astrolabe import TypedDataFrame, columns
+
+    A = columns("A", {"a": pl.Int64})
+    df: TypedDataFrame[A]
+    value: int = 1
+    # The level "none" reports a bare integer. The note names the level "omitted".
+    df.select(value)  # E: Column "literal" of "select" is Unchecked: a number variable has no fixed width  [implicitly-unchecked] # N: set allow_unproven = "omitted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "omitted"
+    # A literal of the variable has no fixed width either.
+    df.select(pl.lit(value))  # E: Column "literal" of "select" is Unchecked: a number variable has no fixed width  [implicitly-unchecked] # N: set allow_unproven = "omitted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "omitted"
+    # The level "none" reports a read with no schema. The note names the level "stated".
+    pl.read_csv("data.csv")  # E: The result of "read_csv" has no known schema: no schema gives the column types  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] read_csv = "stated"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: gate_never_reports_each_concat_gap_once_and_no_gap_after_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class A(Columns):
+        a: pl.Int64
+
+    class B(Columns):
+        a: pl.String
+
+    L = other_columns()
+
+    class G[T: pl.DataType](Columns):
+        a: T
+
+    x: TypedDataFrame[A]
+    y: TypedDataFrame[B]
+    o: TypedDataFrame[A, L]
+    # The checker does not type a vertical concat. The level "never" reports this gap.
+    pl.concat([x, x])  # E: The result of "concat" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "none"
+    # A vertical concat with an open first frame is a gap too.
+    pl.concat([o, o])  # E: The result of "concat" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "none"
+    # An item that is not a typed frame is a gap too.
+    pl.concat([x, pl.DataFrame({"a": [1]})])  # E: The result of "concat" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "none"
+    # A vertical concat whose schemas differ gets one error. The checker reports no gap after it.
+    pl.concat([x, y])  # E: pl.concat(how="vertical") requires identical schemas: frame 1 does not match frame 0  [schema-mismatch]
+    # A concat of an empty list gets one error. The checker reports no gap after it.
+    pl.concat([])  # E: concat([]) raises ValueError: cannot concat empty list  [invalid-call-shape]
+    # A strict diagonal concat whose shared column types differ gets one error. The checker reports no gap after it.
+    pl.concat([x, y], how="diagonal")  # E: pl.concat(how="diagonal") column "a" does not reconcile: Int64 vs. String  [schema-mismatch]
+
+    def f[T: pl.DataType](g: TypedDataFrame[G[T]]) -> None:
+        # A type variable in a strict diagonal concat is a gap, not an error.
+        pl.concat([x, g], how="diagonal")  # E: The result of "concat" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "none"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: gate_never_reports_no_gap_after_a_disallowed_vertical_concat
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    x: TypedDataFrame[A]
+    # The setting disallow_vertical_concat reports a vertical concat. The checker reports no gap after it.
+    pl.concat([x, x])  # E: pl.concat(how="vertical") is disallowed: column order cannot be verified for a schema derived through a Rest-generic function (set disallow_vertical_concat = false in [tool.astrolabe] to allow it as an untyped result instead)  [vertical-concat-disallowed]
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+        disallow_vertical_concat = true
+
+- case: concat_diagonal_type_mismatch_falls_back_to_the_plain_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    class B(Columns):
+        a: pl.String
+
+    x: TypedDataFrame[A]
+    y: TypedDataFrame[B]
+    # A strict diagonal concat whose shared column types differ has no typed result.
+    reveal_type(pl.concat([x, y], how="diagonal"))  # E: pl.concat(how="diagonal") column "a" does not reconcile: Int64 vs. String  [schema-mismatch] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_by_name_builds_the_result_from_the_columns_of_the_first_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    class AB(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    x: TypedDataFrame[A]
+    z: TypedDataFrame[AB]
+    # The result of a diagonal concat lists its columns. It does not take the class name of a later frame.
+    reveal_type(pl.concat([x, z], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+    # A horizontal_extend concat of one frame keeps the class name of that frame.
+    reveal_type(pl.concat([z], how="horizontal_extend"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.AB, {'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: gate_never_reports_no_gap_for_a_proven_or_accounted_expression
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class K(Columns):
+        k: pl.String
+        s: pl.String
+        n: pl.Int64
+        u: Unchecked
+
+    df: TypedDataFrame[K]
+    # A typed expression over declared columns has a proof. The level "never" reports nothing.
+    df.select(pl.col("n") + 1)
+    # A column that the user declares Unchecked is the choice of the user. The checker reports no gap for it.
+    df.select(pl.col("u") + 1)
+    # An opaque function gets its report at the call that builds it. The select reports no gap after it.
+    df.select(pl.col("n").map_elements(lambda x: x))  # E: Column "n" of "map_elements" is Unchecked: a Python function decides the type, and no return_dtype= names it  [implicitly-unchecked] # N: set allow_unproven = "omitted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_elements = "omitted"
+    # A short form over a column with no result type gets one error. The checker reports no gap after it.
+    df.group_by("k").sum()  # E: "s" has no result type at this frame's column types: `sum` operation not supported for dtype `String`, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    # A selection that reads an unknown column gets one error. The checker reports no gap after it.
+    df.select(cs.numeric() * pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+    # An unnest of a column that is not a struct gets one error. The checker reports no gap after it.
+    df.select(pl.col("n").struct.unnest())  # E: Column "n" is not a Struct with declared fields, cannot .struct.unnest()  [wrong-column-shape]
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: gate_none_names_the_reason_of_each_unread_argument
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class K(Columns):
+        k: pl.String
+        n: pl.Int64
+
+    df: TypedDataFrame[K]
+    kw: dict[str, pl.Expr] = {"m": pl.col("n")}
+    name: str = "n"
+    e: pl.Expr = pl.col("n") > 0
+    ratio: float = 1.5
+    # Keywords unpacked from a dict have no literal names.
+    df.select(**kw)  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"
+    df.with_columns(**kw)  # E: The result of "with_columns" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "stated"
+    # A string variable is a column name that is not a literal.
+    df.select(name)  # E: The result of "select" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"
+    # A plain expression variable is an expression that is not typed.
+    df.select(e)  # E: The result of "select" has no known schema: an expression is not typed  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "stated"
+    # A float variable can hold an int, whose width polars reads from the value.
+    df.select(ratio)  # E: Column "literal" of "select" is Unchecked: a number variable has no fixed width  [implicitly-unchecked] # N: set allow_unproven = "omitted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] select = "omitted"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: struct_unnest_reads_the_fields_when_the_frame_holds_only_the_struct
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame, Unchecked
+
+    class St(Columns):
+        st: Struct[Column[Literal["a"], pl.Int64], Column[Literal["b"], pl.Float64]]
+
+    class K(Columns):
+        n: pl.Int64
+        u: Unchecked
+
+    sdf: TypedDataFrame[St]
+    df: TypedDataFrame[K]
+    # The unnest reads the declared fields, also when the struct is the only column.
+    reveal_type(sdf.select(pl.col("st").struct.unnest()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Float64}, closed=True), None]"
+    # An Unchecked answer that is not a plain column read is a gap. The default setting lets it pass as the plain frame.
+    reveal_type(df.select(pl.col("u").first().struct.unnest()))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: filter_checks_each_predicate_after_one_it_cannot_read
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class K(Columns):
+        n: pl.Int64
+
+    df: TypedDataFrame[K]
+    e: pl.Expr = pl.col("n") > 0
+    # The checker cannot read the first predicate. It still checks the second predicate.
+    df.filter(e, pl.col("n"))  # E: Column "n" is not Boolean, cannot .filter()  [wrong-column-shape]
+
+- case: untyped_select_with_a_plain_selector_stays_plain
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+
+    df: pl.DataFrame
+    names: list[str] = ["a"]
+    # A plain selector needs real columns to match. The select keeps the plain frame.
+    reveal_type(df.select(cs.by_name(names), "b"))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A keyword does not help. Polars can still pick more than one column.
+    reveal_type(df.select(x=cs.by_name(names)))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A bare name is not a selector. The select gives a typed frame.
+    reveal_type(df.select("b"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: gate_default_reports_a_possible_and_an_asserted_reason_with_their_levels
+  main: |
+    import polars as pl
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    Rest = other_columns()
+    NoSector = other_columns(without=["sector"])
+
+    class DfSchema(Columns):
+        a: pl.Int64
+
+    def add_sector(df: TypedDataFrame[DfSchema, NoSector]) -> None:
+        raise NotImplementedError
+
+    df: TypedDataFrame[DfSchema, Rest]
+    closed: TypedDataFrame[DfSchema]
+    # The remainder can hold "nope", so the drop is unproven. The default level reports it and names the level "possible".
+    reveal_type(df.drop("nope"))  # E: Column "nope" is not declared and cannot be proven to exist  [undeclared-column] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] drop = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The remainder of the argument does not prove the requirement. The note names the level "asserted".
+    add_sector(df)  # E: The argument's own remainder does not prove the requirements of "NoSector". Declare the missing requirement on the argument's own remainder  [forbidden-column] # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fit = "asserted"
+    # A drop of a name that a closed frame does not hold is an error. The result falls back to the plain frame.
+    reveal_type(closed.drop("nope"))  # E: Unknown column "nope"  [unknown-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: corr_falls_back_to_the_plain_frame_after_an_error_or_an_unread_label
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class N(Columns):
+        a: pl.Int64
+        b: pl.Float64
+
+    class S(Columns):
+        a: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[N]
+    sdf: TypedDataFrame[S]
+    label: str = "x"
+    # Polars cannot correlate a String column. The result falls back to the plain frame.
+    reveal_type(sdf.corr())  # E: Column "s" is not numeric or Boolean, cannot corr  [wrong-column-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A label that repeats a column name is an error. The result falls back to the plain frame.
+    reveal_type(df.corr(label="a"))  # E: corr would produce duplicate column "a"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A label that is not a literal gives no name. The result falls back to the plain frame.
+    reveal_type(df.corr(label=label))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: whole_frame_reducer_over_a_type_variable_column_keeps_it_as_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class G[T: pl.DataType](Columns):
+        v: T
+        w: pl.Int64
+
+    def f[T: pl.DataType](g: TypedDataFrame[G[T]]) -> None:
+        # The data type of sum() depends on T, so the column keeps its name as Unchecked.
+        reveal_type(g.sum())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v': astrolabe.frame.Unchecked, 'w': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: other_columns_without_rules_out_each_listed_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    L1 = other_columns(without=["x"])
+    L2 = other_columns(without=["y", "x"])
+
+    class A(Columns):
+        a: pl.Int64
+
+    d1: TypedDataFrame[A, L1]
+    d2: TypedDataFrame[A, L2]
+    # A remainder declared without one name cannot hold that name.
+    d1.select("x")  # E: Unknown column "x"  [unknown-column]
+    # A remainder declared without two names cannot hold either name.
+    d2.select("x")  # E: Unknown column "x"  [unknown-column]
+    d2.select("y")  # E: Unknown column "y"  [unknown-column]
+
+- case: join_falls_back_to_the_plain_frame_after_a_call_shape_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    class B(Columns):
+        k: pl.Int64
+        b: pl.String
+
+    a: TypedDataFrame[A]
+    b: TypedDataFrame[B]
+    # Polars refuses on= together with left_on=. The result falls back to the plain frame.
+    reveal_type(a.join(b, on="k", left_on="k"))  # E: join() with on= and left_on=/right_on= raises ValueError: cannot use "on" in conjunction with "left_on" or "right_on"  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # Polars refuses a cross join with any key argument. The result falls back to the plain frame.
+    reveal_type(a.join(b, how="cross", on="k"))  # E: join() with how="cross" and a join key argument raises ValueError: cross join should not pass join keys  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(a.join(b, how="cross", left_on="k"))  # E: join() with how="cross" and a join key argument raises ValueError: cross join should not pass join keys  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(a.join(b, how="cross", right_on="k"))  # E: join() with how="cross" and a join key argument raises ValueError: cross join should not pass join keys  [invalid-call-shape] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_key_that_reads_a_steering_column_is_not_a_bare_column
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    class C(Columns):
+        k: pl.Int64
+        x: pl.Int64
+        b: pl.String
+
+    a: TypedDataFrame[A]
+    c: TypedDataFrame[C]
+    key = pl.col("k") + pl.col("x") * 0
+    # The key also reads "x", so it is not a bare read of "k". The checker does not type the join.
+    reveal_type(a.join(c, on=key))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A window is not elementwise, and polars refuses it as a join key at every frame.
+    reveal_type(a.join(c, on=pl.col("k").over("x")))  # E: join() with a join key that changes the rows raises InvalidOperationError: all join key expressions must be elementwise  [invalid-call-shape]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: join_right_keeps_the_right_key_type_and_suffixes_a_shared_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    class B(Columns):
+        k: pl.Int32
+        v: pl.String
+
+    a: TypedDataFrame[A]
+    b: TypedDataFrame[B]
+    # A right join keeps the data type of the right key, with no widening.
+    # A right column that is not a key gets the suffix when a left column has its name.
+    reveal_type(a.join(b, on="k", how="right"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v': polars.datatypes.classes.Int64, 'k': polars.datatypes.classes.Int32, 'v_right': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: gate_join_reports_one_error_for_a_missing_key_and_names_a_dynamic_key
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+
+    class B(Columns):
+        k: pl.Int64
+
+    a: TypedDataFrame[A]
+    b: TypedDataFrame[B]
+    name: str = "k"
+    # A key that the left frame lacks gets one error. The checker reports no gap after it.
+    a.join(b, on="zz")  # E: Unknown column "zz" in left frame  [unknown-column]
+    # A key in a variable is a column name that is not a literal.
+    a.join(b, on=name)  # E: The result of "join" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] join = "stated"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: gate_none_reports_each_column_that_map_columns_makes_unchecked
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    L = other_columns()
+
+    class A(Columns):
+        a: pl.Int64
+        s: pl.String
+
+    df: TypedDataFrame[A]
+    o: TypedDataFrame[A, L]
+    name: str = "a"
+    # A selector over a closed frame maps only declared columns. The checker reports each one.
+    df.map_columns(cs.string(), lambda s: s)  # E: Column "s" of "map_columns" is Unchecked: a Python function decides the type  [implicitly-unchecked] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_columns = "stated"
+    # A selector over an open frame also maps columns of the remainder. The checker reports them together.
+    o.map_columns(cs.string(), lambda s: s)  # E: Column "s" of "map_columns" is Unchecked: a Python function decides the type  [implicitly-unchecked] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_columns = "stated" # E: Column "the matched columns" of "map_columns" is Unchecked: a Python function decides the type  [implicitly-unchecked]
+    # A name in a variable is a column name that is not a literal.
+    df.map_columns(name, lambda s: s)  # E: The result of "map_columns" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] map_columns = "stated"
+    # A name that the frame cannot hold is an error. The result falls back to the plain frame.
+    reveal_type(df.map_columns("zz", lambda s: s))  # E: Unknown column "zz"  [unknown-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: gate_never_names_the_reason_of_each_pivot_fallback
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class S(Columns):
+        id: pl.Int64
+        cat: pl.String
+        cat2: pl.String
+        v: pl.Int64
+
+    df: TypedDataFrame[S]
+    name: str = "cat"
+    val: str = "a"
+    # An on= name in a variable is a column name that is not a literal.
+    df.pivot(on=name, on_columns=["a"], index="id", values="v")  # E: The result of "pivot" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] pivot = "stated"
+    # Without on_columns=, polars takes the new names from the data. The checker does not model this case.
+    df.pivot(on="cat", index="id", values="v")  # E: The result of "pivot" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] pivot = "none"
+    # A value of on_columns= in a variable is a column name that is not a literal.
+    df.pivot(on="cat", on_columns=[val], index="id", values="v")  # E: The result of "pivot" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] pivot = "stated"
+    # The checker does not model an on= with two columns.
+    df.pivot(on=["cat", "cat2"], index="id", values="v")  # E: The result of "pivot" has no known schema: the checker does not model this case  [implicitly-untyped] # N: set allow_unproven = "none" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] pivot = "none"
+    # An on= with two columns and a list on_columns= always raises. The checker reports no gap after this error.
+    df.pivot(on=["cat", "cat2"], on_columns=["x"], index="id", values="v")  # E: pivot() with on= naming more than one column and a list literal on_columns= always raises  [invalid-call-shape]
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "never"
+
+- case: pivot_names_boolean_on_columns_in_lowercase
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class S(Columns):
+        id: pl.Int64
+        flag: pl.Boolean
+        v: pl.Int64
+
+    df: TypedDataFrame[S]
+    # Polars names the column of True "true" and the column of False "false".
+    reveal_type(df.pivot(on="flag", on_columns=[True, False], index="id", values="v"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'id': polars.datatypes.classes.Int64, 'true': polars.datatypes.classes.Int64, 'false': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: remainder_with_a_requirement_the_engine_cannot_read
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, SplitColumns, TypedDataFrame, other_columns
+
+    Anything = other_columns(all_of=pl.DataType)
+    Text = other_columns(all_of=pl.String)
+
+    class A(Columns):
+        a: pl.Int64
+
+    d: TypedDataFrame[A, Anything]
+    # The engine cannot read the requirement all_of=pl.DataType. A selection over this remainder still checks.
+    d.select(cs.numeric())
+    d.map_columns(cs.numeric(), lambda s: s)
+    # Such a remainder can hold a column that polars cannot correlate.
+    reveal_type(d.corr())  # E: The result of "corr" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] corr = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # A split with such a part still checks.
+    s: TypedDataFrame[A, SplitColumns[Text, Anything]]
+
+- case: remainder_argument_must_be_a_remainder_and_not_a_generic_over_one
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    Text = other_columns(all_of=pl.String)
+
+    class A(Columns):
+        a: pl.Int64
+
+    # A generic class over a declared remainder is not a remainder.
+    bad: TypedDataFrame[A, list[Text]]  # E: TypedDataFrame[...]/TypedLazyFrame[...]'s second argument must be a remainder: a class declared with other_columns(...), a remainder marker over one, or SplitColumns[...]  [marker-arg]
+
+- case: dtype_markers_accept_the_edge_values_that_polars_accepts
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, Decimal, TypedDataFrame
+
+    # A schema class can say closed=True. That is the default.
+    class Ok(Columns, closed=True):
+        a: pl.Int64
+
+    # Polars accepts an Array of size 0, and a Decimal whose scale equals its precision.
+    class Shapes(Columns):
+        empty: Array[pl.Int64, Literal[0]]
+        exact: Decimal[Literal[5], Literal[5]]
+
+    ok: TypedDataFrame[Ok]
+    shapes: TypedDataFrame[Shapes]
+    reveal_type(ok)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Ok, {'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(shapes)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Shapes, {'empty': astrolabe.frame.Array[polars.datatypes.classes.Int64, Literal[0]], 'exact': astrolabe.frame.Decimal[Literal[5], Literal[5]]}, closed=True), None]"
+
+- case: dtype_markers_become_any_after_an_error_in_their_arguments
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, Decimal, Enum, TypedDataFrame
+
+    # Polars refuses each of these data types. Each error leaves the column type Any.
+    class Bad(Columns):
+        neg: Array[pl.Int64, Literal[-1]]  # E: Array[...] size argument must be a non-negative integer literal  [marker-arg]
+        wide: Decimal[Literal[2], Literal[5]]  # E: Decimal[...] scale must not exceed precision  [marker-arg]
+        dup: Enum[Literal["a"], Literal["a"]]  # E: Enum[...] arguments must all be different, found duplicate 'a'  [marker-arg]
+        # mypy already rejects a bare int. The Decimal keeps Any for that argument only.
+        bare: Decimal[5, Literal[2]]  # E: Invalid type: try using Literal[5] instead?  [valid-type]
+
+    def f(bad: TypedDataFrame[Bad]) -> None:
+        reveal_type(bad)  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Bad, {'neg': Any, 'wide': Any, 'dup': Any, 'bare': astrolabe.frame.Decimal[Any, Literal[2]]}, closed=True), None]"
+
+- case: gate_none_names_a_dynamic_update_key
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+        v: pl.Int64
+
+    a: TypedDataFrame[A]
+    b: TypedDataFrame[A]
+    name: str = "k"
+    # An update key in a variable is a column name that is not a literal.
+    a.update(b, on=name)  # E: The result of "update" has no known schema: a column name is not a literal string  [implicitly-untyped] # N: set allow_unproven = "stated" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] update = "stated"
+  files:
+    - path: pyproject.toml
+      content: |
+        [tool.mypy]
+        plugins = ["astrolabe.plugin"]
+        strict = true
+        allow_redefinition = true
+
+        [tool.astrolabe]
+        allow_unproven = "none"
+
+- case: with_row_index_on_a_taken_name_falls_back_to_the_plain_frame
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        k: pl.Int64
+
+    a: TypedDataFrame[A]
+    # Polars raises for an index name that a column already has. The result falls back to the plain frame.
+    reveal_type(a.with_row_index("k"))  # E: with_row_index would produce duplicate column "k"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: concat_of_mixed_frame_kinds_is_an_error
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    x: TypedDataFrame[A]
+    y: TypedLazyFrame[A]
+    # Polars cannot concat an eager frame with a lazy frame. The result has no typed schema.
+    reveal_type(pl.concat([x, y], how="diagonal"))  # E: Value of type variable "PolarsType" of "concat" cannot be "_TypedFrameBase"  [type-var] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: schema_attribute_read_through_a_type_variable
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    # The hook does not read a receiver whose type is a type variable. The read keeps the declared type Any.
+    def f[F: TypedDataFrame[A]](x: F) -> None:
+        reveal_type(x.schema)  # N: Revealed type is "Any"

@@ -1,0 +1,581 @@
+# The range builders: `date_range`/`datetime_range`/`time_range`/
+# `int_range` and their `_ranges` plural forms. Each names its output
+# after an expression start bound, else `literal`, reads every column
+# the bounds read, and answers a fixed type: `int_range` reads an
+# optional `dtype=` option, `datetime_range` its `time_unit=` and
+# `time_zone=` options, and the plural forms wrap the answer in
+# `List[D]`.
+
+- case: select_int_range_narrows_to_default_int64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: pl.Int64
+        literal: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.with_columns(pl.int_range(0, 3))
+
+- case: select_int_range_with_dtype_keyword_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: pl.Int8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.int_range(0, 3, dtype=pl.Int8))
+
+- case: select_int_ranges_narrows_to_list_of_int64
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: List[pl.Int64]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.int_ranges(0, 3))
+
+- case: select_date_range_narrows
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: pl.Date
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.date_range(datetime.date(2020, 1, 1), datetime.date(2020, 1, 3)))
+
+- case: select_date_ranges_narrows_to_list_of_date
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: List[pl.Date]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.date_ranges(datetime.date(2020, 1, 1), datetime.date(2020, 1, 3)))
+
+- case: select_datetime_range_narrows
+  main: |
+    from typing import Literal
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: Datetime[Literal["us"], None]
+
+    # A TypedDict-backed schema compares each column's own dtype
+    # invariantly (real TypedDict/Mapping value semantics), unlike the
+    # old tuple-backed schema's incidental per-item covariance: the
+    # declared type must name the exact narrowed Datetime[Unit, Zone]
+    # marker, not the bare, unparametrized pl.Datetime a subclass
+    # relationship alone used to let through.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_range(datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3)))
+
+- case: select_datetime_ranges_narrows_to_list_of_datetime
+  main: |
+    from typing import Literal
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, Datetime, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: List[Datetime[Literal["us"], None]]
+
+    # See select_datetime_range_narrows's own comment: TypedDict field
+    # comparison is invariant, so the declared type must name the exact
+    # narrowed Datetime[Unit, Zone] marker.
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_ranges(datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3)))
+
+- case: select_datetime_range_narrows_to_parametrized_datetime
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # datetime_range's own time_unit defaults to "us" and time_zone to
+    # no zone, confirmed against real polars 1.43.2: both stand in a
+    # Datetime[Unit, Zone] marker, not in a bare pl.Datetime.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.datetime_range(datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+- case: select_datetime_range_with_time_unit_narrows_the_given_unit
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.datetime_range(datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3), time_unit="ms")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Datetime[Literal['ms'], None]}, closed=True), None]"
+    # A variable of the type datetime can hold a zone, which the range keeps.
+    start = datetime.datetime(2020, 1, 1)
+    end = datetime.datetime(2020, 1, 3)
+    reveal_type(df.select(pl.datetime_range(start, end, time_unit="ms")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: select_datetime_range_with_time_zone_narrows_the_given_zone
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    start = datetime.datetime(2020, 1, 1)
+    end = datetime.datetime(2020, 1, 3)
+    reveal_type(df.select(pl.datetime_range(start, end, time_zone="UTC")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']]}, closed=True), None]"
+
+- case: select_datetime_range_with_non_literal_time_unit_is_unchecked
+  main: |
+    from typing import Literal
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # A time_unit no literal supplies leaves the unit unknown: the
+    # output keeps its name under Unchecked instead of losing the
+    # whole result.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    def use(unit: Literal["ms", "us"]) -> None:
+        start = datetime.datetime(2020, 1, 1)
+        end = datetime.datetime(2020, 1, 3)
+        reveal_type(df.select(pl.datetime_range(start, end, time_unit=unit)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: select_datetime_range_with_tz_aware_expr_operands_infers_the_real_zone
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Datetime[Literal["ns"], Literal["UTC"]]
+        b: Datetime[Literal["ns"], Literal["UTC"]]
+
+    # time_zone omitted infers the real zone from start/end, confirmed
+    # against real polars 1.43.2 -- no longer hardcoded to None. Both
+    # operands share the same Unit too, so it stays unchanged.
+    # start's own name ("a") wins, the same leftmost-name convention
+    # every other operation in this project follows, confirmed
+    # empirically -- the "datetime"-shaped name only applies when no
+    # operand carries a real name of its own (see this file's own
+    # select_datetime_range_with_expr_start_narrows_to_datetime_name
+    # case, using pl.datetime(...), which has none).
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: Datetime[Literal["ns"], Literal["UTC"]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_range(pl.col("a").first(), pl.col("b").first()))
+
+- case: select_datetime_range_with_options_beside_column_bounds_sets_them
+  main: |
+    import datetime
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Datetime[Literal["ns"], Literal["UTC"]]
+        b: Datetime[Literal["ns"], Literal["UTC"]]
+        d: pl.Date
+        e: pl.Date
+
+    # An option sets its parameter of the joined bounds, and the other
+    # parameter comes from the bounds. Two Date bounds count in
+    # microseconds.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.datetime_range(pl.col("a").first(), pl.col("b").first(), time_unit="ms")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(df.select(pl.datetime_ranges(pl.col("a"), pl.col("b"), time_zone="Asia/Tokyo")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['ns'], Literal['Asia/Tokyo']]]}, closed=True), None]"
+    reveal_type(df.select(pl.datetime_ranges(pl.col("d"), pl.col("e"), time_unit="ms")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['ms'], None]]}, closed=True), None]"
+    reveal_type(df.select(pl.datetime_ranges(pl.col("d"), pl.col("e"), time_zone="UTC")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['us'], Literal['UTC']]]}, closed=True), None]"
+
+- case: select_datetime_range_with_coarser_start_unit_wins
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: Datetime[Literal["ms"], None]
+        b: Datetime[Literal["ns"], None]
+
+    # The coarser of start's/end's own two time units wins, confirmed
+    # against real polars 1.43.2 -- "ms" is coarser than "ns".
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: Datetime[Literal["ms"], None]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_range(pl.col("a").first(), pl.col("b").first()))
+
+- case: select_datetime_range_with_mismatched_zones_is_refused
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Datetime
+
+    class FrameSchema(Columns):
+        a: Datetime[Literal["ns"], Literal["UTC"]]
+        b: Datetime[Literal["ns"], Literal["America/New_York"]]
+
+    # Two zones that differ have no supertype, and polars raises.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    df.select(pl.datetime_range(pl.col("a").first(), pl.col("b").first()))  # E: "a" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ns', time_zone='UTC') and Datetime(time_unit='ns', time_zone='America/New_York'), and polars raises SchemaError  [unsupported-dtype-op]
+- case: select_datetime_range_with_non_datetime_start_errors
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+        b: Datetime[Literal["ns"], Literal["UTC"]]
+
+    # The bounds join at Datetime pairs only: an Int64 start has no
+    # result, the error names the output, and the output stays under
+    # its name as Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        a: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_range(pl.col("a").first(), pl.col("b").first()))  # E: "a" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
+
+- case: select_datetime_range_with_both_time_unit_and_time_zone_explicit_needs_no_inference
+  main: |
+    from typing import Literal
+    import datetime
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # Both explicit: resolves eagerly, the same as before this stage,
+    # needing no deferred marker at all.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: Datetime[Literal["ms"], Literal["UTC"]]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        pl.datetime_range(
+            datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3),
+            time_unit="ms", time_zone="UTC",
+        )
+    )
+
+- case: select_datetime_ranges_narrows_to_list_of_parametrized_datetime
+  main: |
+    import polars as pl
+    import datetime
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.datetime_ranges(datetime.datetime(2020, 1, 1), datetime.datetime(2020, 1, 3))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['us'], None]]}, closed=True), None]"
+
+- case: select_time_range_narrows
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: pl.Time
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.time_range())
+
+- case: select_time_ranges_narrows_to_list_of_time
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        literal: List[pl.Time]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.time_ranges())
+
+- case: select_date_range_with_expr_start_narrows_to_date_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # pl.date(...) is itself an Expr-returning call, confirmed against
+    # real polars that this changes the result's own output name to
+    # "date" instead of "literal".
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        date: pl.Date
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.date_range(pl.date(2020, 1, 1), pl.date(2020, 1, 3)))
+
+- case: select_datetime_range_with_expr_start_narrows_to_datetime_name
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # Same Expr-shaped naming rule as date_range, confirmed empirically
+    # for datetime_range too. See select_datetime_range_narrows's own
+    # comment: TypedDict field comparison is invariant, so the declared
+    # type must name the exact narrowed Datetime[Unit, Zone] marker.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        datetime: Datetime[Literal["us"], None]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.datetime_range(pl.datetime(2020, 1, 1), pl.datetime(2020, 1, 3)))
+
+- case: select_time_range_with_expr_start_narrows_to_time_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # Same Expr-shaped naming rule as date_range, confirmed empirically
+    # for time_range too.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        time: pl.Time
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.time_range(pl.time(0, 0), pl.time(1, 0)))
+
+- case: select_date_ranges_with_expr_start_narrows_to_date_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # The plural _ranges form shares the same Expr-shaped naming rule.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        date: List[pl.Date]
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.date_ranges(pl.date(2020, 1, 1), pl.date(2020, 1, 3)))
+
+- case: select_int_range_with_named_start_narrows_to_the_start_name
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # The name of the start wins, as the first name does in every other
+    # operation. The start must be one value: a bare column raises.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: TypedDataFrame[FrameSchema] = df.select(pl.int_range(pl.col("a").first(), 3))
+    df.select(pl.int_range(pl.col("a"), 3))  # E: This call has no result at any frame: non-scalar start passed to `int_range`, and polars raises ShapeError  [invalid-call-shape]
+
+- case: select_int_range_with_bad_dtype_argument_is_unchecked
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Int64
+
+    # A dtype= argument that does not resolve to a recognizable dtype
+    # (here, a plain variable of unknown value) keeps the output name
+    # under Unchecked.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    some_dtype: type[pl.DataType]
+    reveal_type(df.select(pl.int_range(0, 3, dtype=some_dtype)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]" # E: Argument "dtype" to "int_range" has incompatible type "type[DataType]"; expected "type[IntegerType] | IntegerType | DataTypeExpr"  [arg-type]
+
+- case: range_function_on_plain_dataframe_narrows_its_own_fixed_dtype
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.select(pl.int_range(0, 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: datetime_ranges_over_date_bounds_counts_in_microseconds
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, TypedDataFrame
+
+    class FrameSchema(Columns):
+        a: pl.Date
+        b: pl.Date
+        m: Datetime[Literal["ms"], None]
+
+    # Two Date bounds give a microsecond Datetime; a Date bound beside a
+    # Datetime bound takes that bound's own type.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select(pl.datetime_ranges(pl.col("a"), pl.col("b"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['us'], None]]}, closed=True), None]"
+    reveal_type(df.select(pl.datetime_ranges(pl.col("a"), pl.col("m"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.List[astrolabe.frame.Datetime[Literal['ms'], None]]}, closed=True), None]"
+
+- case: a_range_bound_after_a_python_start_is_an_operand
+  main: |
+    import datetime
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        d: pl.Date
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Polars runs each bound, also after a start that is a Python value.
+    # The frame must hold the columns of the bound, and the bound must
+    # have an answer.
+    reveal_type(df.select(pl.date_range(datetime.date(2020, 1, 1), pl.col("d").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Date}, closed=True), None]"
+    df.select(pl.date_range(datetime.date(2020, 1, 1), pl.col("zz").max()))  # E: Unknown column "zz"  [unknown-column]
+    df.select(pl.date_range(datetime.date(2020, 1, 1), pl.col("s").abs().max()))  # E: "literal" has no result type at this frame's column types: 'end' must be Date or Datetime, got String, and polars raises ComputeError  [unsupported-dtype-op]
+
+- case: a_range_refuses_a_bound_of_a_kind_that_it_does_not_accept
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.Int64
+        s: pl.String
+        d: pl.Date
+        t: pl.Time
+
+    df: TypedDataFrame[FrameSchema]
+
+    # An integer range needs integer bounds, a date range needs `Date` or
+    # `Datetime` bounds, and a time range accepts a `String` bound.
+    reveal_type(df.select(pl.int_range(pl.col("g").min(), pl.col("g").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.date_range(pl.col("d").min(), pl.col("d").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(pl.time_ranges(pl.col("t").min(), pl.col("t").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.List[polars.datatypes.classes.Time]}, closed=True), None]"
+    df.select(pl.int_range(pl.col("s").max()))  # E: "literal" has no result type at this frame's column types: `end` must be numeric for `int_range`, got String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.int_ranges(0, pl.col("d").max()))  # E: "literal" has no result type at this frame's column types: `end` must be numeric for `int_range`, got Date, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.date_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.datetime_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.datetime_range(pl.col("d").min(), pl.col("s").max(), time_unit="ms"))  # E: "d" has no result type at this frame's column types: 'end' must be Date or Datetime, got String, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.time_range(pl.col("d").min(), pl.col("t").max()))  # E: "d" has no result type at this frame's column types: casting from Date to Time not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]

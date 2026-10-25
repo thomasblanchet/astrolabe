@@ -1,0 +1,89 @@
+# .melt(): deprecated alias for .unpivot(), id_vars/value_vars instead
+# of index/on. Confirmed by reading polars' own source that .melt()
+# is a pure parameter-renaming passthrough to .unpivot(), so this only
+# needs to confirm the id_vars/value_vars wiring itself resolves the
+# same way the equivalent .unpivot() call does -- see test_unpivot.yml
+# for the full behavior matrix (shared UnpivotHook/_UnpivotPlan
+# machinery, only the parameter names differ).
+
+- case: melt_narrows_the_same_way_the_equivalent_unpivot_call_does
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.melt(id_vars="id", value_vars="x")
+
+- case: melt_variable_and_value_names_still_use_their_own_parameter_names
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        kind: pl.String
+        amount: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.melt(id_vars="id", value_vars="x", variable_name="kind", value_name="amount")
+
+- case: melt_unknown_column_errors
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    df.melt(id_vars="missing", value_vars="x")  # E: Unknown column "missing"  [unknown-column]
+
+- case: melt_narrows_precisely_lazy
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class LzFrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+
+    LzFrame = TypedLazyFrame[LzFrameSchema]
+
+    lf: LzFrame
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedLazyFrame[NarrowedSchema] = lf.melt(id_vars="id", value_vars="x")
+
+- case: melt_on_plain_dataframe_is_unaffected
+  main: |
+    import polars as pl
+
+    df: pl.DataFrame
+    reveal_type(df.melt())  # N: Revealed type is "polars.dataframe.frame.DataFrame"

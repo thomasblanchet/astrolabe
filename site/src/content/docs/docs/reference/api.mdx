@@ -1,0 +1,83 @@
+---
+title: API
+description: Every public name of the astrolabe package, by group.
+sidebar:
+  order: 1
+---
+
+Import each name from `astrolabe`.
+
+## Frames and schemas
+
+| Name | Meaning |
+| -- | -- |
+| `TypedDataFrame[Schema, Rest]` | A `pl.DataFrame` whose type states its columns. `Rest` is optional. |
+| `TypedLazyFrame[Schema, Rest]` | A `pl.LazyFrame` whose type states its columns. |
+| `TypedSeries[Name, DType]` | A `pl.Series` whose type states its name and its data type. |
+| `Columns` | The base class of a schema. Each field is a column. |
+| `columns(name, fields)` | Declare a schema from a dict, for column names that are not Python identifiers. |
+| `Column[Name, DType]` | One column, with its name and its data type, in a type. A field of `Struct[...]` uses it. |
+
+See [Schemas](../../guides/schemas/).
+
+## Data types
+
+`Datetime`, `Duration`, `Decimal`, `Enum`, `List`, `Array` and `Struct` name a data type with parameters in a type annotation. `Unchecked`, `Planned`, `AnyZone` and `EveryDType` are special data types. `NumericType`, `IntegerType`, `SignedIntegerType`, `UnsignedIntegerType`, `FloatType`, `TemporalType` and `NestedType` are the families of Polars. See [Data types](../data-types/).
+
+## Remainders
+
+| Name | Meaning |
+| -- | -- |
+| `other_columns(...)` | Declare a remainder, with its promises. |
+
+For the remainder of a result, see `InferredRemainder` below, and [Remainders](../remainders/).
+
+## Declarations
+
+| Name | Meaning |
+| -- | -- |
+| `column(name, dtype)` | An expression that reads one column and gives it back. |
+| `typed_expr(*reads, gives=, named=)` | An expression that gives one value for each row. |
+| `typed_agg(*reads, gives=, named=)` | An expression that gives one value for each group. |
+| `typed_lit(gives=, named=)` | An expression that gives one fixed value and reads no column. |
+| `typed_selection(selector, gives=, suffix=, prefix=)` | A selection that gives one value for each row. |
+| `typed_agg_selection(selector, gives=)` | A selection that gives one value for each group. |
+| `row(*reads, gives=)` | One result for some input data types. |
+| `some_column(region)` | A read of one column whose name each call chooses. |
+| `same` | The result: the data type of the column that the expression reads. |
+| `wrap(constructor, inner)` | The result: a nested data type around another result. |
+| `column_of(Schema, name)`, `subset_of(Schema, *names)` | Reads of the columns of a `Columns` class. |
+| `TypedExpr`, `TypedColumn`, `TypedAgg`, `TypedLit` | The types that the declarations and the checker give to expressions. |
+
+See [Declare expression types](../../guides/expression-types/).
+
+## Inferred return types
+
+| Name | Meaning |
+| -- | -- |
+| `InferredExpr`, `InferredDataFrame`, `InferredLazyFrame` | A return type that the checker computes from the body. |
+| `InferredRemainder` | A remainder that the checker computes from the body. |
+| `infer(value)` | Mark one returned value. |
+
+See [Inferred return types](../../guides/inferred/).
+
+## Runtime functions
+
+| Name | At run time |
+| -- | -- |
+| `check_schema(df, Frame)` | Check that the frame has exactly the declared columns, and type it. |
+| `force_schema(df, Frame, *, strict=True)` | Keep the declared columns, cast each one, and type the frame. |
+| `assume_schema(df, Frame)` | Type the frame, with no check. |
+
+See [Runtime checks](../../guides/runtime/).
+
+## Markers in revealed types
+
+The checker writes a remainder that it computes with these names, in a revealed type and in a message. A program does not need to import them: write `InferredRemainder` and `infer(...)`.
+
+| Name | Meaning |
+| -- | -- |
+| `Minus`, `Only`, `Except`, `Suffixed`, `Prefixed`, `Retyped`, `Both`, `SplitColumns` | The markers of a remainder. |
+| `OneOf`, `StartsWith`, `EndsWith`, `Contains`, `Matching`, `OfType`, `SelAnd`, `SelOr`, `SelNot` | The markers of a selector. |
+
+See [Markers in revealed types](../remainders/#markers-in-revealed-types).
