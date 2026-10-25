@@ -256,6 +256,7 @@ class CensusCalls:
         "arr.arg_min": "pl.col('x').arr.arg_min()",
         "arr.contains": "pl.col('x').arr.contains(1)",
         "arr.count_matches": "pl.col('x').arr.count_matches(1)",
+        "arr.dot": "pl.col('x').arr.dot(pl.col('x'))",
         "arr.eval": "pl.col('x').arr.eval(pl.element() * 2)",
         "arr.explode": "pl.col('x').arr.explode()",
         "arr.first": "pl.col('x').arr.first()",
@@ -438,17 +439,12 @@ class CensusCalls:
         "str.to_titlecase": "pl.col('x').str.to_titlecase()",
         "str.to_uppercase": "pl.col('x').str.to_uppercase()",
         "str.zfill": "pl.col('x').str.zfill(3)",
+        "struct.drop": "pl.col('x').struct.drop(['a'])",
         "struct.field": "pl.col('x').struct.field('a')",
         "struct.json_encode": "pl.col('x').struct.json_encode()",
         "struct.rename_fields": "pl.col('x').struct.rename_fields(['b'])",
         "struct.unnest": "pl.col('x').struct.unnest()",
         "struct.with_fields": "pl.col('x').struct.with_fields()",
-    }
-
-    # The members that a release of polars adds, each with that release and one call.
-    ADDED: ClassVar[dict[str, tuple[str, str]]] = {
-        "arr.dot": ("1.44.0", "pl.col('x').arr.dot(pl.col('x'))"),
-        "struct.drop": ("1.44.0", "pl.col('x').struct.drop(['a'])"),
     }
 
     # The functions of `pl` that build an expression, each with one call.
@@ -560,23 +556,72 @@ class CensusCalls:
         "struct_with_fields",
     )
 
-    def members(self) -> dict[str, str]:
-        """Give the call of each member of a namespace that the installed release of polars has.
+    # The functions that a recent release of polars adds, each with that release. A
+    # key is a name as the other tables of the class hold it, or the name of a
+    # function of `pl` that builds a frame.
+    SINCE: ClassVar[dict[str, str]] = {
+        "ewm_sum": "1.43.0",
+        "ewm_sum_by": "1.43.0",
+        "cat.physical": "1.43.0",
+        "cat.to": "1.43.0",
+        "list": "1.43.0",
+        "scan_arrow_c_stream": "1.43.0",
+        "arr.dot": "1.44.0",
+        "struct.drop": "1.44.0",
+    }
+
+    def installed(self, name: str) -> bool:
+        """Say whether the installed release of polars has a function of the census.
+
+        Args:
+            name: The name of the function, as the tables of the class hold it.
 
         Returns:
-            The calls of `MEMBERS`, and of each member of `ADDED` whose
-            release is the installed one or an older one.
+            Whether the function is in no entry of `SINCE`, or its release is
+            the installed one or an older one.
+
+        Example:
+            >>> CensusCalls().installed("abs")
+            True
+        """
+        first = self.SINCE.get(name)
+        return first is None or PolarsRelease.installed() >= PolarsRelease.parse(first)
+
+    def root_calls(self) -> dict[str, str]:
+        """Give the call of each method of `pl.Expr` that the installed release has.
+
+        Returns:
+            The calls of `ROOT_CALLS` that the installed release has.
+
+        Example:
+            >>> CensusCalls().root_calls()["abs"]
+            "pl.col('x').abs()"
+        """
+        return {name: call for name, call in self.ROOT_CALLS.items() if self.installed(name)}
+
+    def members(self) -> dict[str, str]:
+        """Give the call of each member of a namespace that the installed release has.
+
+        Returns:
+            The calls of `MEMBERS` that the installed release has.
 
         Example:
             >>> CensusCalls().members()["str.len_chars"]
             "pl.col('x').str.len_chars()"
         """
-        installed = PolarsRelease.installed()
-        added = {}
-        for name, (first, call) in self.ADDED.items():
-            if installed >= PolarsRelease.parse(first):
-                added[name] = call
-        return {**self.MEMBERS, **added}
+        return {name: call for name, call in self.MEMBERS.items() if self.installed(name)}
+
+    def context_bound(self) -> tuple[str, ...]:
+        """Give the functions of `CONTEXT_BOUND` that the installed release has.
+
+        Returns:
+            The names of the functions.
+
+        Example:
+            >>> "element" in CensusCalls().context_bound()
+            True
+        """
+        return tuple(name for name in self.CONTEXT_BOUND if self.installed(name))
 
     def method_keys(self) -> set[str]:
         """Give the key of every method of `pl.Expr` that this class accounts for.
@@ -585,8 +630,8 @@ class CensusCalls:
             Each method as `root.<name>`, the opaque methods included.
 
         Example:
-            >>> len(CensusCalls().method_keys())
-            212
+            >>> "root.abs" in CensusCalls().method_keys()
+            True
         """
-        measured = {f"root.{name}" for name in self.ROOT_CALLS}
+        measured = {f"root.{name}" for name in self.root_calls()}
         return measured | set(self.OPAQUE)

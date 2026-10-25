@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import polars as pl
 import pytest
 
-from spec.tests.rule_probes import KernelSamples, PolarsAnswer, RuleKinds, TreeFrame
+from spec.tests.rule_probes import ApiGate, KernelSamples, PolarsAnswer, RuleKinds, TreeFrame
 from astrolabe._rules.definitions.aggregations import Aggregations
 from astrolabe._rules.definitions.binary_operators import BinaryOperators
 from astrolabe._rules.definitions.definition import NullRule
@@ -503,15 +503,18 @@ class NullCases:
             >>> rule, len(calls)
             (<NullRule.FIRST: 'first'>, 1)
         """
+        gate = ApiGate()
+        absent = gate.absent()
         explicit = {
             definition.identity: NullCalls.CALLS[name]
             for name, definition in NullCalls.DEFINITIONS.items()
+            if gate.has(name)
         }
         census = CensusCalls().of()
         stated = [
             definition
             for definition in Definitions.BY_IDENTITY.values()
-            if definition.nulls is not NullRule.NONE
+            if definition.nulls is not NullRule.NONE and definition.identity not in absent
         ]
         cases: dict[str, tuple[NullRule, list[Callable[[pl.Expr, pl.Expr], pl.Expr]]]] = {}
         for definition in stated:
@@ -606,7 +609,11 @@ class ShortCalls:
 
 
 def test_each_definition_that_states_a_short_rule_has_a_call() -> None:
-    """A rule of a short input that no test checks is a claim with no proof."""
+    """A rule of a short input that no test checks is a claim with no proof.
+
+    A function that the installed release of polars does not have keeps its
+    call, which the tests below leave out.
+    """
     stated = {
         definition.identity
         for definition in Definitions.BY_IDENTITY.values()
@@ -615,7 +622,7 @@ def test_each_definition_that_states_a_short_rule_has_a_call() -> None:
     assert stated == {definition.identity for definition, _, _ in ShortCalls.CALLS.values()}
 
 
-@pytest.mark.parametrize("name", sorted(ShortCalls.CALLS))
+@pytest.mark.parametrize("name", sorted(ApiGate().kept(ShortCalls.CALLS)))
 @pytest.mark.parametrize("short", [True, False])
 def test_a_short_input_gives_only_nulls(name: str, *, short: bool) -> None:
     """Over a short input the node gives only nulls, and over a longer input it gives values."""
@@ -625,7 +632,7 @@ def test_a_short_input_gives_only_nulls(name: str, *, short: bool) -> None:
     assert TreeFrame().rules(expression) == TreeFrame().polars(expression)
 
 
-@pytest.mark.parametrize("name", sorted(ShortCalls.CALLS))
+@pytest.mark.parametrize("name", sorted(ApiGate().kept(ShortCalls.CALLS)))
 def test_a_null_that_the_code_decides_meets_one_row(name: str) -> None:
     """`rolling_corr` panics beside one row where an input holds a null, which the rules know.
 

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import polars as pl
 
 from astrolabe._rules.casts import CastCheck
-from astrolabe._rules.definitions.node_options import NodeOptions
+from astrolabe._rules.definitions.node_options import NodeIdentity, NodeOptions
 from astrolabe._rules.dtypes import DType, Is
 from astrolabe._rules.execution import GroupBy, QueryFlags
 from astrolabe._rules.failures import PolarsRefusal, Stop, Undecided
@@ -45,6 +45,7 @@ from astrolabe._rules.tree import ExpressionTree
 from astrolabe._rules.tree_evaluation import TreeEvaluation
 from spec.tools.node_census.kinds import AnyValues, CensusKinds, Sample
 from spec.tools.node_census.outcomes import LiteralOutcome, OutcomeSpace
+from spec.tools.node_census.calls import CensusCalls
 from spec.tools.node_census.surface import NodeTemplate
 from spec.tools.rules.census_text import CensusLeaves, CensusText
 
@@ -1528,6 +1529,93 @@ class CellCheck:
         return Stopped(answer.stop, error)
 
 
+class ApiGate:
+    """Leave out the samples of a function that the installed release of polars does not have.
+
+    A sample of a node is keyed by the name of the function that builds it,
+    as `cat.to`, and a key can add words after a space, as `cat.to Enum`. The
+    census holds the first release of each function that a recent release
+    of polars adds (`CensusCalls.SINCE`).
+
+    `NODES` gives the node of the rules that each such function builds, so a
+    test that reads every definition can leave out the nodes that the
+    installed release cannot build.
+
+    Example:
+        >>> ApiGate().kept({"abs": 1, "abs of a literal": 2})
+        {'abs': 1, 'abs of a literal': 2}
+    """
+
+    NODES: ClassVar[dict[str, NodeIdentity]] = {
+        "ewm_sum": NodeIdentity("Function", "EwmSum"),
+        "ewm_sum_by": NodeIdentity("Function", "EwmSumBy"),
+        "cat.physical": NodeIdentity("Function", "Categorical.Physical"),
+        "cat.to": NodeIdentity("Function", "Categorical.To"),
+    }
+
+    def absent(self) -> set[NodeIdentity]:
+        """Give the node of each function of `NODES` that the installed release does not have.
+
+        Returns:
+            The identities of those nodes.
+
+        Example:
+            >>> NodeIdentity("Function", "Abs") in ApiGate().absent()
+            False
+        """
+        return {identity for name, identity in self.NODES.items() if not self.has(name)}
+
+    def has(self, key: str) -> bool:
+        """Say whether the installed release has the function of a sample.
+
+        Args:
+            key: The key of the sample.
+
+        Returns:
+            Whether it has the function that the first word of the key names.
+
+        Example:
+            >>> ApiGate().has("cat.len_bytes of a literal")
+            True
+        """
+        return CensusCalls().installed(key.split(" ", maxsplit=1)[0])
+
+    def built[T](self, name: str, build: Callable[[], dict[str, T]]) -> dict[str, T]:
+        """Build the samples of a function where the installed release has it.
+
+        A table whose samples are expressions builds each one when the table
+        is defined, and polars refuses to build a function that it does not
+        have.
+
+        Args:
+            name: The name of the function.
+            build: The samples of the function, built at the call.
+
+        Returns:
+            The samples, or none where the release does not have the function.
+
+        Example:
+            >>> ApiGate().built("abs", lambda: {"abs twice": 2})
+            {'abs twice': 2}
+        """
+        return build() if self.has(name) else {}
+
+    def kept[T](self, samples: Mapping[str, T]) -> dict[str, T]:
+        """Give the samples whose function the installed release has.
+
+        Args:
+            samples: The samples, by key.
+
+        Returns:
+            The samples that the installed release can build.
+
+        Example:
+            >>> ApiGate().kept({"pl.col": 1})
+            {'pl.col': 1}
+        """
+        return {key: value for key, value in samples.items() if self.has(key)}
+
+
 class TemplateCall:
     """Build a node of polars from the tree of a call, with any input at each place.
 
@@ -1543,7 +1631,10 @@ class TemplateCall:
     """
 
     def __init__(self, code: str) -> None:
-        """Read the tree of the call.
+        """Keep the call, and read its tree at the first use.
+
+        So a table can hold a call that the installed release of polars does
+        not have, and leave it out (`ApiGate`).
 
         Args:
             code: The call, over the column `x`.
@@ -1552,7 +1643,20 @@ class TemplateCall:
             >>> TemplateCall("pl.col('x').abs()")._template.inputs()
             1
         """
-        self._template = NodeTemplate("test", code)
+        self._code = code
+
+    @functools.cached_property
+    def _template(self) -> NodeTemplate:
+        """Read the tree of the call.
+
+        Returns:
+            The template of the node.
+
+        Example:
+            >>> TemplateCall("pl.col('x').abs()")._template.inputs()
+            1
+        """
+        return NodeTemplate("test", self._code)
 
     def __call__(self, *inputs: pl.Expr) -> pl.Expr:
         """Build the node with the inputs.

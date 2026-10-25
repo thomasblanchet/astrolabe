@@ -734,20 +734,21 @@ A lazy frame stores the planner type of each column, and plans each later step a
 
 ### 17.3 The counts
 
-`pl.Expr` carries 10 namespaces. Its methods and the members of its namespaces depend on the release of polars. Polars 1.44.0 adds `arr.dot` and `struct.drop`.
+`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
 
-| Polars | Methods | Members of the namespaces | In all |
-| -- | -- | -- | -- |
-| 1.43.2 | 212 | 223 | 435 |
-| 1.44.2 | 212 | 225 | 437 |
+| Polars | Methods | Methods that the census calls | Members of the namespaces | Methods and members | Constructors |
+| -- | -- | -- | -- | -- | -- |
+| 1.42.1 | 210 | 203 | 221 | 431 | 81 |
+| 1.43.2 | 212 | 205 | 223 | 435 | 82 |
+| 1.44.2 | 212 | 205 | 225 | 437 | 82 |
 
-The methods split into 205 that the census calls and 7 whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars, and fails when the table has no row for that release or when the row and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
+The methods that the census does not call are the 7 whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars, and fails when the table has no row for that release or when the row and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
 
 ______________________________________________________________________
 
 ## 18. Constructors: `pl.*`
 
-Eighty-two callables in `pl` build expressions. The census calls 73 of them, and leaves out the ones that work only inside another expression, the ones that run a function of the user, and the ones that build a data type.
+The callables in `pl` that build expressions are counted in section 17.3. The census calls 73 of them, and leaves out the ones that work only inside another expression, the ones that run a function of the user, and the ones that build a data type.
 
 | Family | Typed as |
 | -- | -- |

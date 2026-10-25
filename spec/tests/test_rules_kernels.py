@@ -49,6 +49,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     KernelFlags,
     KernelSamples,
     NestedKinds,
@@ -1682,7 +1683,7 @@ class KernelTrees:
         True
     """
 
-    TREES: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+    TREES: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = ApiGate().kept({
         "business days of a week with no business day": (
             {"d": TreeColumns.DATES},
             pl.col("d").dt.add_business_days(1, week_mask=[False] * 7),
@@ -1892,18 +1893,23 @@ class KernelTrees:
             {},
             pl.lit("01:02 am").str.strptime(pl.Time, "%I:%M %p"),
         ),
-        "ewm_sum_by of a correlation of two literals": (
-            {},
-            TemplateCall("pl.col('x').ewm_sum_by(by='t', half_life='1d')")(
-                TemplateCall("pl.corr('x', 'y')")(pl.lit(300), pl.lit({"a": 1})),
-                pl.col("l").head(0),
-            ),
+        **ApiGate().built(
+            "ewm_sum_by",
+            lambda: {
+                "ewm_sum_by of a correlation of two literals": (
+                    {},
+                    TemplateCall("pl.col('x').ewm_sum_by(by='t', half_life='1d')")(
+                        TemplateCall("pl.corr('x', 'y')")(pl.lit(300), pl.lit({"a": 1})),
+                        pl.col("l").head(0),
+                    ),
+                ),
+            },
         ),
         "fill by one of a null literal of a narrow decimal": (
             {},
             pl.lit(None, dtype=pl.Decimal(2, 2)).fill_null(strategy="one"),  # type: ignore[invalid-call-shape]
         ),
-    }
+    })
     UNDECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
         "to_integer by a categorical base": (
             {"n": TreeColumns.NUMBERS, "c": TreeColumns.CATEGORIES},

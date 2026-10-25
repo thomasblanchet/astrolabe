@@ -26,6 +26,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     CellCheck,
     Input,
     Inputs,
@@ -189,7 +190,7 @@ class TextNodes:
         f"Categorical/{form}" for form in ("per row", "one value", "other length", "one row")
     )
 
-    ONE_INPUT: ClassVar[dict[str, TextCall]] = {
+    ONE_INPUT: ClassVar[dict[str, TextCall]] = ApiGate().kept({
         "bin.decode": TextCall(Binaries.HEX_DECODE, "pl.col('x').bin.decode('hex')"),
         "bin.encode": TextCall(Binaries.HEX_ENCODE, "pl.col('x').bin.encode('hex')"),
         "bin.reinterpret": TextCall(
@@ -231,8 +232,8 @@ class TextNodes:
         "str.to_lowercase": TextCall(Strings.LOWERCASE, "pl.col('x').str.to_lowercase()"),
         "str.to_titlecase": TextCall(Strings.TITLECASE, "pl.col('x').str.to_titlecase()"),
         "str.to_uppercase": TextCall(Strings.UPPERCASE, "pl.col('x').str.to_uppercase()"),
-    }
-    ONE_INPUT_OPTIONS: ClassVar[dict[str, TextCall]] = {
+    })
+    ONE_INPUT_OPTIONS: ClassVar[dict[str, TextCall]] = ApiGate().kept({
         "bin.reinterpret Int16 big endian": TextCall(
             Binaries.REINTERPRET,
             "pl.col('x').bin.reinterpret(dtype=pl.Int16, endianness='big')",
@@ -258,7 +259,7 @@ class TextNodes:
             "pl.col('x').str.to_decimal(scale=0)",
             "1",
         ),
-    }
+    })
     TWO_INPUTS: ClassVar[dict[str, tuple[TextCall, tuple[Input, Input]]]] = {
         "bin.contains": (
             TextCall(Binaries.CONTAINS, "pl.col('x').bin.contains(b'a')"),

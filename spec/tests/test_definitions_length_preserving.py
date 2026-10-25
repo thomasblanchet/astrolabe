@@ -44,6 +44,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     CellCheck,
     Input,
     Inputs,
@@ -85,7 +86,7 @@ class Nodes:
     INTEGER: ClassVar[Input] = Inputs().labelled("Int64/per row")
     COUNT: ClassVar[Input] = Inputs().labelled("lit int 1/direct")
     KEY: ClassVar[Input] = Inputs().labelled("Datetime(time_unit='ms', time_zone=None)/per row")
-    ONE_INPUT: ClassVar[dict[str, CellCheck]] = {
+    ONE_INPUT: ClassVar[dict[str, CellCheck]] = ApiGate().kept({
         "arg_sort": CellCheck(LengthPreserving.ARG_SORT, lambda x: x.arg_sort()),
         "is_duplicated": CellCheck(LengthPreserving.IS_DUPLICATED, lambda x: x.is_duplicated()),
         "is_first_distinct": CellCheck(
@@ -165,7 +166,7 @@ class Nodes:
             LengthPreserving.ROLLING_VAR,
             lambda x: x.rolling_var(window_size=2),
         ),
-    }
+    })
     ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = {
         "pl.cum_count": CellCheck(LengthPreserving.CUM_COUNT, TemplateCall("pl.cum_count('x')")),
         "cum_count reverse": CellCheck(
@@ -291,7 +292,7 @@ class Nodes:
             lambda x: x.rolling_skew(window_size=3, bias=False),
         ),
     }
-    MANY_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...]]]] = {
+    MANY_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...]]]] = ApiGate().kept({
         "shift": (
             CellCheck(LengthPreserving.SHIFT, TemplateCall("pl.col('x').shift()")),
             (INTEGER, COUNT),
@@ -412,8 +413,8 @@ class Nodes:
             ),
             (FLOAT, KEY),
         ),
-    }
-    TWO_INPUT_OPTIONS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input]]]] = {
+    })
+    TWO_INPUT_OPTIONS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input]]]] = ApiGate().kept({
         "shift 2": (
             CellCheck(LengthPreserving.SHIFT, TemplateCall("pl.col('x').shift(-2)")),
             (INTEGER, COUNT),
@@ -488,14 +489,14 @@ class Nodes:
             ),
             (FLOAT, FLOAT),
         ),
-    }
-    OUT_OF_PROCESS: ClassVar[dict[str, tuple[Definition, str, int]]] = {
+    })
+    OUT_OF_PROCESS: ClassVar[dict[str, tuple[Definition, str, int]]] = ApiGate().kept({
         "ewm_mean": (LengthPreserving.EWM_MEAN, "pl.col('x').ewm_mean(alpha=0.5)", 1),
         "ewm_sum": (LengthPreserving.EWM_SUM, "pl.col('x').ewm_sum(alpha=0.5)", 1),
         "ewm_std": (LengthPreserving.EWM_STD, "pl.col('x').ewm_std(alpha=0.5)", 1),
         "ewm_var": (LengthPreserving.EWM_VAR, "pl.col('x').ewm_var(alpha=0.5)", 1),
         "pct_change": (LengthPreserving.PCT_CHANGE, "pl.col('x').pct_change()", 2),
-    }
+    })
 
     @classmethod
     def many_input_cells(cls) -> list[tuple[str, tuple[Input, ...]]]:
@@ -506,7 +507,7 @@ class Nodes:
 
         Example:
             >>> cells = Nodes.many_input_cells()
-            >>> len(cells) > 8500, cells[0][0]
+            >>> len(cells) > 8000, cells[0][0]
             (True, 'shift')
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
@@ -526,8 +527,8 @@ class Nodes:
 
         Example:
             >>> cells = Nodes.two_input_option_cells()
-            >>> len(cells), cells[0][1][1].label
-            (1260, 'lit int 1/direct')
+            >>> len(cells) > 1000, cells[0][1][1].label
+            (True, 'lit int 1/direct')
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
         for name, (_, (left, right)) in cls.TWO_INPUT_OPTIONS.items():

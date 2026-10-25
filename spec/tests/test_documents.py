@@ -419,9 +419,15 @@ class TestSelfCounts:
         assert not missing, f"the census never names: {sorted(missing)}"
 
     def test_the_frame_function_count_is_exact(self) -> None:
-        """The scope table counts every frame function polars offers."""
+        """The scope table counts every frame function that the newest release of polars offers.
+
+        An older release lacks the frame functions that a later one adds
+        (`CensusCalls.SINCE`).
+        """
         count = len(PolarsApi().frame_functions())
-        assert f"| frame-level `pl.*` functions | {count} |" in CATALOGUE.text
+        absent = [name for name in CensusCalls.SINCE if not CensusCalls().installed(name)]
+        frames = [name for name in absent if name.startswith("scan_")]
+        assert f"| frame-level `pl.*` functions | {count + len(frames)} |" in CATALOGUE.text
 
     @staticmethod
     def parts() -> tuple[set[str], set[str]]:
@@ -531,7 +537,7 @@ class TestExpressionCensus:
             The names of the functions.
         """
         found = set(CensusCalls.CONSTRUCTORS)
-        found |= set(CensusCalls.CONTEXT_BOUND)
+        found |= set(CensusCalls().context_bound())
         found |= set(CensusCalls.OPAQUE_CONSTRUCTORS)
         return found | set(CensusCalls.TYPE_LEVEL)
 
@@ -557,15 +563,15 @@ class TestExpressionCensus:
         release = str(PolarsRelease.installed())
         rows = [row for row in CATALOGUE.table_rows if row[0] == release]
         assert rows, f"section 17.3 has no row for polars {release}"
-        methods, members, total = (int(cell) for cell in rows[0][1:4])
+        methods, called, members, total, constructors = (int(cell) for cell in rows[0][1:6])
         assert len(api.expression_methods()) == methods
+        assert len(CensusCalls().root_calls()) == called
+        assert methods == called + len(CensusCalls.OPAQUE)
         assert len(api.namespace_members()) == members
         assert methods + members == total
-        assert len(api.expression_constructors()) == 82
-        assert len(CensusCalls.ROOT_CALLS) == 205
-        assert len(CensusCalls.OPAQUE) == 7
+        assert len(api.expression_constructors()) == constructors
         assert len(CensusCalls.CONSTRUCTORS) == 73
-        for quoted in ("205 that the census calls", "Eighty-two callables"):
+        for quoted in ("7 whose output type comes from code outside the call", "calls 73 of them"):
             assert quoted in CATALOGUE.text, quoted
 
     @pytest.mark.parametrize("document", ALL, ids=lambda d: d.name)
