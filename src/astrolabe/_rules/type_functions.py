@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, ClassVar
 from astrolabe._rules.dtypes import BitWidth, Decimals, DType, Is, KnownNan, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Undecided, UndecidedError
 from astrolabe._rules.operators import NumericOp, Operator
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import Supertype
 
 if TYPE_CHECKING:
@@ -3313,9 +3314,33 @@ class ArithmeticField:
             nested, other = (ltype, rtype) if ltype.name == kind else (rtype, ltype)
             if nested.name == kind:
                 return nested.with_leaf(Supertype().require(nested.leaf(), other.leaf()))
+        literal = self._literal_arm(left, right)
+        return Supertype().require(ltype, rtype) if literal is None else literal
+
+    def _literal_arm(self, left: Operand, right: Operand) -> DType | None:
+        """Give the type that an arm of a lone literal gives.
+
+        A lone literal on the left takes the type on the right
+        (`_literal_takes_right`). In some releases, a lone literal on the right
+        keeps the type on the left (`_literal_keeps_left`).
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Returns:
+            The type, or `None` where no such arm applies.
+
+        Example:
+            >>> narrow = Operand.column(DType("Float32"))
+            >>> ArithmeticField()._literal_arm(Operand.of_value(1.5), narrow)
+            Float32
+        """
         if self._literal_takes_right(left, right):
-            return rtype
-        return Supertype().require(ltype, rtype)
+            return right.dtype
+        if self._literal_keeps_left(left, right):
+            return left.dtype
+        return None
 
     def _other_temporal(self, op: Operator, left: DType, right: DType) -> DType | None:
         """Give the type of an operator other than `+` and `-` on a temporal type.
@@ -3374,6 +3399,53 @@ class ArithmeticField:
         floats = Is.float(ltype) and Is.float(rtype)
         alone = left.literal and not right.literal
         return (integers or floats) and alone and Is.unknown(ltype)
+
+    @polars_releases
+    def _literal_keeps_left(self, left: Operand, right: Operand) -> bool:
+        """Say whether a literal on the right keeps the type on the left: never.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> narrow = Operand.column(DType("Int8"))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     ArithmeticField()._literal_keeps_left(narrow, Operand.of_value(300))
+            False
+        """
+        del left, right
+        return False
+
+    @_literal_keeps_left.before("1.43.0")
+    def _right_literal_keeps_left(self, left: Operand, right: Operand) -> bool:
+        """Say whether a literal on the right keeps the type on the left, as the older releases do.
+
+        The arm mirrors `_literal_takes_right`: it applies to two integers or
+        two floats where only the right input is a literal node and its type
+        is `Unknown`.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Returns:
+            Whether the left type stays.
+
+        Example:
+            >>> narrow = Operand.column(DType("Int8"))
+            >>> ArithmeticField()._right_literal_keeps_left(narrow, Operand.of_value(300))
+            True
+        """
+        ltype, rtype = left.dtype, right.dtype
+        integers = Is.integer(ltype) and Is.integer(rtype)
+        floats = Is.float(ltype) and Is.float(rtype)
+        alone = right.literal and not left.literal
+        return (integers or floats) and alone and Is.unknown(rtype)
 
 
 class TrueDivField:
@@ -3542,8 +3614,8 @@ class TrueDivField:
             right: The right type.
 
         Returns:
-            A decimal of the largest precision beside a decimal, `Float64` beside a
-            float, and the left decimal otherwise.
+            A decimal of the largest precision beside a decimal, and the type
+            of `_beside_number` otherwise.
 
         Example:
             >>> TrueDivField()._decimal(DType("Decimal", (10, 2)), DType("Int64"))
@@ -3551,7 +3623,44 @@ class TrueDivField:
         """
         if right.name == "Decimal":
             return ArithmeticField().decimal(left, right)
+        return self._beside_number(left, right)
+
+    @polars_releases
+    def _beside_number(self, left: DType, right: DType) -> DType:
+        """Give the type of a `Decimal` divided by a type that is not a `Decimal`.
+
+        Args:
+            left: The left decimal.
+            right: The right type.
+
+        Returns:
+            `Float64` beside a float, and the left decimal otherwise.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     TrueDivField()._beside_number(DType("Decimal", (10, 2)), DType("Float32"))
+            Float64
+        """
         return DType("Float64") if Is.float(right) else left
+
+    @_beside_number.before("1.43.0")
+    def _keeps_decimal(self, left: DType, right: DType) -> DType:
+        """Keep the left decimal beside every type, a float included, as the older releases do.
+
+        Args:
+            left: The left decimal.
+            right: The right type.
+
+        Returns:
+            The left decimal.
+
+        Example:
+            >>> TrueDivField()._keeps_decimal(DType("Decimal", (10, 2)), DType("Float32"))
+            Decimal(precision=10, scale=2)
+        """
+        del right
+        return left
 
     def _duration_or_moment(self, left: DType, right: DType) -> DType:
         """Give the type of a division of a `Duration`, and refuse a moment.

@@ -1009,7 +1009,16 @@ class TestIsInCasts:
 
     @pytest.mark.parametrize("right", RuleKinds().dtypes(), ids=repr)
     def test_list_contains_of_columns_matches_the_plan(self, right: pl.DataType) -> None:
-        """`list.contains` of a list and a column casts as its rule says, and never implodes."""
+        """`list.contains` of a list and a column casts as its rule says, and never implodes.
+
+        Polars 1.42 and older cannot show the plan of a list expression, so
+        the test does not run there.
+        """
+        probe = pl.col("x0").list.contains(pl.col("x1"))
+        try:
+            PlanReader().read({"x0": pl.List(pl.Int8()), "x1": pl.Int8()}, probe)
+        except NotImplementedError:
+            pytest.skip("this release of polars cannot show the plan of a list expression")
         problems = []
         for inner in RuleKinds().dtypes():
             for collection in (pl.List(inner), inner):

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import Decimals, DType, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.dispatch import Data, RunCast
 from astrolabe._rules.kernels.nested import ArrayArithmetic, ListArithmetic, StructArithmetic
 from astrolabe._rules.kernels.temporal import DateOps, DatetimeOps, DurationOps, TimeOps
@@ -449,10 +450,10 @@ class SeriesArithmetic:
     temporal left side, or a quotient with a `Duration` left side, goes to the
     left type at once. A product with a duration on the right swaps the sides,
     and a product or a quotient with another temporal side raises. A list or an
-    array runs leaf by leaf. A sum or a difference of a temporal series and a
-    series that is not temporal raises. Every other pair is coerced
-    (`Coercion`), and the left type runs its arithmetic (`NumOps`). `/` is the
-    division of Rust: two integers give an integer.
+    array runs leaf by leaf. From polars 1.43.0, a sum or a difference of a
+    temporal series and a series that is not temporal raises. Every other
+    pair is coerced (`Coercion`), and the left type runs its arithmetic
+    (`NumOps`). `/` is the division of Rust: two integers give an integer.
 
     Example:
         >>> SeriesArithmetic(NumericOp.ADD).output(Data(DType("Int8")), Data(DType("Float32")))
@@ -500,16 +501,18 @@ class SeriesArithmetic:
             left: The left input.
             right: The right input.
 
+        It raises `PolarsRefusal` where the sum or the difference has a
+        temporal series beside a series that is not temporal
+        (`_check_temporal`), or where the coercion refuses the pair.
+
         Returns:
             The type of the output.
 
-        Raises:
-            PolarsRefusal: The sum or the difference of a temporal series and a series that is not
-                temporal.
-
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> small, day = Data(DType("Int8")), Data(DType("Date"))
-            >>> SeriesArithmetic(NumericOp.SUB).output(small, day)  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     SeriesArithmetic(NumericOp.SUB).output(small, day)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
@@ -524,12 +527,45 @@ class SeriesArithmetic:
             return ListArithmetic(self._op).output(left, right)
         if "Array" in names:
             return ArrayArithmetic(self._op).output(left, right)
+        self._check_temporal(left, right)
+        coerced = self._coercion.of(left, right)
+        return self._numbers.output(coerced.left, coerced.right)
+
+    @polars_releases
+    def _check_temporal(self, left: Data, right: Data) -> None:
+        """Refuse a sum or a difference of a temporal series and a series that is not temporal.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Raises:
+            PolarsRefusal: The operation is a sum or a difference, and one side only is temporal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> small, wide = Data(DType("Int8")), Data(DType("Int16"))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     SeriesArithmetic(NumericOp.ADD)._check_temporal(small, wide)
+        """
         mixed = Is.temporal(left.dtype) != Is.temporal(right.dtype)
         if self._op in {NumericOp.ADD, NumericOp.SUB} and mixed:
             message = f"{self._op.value} of {left.dtype!r} and {right.dtype!r}"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
-        coerced = self._coercion.of(left, right)
-        return self._numbers.output(coerced.left, coerced.right)
+
+    @_check_temporal.before("1.43.0")
+    def _coerce_temporal(self, left: Data, right: Data) -> None:
+        """Pass every pair to the coercion, as the older releases do.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Example:
+            >>> small, day = Data(DType("Int8")), Data(DType("Date"))
+            >>> SeriesArithmetic(NumericOp.SUB)._coerce_temporal(small, day)
+        """
+        del left, right
 
     def right_named(self, left: Data, right: Data) -> bool:
         """Say whether the output series takes the name of the right input.

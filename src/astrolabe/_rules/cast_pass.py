@@ -460,9 +460,9 @@ class CastColumnsPolicy:
     """Say whether a strict cast needs to run, by the policy that a lazy query gives it.
 
     The cast pass reads every strict cast with this policy. The policy allows
-    an integer upcast that keeps every value, any cast between floats, any
-    change of the unit or the zone of a `Datetime`, and a cast of `Null` to any
-    type. It does not allow a cast of an integer to a float. A struct target
+    an integer upcast that keeps every value, any cast between floats, a
+    change of the unit or the zone of a `Datetime` (`_datetimes`), and a cast
+    of `Null` to any type. It does not allow a cast of an integer to a float. A struct target
     allows missing fields and ignores extra fields. A list and an array check
     their inner types. Where the policy does not allow a cast, polars gives a
     schema error, so the policy raises `PolarsRefusal`. The cast pass ignores
@@ -595,11 +595,58 @@ class CastColumnsPolicy:
             allowed = upcast is not None and upcast.same(target)
         else:
             floats = Is.float(target) and Is.float(incoming)
-            allowed = floats or target.name == incoming.name == "Datetime"
+            moments = target.name == incoming.name == "Datetime"
+            allowed = floats or (moments and self._datetimes(target, incoming))
         if allowed:
             return True
         message = f"data type mismatch: incoming: {incoming!r} != target: {target!r}"
         raise PolarsRefusal(ErrorClass.SCHEMA, message)
+
+    @polars_releases
+    def _datetimes(self, target: DType, incoming: DType) -> bool:
+        """Say whether the policy allows a cast of one `Datetime` to another: always.
+
+        Args:
+            target: The target `Datetime`.
+            incoming: The `Datetime` of the input.
+
+        Returns:
+            Always `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> fine, coarse = DType("Datetime", ("ns", None)), DType("Datetime", ("ms", None))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     CastColumnsPolicy()._datetimes(fine, coarse)
+            True
+        """
+        del target, incoming
+        return True
+
+    @_datetimes.before("1.43.0")
+    def _datetime_downcasts(self, target: DType, incoming: DType) -> bool:
+        """Say whether the policy of the older releases allows the cast, to a coarser unit only.
+
+        The older releases have no option of the policy for an upcast of the
+        unit, so a cast to a finer unit does not pass. A change of the zone
+        passes in every release.
+
+        Args:
+            target: The target `Datetime`.
+            incoming: The `Datetime` of the input.
+
+        Returns:
+            Whether the target has the unit of the input, or a coarser one.
+
+        Example:
+            >>> fine, coarse = DType("Datetime", ("ns", None)), DType("Datetime", ("ms", None))
+            >>> policy = CastColumnsPolicy()
+            >>> policy._datetime_downcasts(coarse, fine), policy._datetime_downcasts(fine, coarse)
+            (True, False)
+        """
+        target_ticks = TimeUnit.PER_SECOND[str(Parameter().text(target, 0))]
+        incoming_ticks = TimeUnit.PER_SECOND[str(Parameter().text(incoming, 0))]
+        return target_ticks <= incoming_ticks
 
 
 class CastNodeVisit:
@@ -1257,7 +1304,8 @@ class CoercedBinopDtype:
             right: The right input.
 
         Returns:
-            The type, or `None` where there is none or it is a planner type `Unknown`.
+            The type, or `None` where there is none or the pass casts to no
+            planner type `Unknown` of that kind (`_casts_to`).
 
         Example:
             >>> text, enum = DType("String"), DType("Enum", (("a",),))
@@ -1272,15 +1320,52 @@ class CoercedBinopDtype:
         names = {ltype.name, rtype.name}
         if "String" in names and names & Is.CATEGORIES:
             joined = DType("String")
+        return self._casts_to(joined)
+
+    @polars_releases
+    def _casts_to(self, joined: DType) -> DType | None:
+        """Give the supertype where the pass casts to it: never to a planner type `Unknown`.
+
+        Args:
+            joined: The supertype.
+
+        Returns:
+            The supertype, or `None` where it is a planner type `Unknown`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     CoercedBinopDtype()._casts_to(DType.unknown("float")) is None
+            True
+        """
         return None if Is.unknown(joined) else joined
+
+    @_casts_to.before("1.43.0")
+    def _casts_to_literal_types(self, joined: DType) -> DType | None:
+        """Give the supertype where the pass casts to it, as the older releases do.
+
+        The older releases cast to the planner type `Unknown` of an integer or a
+        float literal, and to no planner type `Unknown(Any)`.
+
+        Args:
+            joined: The supertype.
+
+        Returns:
+            The supertype, or `None` where it is `Unknown(Any)`.
+
+        Example:
+            >>> CoercedBinopDtype()._casts_to_literal_types(DType.unknown("float")).args
+            ('float', None)
+        """
+        return None if Is.unknown_any(joined) else joined
 
 
 class BinaryCasts:
     """Give the changes of one visit of the cast pass to a binary operator.
 
     A literal type beside the planner type `Unknown` of an input takes the type
-    that it takes alone. An integer literal type beside a float literal type
-    casts to the float literal type. A comparison with a literal first tries
+    that it takes alone. From polars 1.43.2, an integer literal type beside a
+    float literal type casts to the float literal type. A comparison with a literal first tries
     the rewrite of `ComparisonLiteral`. Two inputs of one type stay. In arithmetic, a number
     beside a struct casts to a struct of the first field, and a list or an
     array casts only where its leaf is a planner type `Unknown`. Every other
@@ -1421,6 +1506,7 @@ class BinaryCasts:
         """
         return Is.unknown(dtype) and not Is.unknown_any(dtype)
 
+    @polars_releases
     def _beside_float(self, left: DType, right: DType) -> Visit | None:
         """Give the cast of an integer literal type beside a float literal type.
 
@@ -1437,20 +1523,41 @@ class BinaryCasts:
             The changes, or `None` where the pair goes on to the other rules.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> dynamic, floats = DType.dynamic_int(7), DType.unknown("float")
-            >>> visit = BinaryCasts()._beside_float(floats, dynamic)
+            >>> with PolarsRelease.pretend("1.43.2"):
+            ...     visit = BinaryCasts()._beside_float(floats, dynamic)
+            ...     beside = BinaryCasts()._beside_float(dynamic, floats)
+            ...     same = BinaryCasts()._beside_float(dynamic, dynamic)
             >>> visit.steps  # the right side casts to the float literal type
             ((), (cast(Unknown, non_strict),))
-            >>> visit.steps[1][0].dtype.same(floats)
-            True
-            >>> BinaryCasts()._beside_float(dynamic, dynamic) is None
-            True
+            >>> visit.steps[1][0].dtype.same(floats), beside.steps[1], same is None
+            (True, (), True)
         """
         cast = (Step.cast(DType.unknown("float"), CastOption.NON_STRICT),)
         if Is.dynamic_int(left) and self._dynamic_float(right):
             return Visit((cast, ()))
         if self._dynamic_float(left) and Is.dynamic_int(right):
             return Visit(((), cast))
+        return None
+
+    @_beside_float.before("1.43.2")
+    def _no_cast_beside_float(self, left: DType, right: DType) -> Visit | None:
+        """Leave the pair to the other rules, as the older releases do.
+
+        Args:
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            Always `None`.
+
+        Example:
+            >>> dynamic, floats = DType.dynamic_int(7), DType.unknown("float")
+            >>> BinaryCasts()._no_cast_beside_float(floats, dynamic) is None
+            True
+        """
+        del left, right
         return None
 
     def _dynamic_float(self, dtype: DType) -> bool:
@@ -1564,11 +1671,12 @@ class BinaryCasts:
         cast = (Step.cast(DType("Struct", (fields[:1],)), CastOption.NON_STRICT),)
         return Visit(((), cast) if index == 1 else (cast, ()))
 
+    @polars_releases
     def _nested(self, op: Operator, left: DType, right: DType) -> Visit:
         """Cast a list or an array whose leaf is a planner type `Unknown`.
 
         The pass maps the operator to its list operation, and casts nothing
-        where the leaves have no join.
+        where the leaves have no join. Polars has this rule from 1.43.0.
 
         Args:
             op: The operator.
@@ -1579,8 +1687,10 @@ class BinaryCasts:
             The changes: each input with a leaf `Unknown` casts its leaf to the joined leaf.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> listed = DType("List", (DType.dynamic_int(1),))
-            >>> BinaryCasts()._nested(Operator.PLUS, listed, DType("Int8"))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     BinaryCasts()._nested(Operator.PLUS, listed, DType("Int8"))
             Visit(steps=((cast(List(Int8), non_strict),), ()), root=None)
         """
         list_op = self.LIST_OPS.get(op)
@@ -1597,6 +1707,26 @@ class BinaryCasts:
             cast = Step.cast(dtype.with_leaf(leaf), CastOption.NON_STRICT)
             steps.append((cast,) if Is.unknown(dtype.leaf()) else ())
         return Visit((steps[0], steps[1]))
+
+    @_nested.before("1.43.0")
+    def _no_nested_cast(self, op: Operator, left: DType, right: DType) -> Visit:
+        """Cast no list and no array, as the older releases do.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> listed = DType("List", (DType.dynamic_int(1),))
+            >>> BinaryCasts()._no_nested_cast(Operator.PLUS, listed, DType("Int8")).steps
+            ((), ())
+        """
+        del op, left, right
+        return Visit.unchanged(2)
 
 
 class TernaryCasts:
@@ -2643,24 +2773,30 @@ class PadLengthCasts:
 class TextInputCasts:
     """Cast each input of `concat_str` that is not text to `String`.
 
-    The cast pass of polars has a rule of its own for `concat_str`. An input
-    of `String`, or of the text literal type, stays. Every other input casts
-    to `String` (`CastExprIr`): the pass refuses a cast that cannot run,
-    folds a literal with a cast that is not strict, and puts a strict cast
-    above any other input. The cast of an input then runs before the kernel,
-    so a value that does not cast refuses before the kernel checks the
-    lengths. The rule runs at each visit, and an input of `String` stays.
+    From polars 1.43.2, the cast pass of polars has a rule of its own for
+    `concat_str`. An input of `String`, or of the text literal type, stays.
+    Every other input casts to `String` (`CastExprIr`): the pass refuses a
+    cast that cannot run, folds a literal with a cast that is not strict, and
+    puts a strict cast above any other input. The cast of an input then runs
+    before the kernel, so a value that does not cast refuses before the
+    kernel checks the lengths. The rule runs at each visit, and an input of
+    `String` stays. Older releases have no such rule, and the kernel casts
+    each input itself.
 
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> text = Operand.column(DType("String"))
-        >>> TextInputCasts().visit([text, Operand.column(DType("Int8"))])
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     TextInputCasts().visit([text, Operand.column(DType("Int8"))])
         Visit(steps=((), (cast(String, strict),)), root=None)
-        >>> TextInputCasts().visit([Operand.of_value(3), text]).steps[0]
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     TextInputCasts().visit([Operand.of_value(3), text]).steps[0]
         (literal(String),)
     """
 
     TARGET: ClassVar[DType] = DType("String")
 
+    @polars_releases
     def visit(self, operands: Sequence[Operand]) -> Visit:
         """Give the changes of the visit.
 
@@ -2675,8 +2811,10 @@ class TextInputCasts:
             The steps of each input.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> date = Operand.column(DType("Date"))
-            >>> TextInputCasts().visit([Operand.of_value("a"), date]).steps
+            >>> with PolarsRelease.pretend("1.43.2"):
+            ...     TextInputCasts().visit([Operand.of_value("a"), date]).steps
             ((), (cast(String, strict),))
         """
         steps: list[tuple[Step, ...]] = []
@@ -2685,6 +2823,22 @@ class TextInputCasts:
             cast = () if text else CastExprIr().steps(operand, self.TARGET, CastOption.NON_STRICT)
             steps.append(cast)
         return Visit(tuple(steps))
+
+    @visit.before("1.43.2")
+    def _no_casts(self, operands: Sequence[Operand]) -> Visit:
+        """Give the visit of the older releases, which changes no input.
+
+        Args:
+            operands: The inputs of the function.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> TextInputCasts()._no_casts([Operand.column(DType("Int8"))]).steps
+            ((),)
+        """
+        return Visit.unchanged(len(operands))
 
 
 class PatternListCasts:

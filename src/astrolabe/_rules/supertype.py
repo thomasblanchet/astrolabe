@@ -29,6 +29,7 @@ from astrolabe._rules.dtypes import (
     TimeUnit,
 )
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -907,7 +908,10 @@ class _DynamicJoin:
             The answer of the arm that applies, or `None`.
 
         Example:
-            >>> _DynamicJoin(SupertypeFlag.default())._number(DType("Int8"), DType.unknown("float"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     join._number(DType("Int8"), DType.unknown("float"))
             _Matched(dtype=Float64)
         """
         what = literal.args[0]
@@ -919,8 +923,48 @@ class _DynamicJoin:
         if Is.float(dtype):
             return _Matched(dtype)
         if what == "float" and Is.integer(dtype):
-            return _Matched(DType("Float64") if Is.known(dtype) else DType.unknown("float"))
+            return _Matched(self._float_beside_integer(dtype))
         return None
+
+    @polars_releases
+    def _float_beside_integer(self, dtype: DType) -> DType:
+        """Join a float literal with an integer: `Float64` beside a known integer.
+
+        Args:
+            dtype: The integer type.
+
+        Returns:
+            `Float64` beside a known integer, and the planner type of a float
+            literal beside an integer literal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     known = join._float_beside_integer(DType("Int8"))
+            ...     literal = join._float_beside_integer(DType.dynamic_int(1))
+            >>> known, literal.args
+            (Float64, ('float', None))
+        """
+        return DType("Float64") if Is.known(dtype) else DType.unknown("float")
+
+    @_float_beside_integer.before("1.43.0")
+    def _float_literal_beside_integer(self, dtype: DType) -> DType:
+        """Join a float literal with any integer into the planner type of a float literal.
+
+        Args:
+            dtype: The integer type.
+
+        Returns:
+            The planner type of a float literal.
+
+        Example:
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> join._float_literal_beside_integer(DType("Int8")).args
+            ('float', None)
+        """
+        del dtype
+        return DType.unknown("float")
 
     def _null(self, dtype: DType, literal: DType) -> _Matched | None:
         """Keep a literal beside `Null`.
