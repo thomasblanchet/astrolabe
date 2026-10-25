@@ -1,0 +1,110 @@
+# The gates of CLAUDE.md, and the test suite at each supported version of
+# Python, mypy and Polars.
+#
+# The supported versions are the latest patch of each minor release of the
+# last twelve months. A job of the matrix installs its versions over the
+# locked environment, so it tests the checker against that release of mypy
+# and Polars. Each job changes one tool from the anchor: Python 3.13, mypy
+# 2.3.1 and Polars 1.43.2, the versions that the rules are measured
+# against. So a failure names the tool that causes it. The matrix covers
+# each version of each tool once, and not every combination.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: Static gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv sync --frozen
+      - run: uv run --no-sync mypy src/astrolabe
+      - run: uv run --no-sync mypy tests
+      - run: uv run --no-sync mypy spec
+      - run: uv run --no-sync mypy tools
+      - run: uv run --no-sync ruff check .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync complexipy . --failed
+      - run: uv run --no-sync mdformat --check .
+      - name: Examples of the documentation
+        run: uv run --no-sync python -m tools.site_examples --check
+
+  coverage:
+    name: Suite with coverage (${{ matrix.world }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The type stubs of Polars read numpy, so some calls type
+        # differently with numpy installed. The rules hold in both worlds.
+        world: [without numpy, with numpy]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - if: matrix.world == 'without numpy'
+        run: uv sync --frozen
+      - if: matrix.world == 'with numpy'
+        run: uv sync --frozen --group numpy
+      - run: uv run --no-sync pytest -n auto
+
+  lean:
+    name: Lean proofs
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spec/lean
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - run: lake exe cache get
+      - run: lake build --wfail
+
+  versions:
+    name: Python ${{ matrix.python }}, mypy ${{ matrix.mypy }}, Polars ${{ matrix.polars }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each Polars release, beside the anchor.
+          - { python: "3.13", mypy: "2.3.1", polars: "1.39.3" }
+          - { python: "3.13", mypy: "2.3.1", polars: "1.40.1" }
+          - { python: "3.13", mypy: "2.3.1", polars: "1.41.2" }
+          - { python: "3.13", mypy: "2.3.1", polars: "1.42.1" }
+          - { python: "3.13", mypy: "2.3.1", polars: "1.43.2" }
+          - { python: "3.13", mypy: "2.3.1", polars: "1.44.2" }
+          - { python: "3.13", mypy: "2.3.1", polars: "2.0.0" }
+          # Each mypy release, beside the anchor.
+          - { python: "3.13", mypy: "1.17.1", polars: "1.43.2" }
+          - { python: "3.13", mypy: "1.18.2", polars: "1.43.2" }
+          - { python: "3.13", mypy: "1.19.1", polars: "1.43.2" }
+          - { python: "3.13", mypy: "1.20.2", polars: "1.43.2" }
+          - { python: "3.13", mypy: "2.0.0", polars: "1.43.2" }
+          - { python: "3.13", mypy: "2.1.0", polars: "1.43.2" }
+          - { python: "3.13", mypy: "2.2.0", polars: "1.43.2" }
+          - { python: "3.13", mypy: "2.4.0", polars: "1.43.2" }
+          # Each Python release, beside the anchor.
+          - { python: "3.12", mypy: "2.3.1", polars: "1.43.2" }
+          - { python: "3.14", mypy: "2.3.1", polars: "1.43.2" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv sync --frozen --python ${{ matrix.python }}
+      - name: Install mypy ${{ matrix.mypy }} and Polars ${{ matrix.polars }}
+        run: uv pip install "mypy==${{ matrix.mypy }}" "polars==${{ matrix.polars }}"
+      - run: uv run --no-sync python -c "import sys, mypy.version, polars; print(sys.version, mypy.version.__version__, polars.__version__)"
+      - run: uv run --no-sync pytest -n auto --no-cov
