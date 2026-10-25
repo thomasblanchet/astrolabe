@@ -172,6 +172,10 @@ class polars_releases[S, **P, R]:
     `_no_cast_beside_float`. The type checker does not accept two methods of
     one name under a decorator that it does not know.
 
+    The rule takes the name, the docstring and the module of the decorated
+    method, so the doctests of that method run. Code that reads the rule on
+    the class calls it with an instance first, as it calls a plain function.
+
     Example:
         >>> class Join:
         ...     @polars_releases
@@ -203,6 +207,27 @@ class polars_releases[S, **P, R]:
         self._newest = newest
         self._bounds: list[PolarsRelease] = []
         self._variants: list[Callable[Concatenate[S, P], R]] = []
+        functools.update_wrapper(self, newest)
+
+    def __call__(self, instance: S, /, *args: P.args, **kwargs: P.kwargs) -> R:
+        """Run the variant of the current release, for code that reads the rule on the class.
+
+        Args:
+            instance: The object that the variant runs on.
+            *args: The arguments of the rule.
+            **kwargs: The keyword arguments of the rule.
+
+        Returns:
+            What the variant gives.
+
+        Example:
+            >>> rule = polars_releases(str.upper)
+            >>> rule.add(PolarsRelease.parse("99.0.0"), str.lower)
+            >>> rule("aB"), rule.__name__
+            ('ab', 'upper')
+        """
+        variant = self.variant(PolarsRelease.current())
+        return variant(instance, *args, **kwargs)
 
     @overload
     def __get__(self, instance: None, owner: type[S]) -> Self: ...
