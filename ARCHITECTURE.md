@@ -142,6 +142,7 @@ The type of an expression is its code (`D-33`). The engine reads that code where
 
 `_rules/` is the evaluator. It is part of the engine, so it imports nothing of mypy.
 
+- `releases.py` gives the installed release of polars. A rule that changes between releases is a method with one variant for each range of releases (`polars_releases`), and each call runs the variant of the installed release. A test runs the variant of another release inside `PolarsRelease.pretend`.
 - Each mechanism of polars has one module, translated from its source. The modules are the data types (`dtypes.py`), the supertype (`supertype.py`), the casts (`casts.py`) and the options of a node (`options.py`). Then come the type functions (`type_functions.py`), the cast pass (`cast_pass.py`), the run in a `select` and in `agg` (`execution.py`), and the kernels (`kernels/`).
 - `definitions/` holds a definition for each node of polars, one class for each family. A definition names the part of the vocabulary at each place of its node, and says when its output holds only nulls: from the nulls of its inputs (`NullRule`), or from the few rows of its first input (`ShortNulls`). A later cast reads that fact. `registry.py` finds a definition by the identity of its node. `overrides.py` holds the few rules that one node needs and that no part of the vocabulary states.
 - `node_evaluation.py` gives the four answers of one node from the states of its inputs. They are the planner type and the run type, in a `select` and in `agg`.
