@@ -7,7 +7,10 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "polars==1.43.2",
-    "mypy>=1.13",
+    # mypy 2.2 is the first release with closed TypedDicts (PEP 728). The
+    # schema of a frame type is one. An older mypy accepts a frame with more
+    # columns where a closed frame type is expected.
+    "mypy>=2.2",
     "greenery>=4.2.2",
     "tomlkit>=0.13",
 ]

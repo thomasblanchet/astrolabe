@@ -6,5 +6,5 @@
  */
 export const ASTROLABE = '0.1.0';
 export const POLARS = '1.43.2';
-export const MYPY = '1.13';
+export const MYPY = '2.2';
 export const PYTHON = '3.12';

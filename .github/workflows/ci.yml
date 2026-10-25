@@ -2,12 +2,16 @@
 # Python, mypy and Polars.
 #
 # The supported versions are the latest patch of each minor release of the
-# last twelve months. A job of the matrix installs its versions over the
-# locked environment, so it tests the checker against that release of mypy
-# and Polars. The gates and the runs with coverage use Python 3.13. Each job changes one tool from the anchor: Python 3.13, mypy
-# 2.3.1 and Polars 1.43.2, the versions that the rules are measured
-# against. So a failure names the tool that causes it. The matrix covers
-# each version of each tool once, and not every combination.
+# last twelve months. For mypy, they start at 2.2, the first release with
+# closed TypedDicts, because the schema of a frame type is one. A job
+# of the matrix installs its versions over the locked environment, so it
+# tests the checker against that release of mypy and Polars.
+#
+# The gates and the runs with coverage use Python 3.13. Each job of the
+# matrix changes one tool from the anchor: Python 3.13, mypy 2.3.1 and
+# Polars 1.43.2, the versions that the rules are measured against. So a
+# failure names the tool that causes it. The matrix covers each version of
+# each tool once, and not every combination.
 
 name: CI
 
@@ -89,12 +93,6 @@ jobs:
           - { python: "3.13", mypy: "2.3.1", polars: "1.44.2" }
           - { python: "3.13", mypy: "2.3.1", polars: "2.0.0" }
           # Each mypy release, beside the anchor.
-          - { python: "3.13", mypy: "1.17.1", polars: "1.43.2" }
-          - { python: "3.13", mypy: "1.18.2", polars: "1.43.2" }
-          - { python: "3.13", mypy: "1.19.1", polars: "1.43.2" }
-          - { python: "3.13", mypy: "1.20.2", polars: "1.43.2" }
-          - { python: "3.13", mypy: "2.0.0", polars: "1.43.2" }
-          - { python: "3.13", mypy: "2.1.0", polars: "1.43.2" }
           - { python: "3.13", mypy: "2.2.0", polars: "1.43.2" }
           - { python: "3.13", mypy: "2.4.0", polars: "1.43.2" }
           # Each Python release, beside the anchor.
