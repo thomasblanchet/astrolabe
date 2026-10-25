@@ -53,9 +53,7 @@
     import polars as pl
     from astrolabe import Column, Datetime
 
-    x: Column[  # E: Datetime[...] requires exactly 2 type arguments: Datetime[unit, zone]  [marker-arity]
-        Literal["bar"], Datetime[Literal["us"]]
-    ]
+    x: Column[Literal["bar"], Datetime[Literal["us"]]]  # E: Datetime[...] requires exactly 2 type arguments: Datetime[unit, zone]  [marker-arity]
 
 - case: datetime_dtype_unit_must_be_a_string_literal
   main: |
@@ -63,9 +61,7 @@
     import polars as pl
     from astrolabe import Column, Datetime
 
-    x: Column[  # E: Datetime[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
-        Literal["bar"], Datetime[str, None]
-    ]
+    x: Column[Literal["bar"], Datetime[str, None]]  # E: Datetime[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
 
 - case: datetime_dtype_unit_rejects_an_unrecognized_value
   main: |
@@ -73,9 +69,7 @@
     import polars as pl
     from astrolabe import Column, Datetime
 
-    x: Column[  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
-        Literal["bar"], Datetime[Literal["seconds"], None]
-    ]
+    x: Column[Literal["bar"], Datetime[Literal["seconds"], None]]  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
 
 - case: datetime_dtype_zone_rejects_a_non_literal
   main: |
@@ -83,9 +77,7 @@
     import polars as pl
     from astrolabe import Column, Datetime
 
-    x: Column[  # E: Datetime[...] zone argument must be None, a string literal such as Literal["UTC"], or AnyZone for every zone of the unit  [marker-arg]
-        Literal["bar"], Datetime[Literal["us"], str]
-    ]
+    x: Column[Literal["bar"], Datetime[Literal["us"], str]]  # E: Datetime[...] zone argument must be None, a string literal such as Literal["UTC"], or AnyZone for every zone of the unit  [marker-arg]
 
 - case: datetime_dtype_zone_rejects_an_unrecognized_value
   main: |
@@ -96,9 +88,7 @@
     # Real polars raises ComputeError: unable to parse time zone the
     # moment a column of this dtype is materialized, confirmed
     # empirically -- not deferred to any later operation.
-    x: Column[  # E: Zone 'Not/AZone' is not a recognized IANA time zone name  [marker-arg]
-        Literal["bar"], Datetime[Literal["us"], Literal["Not/AZone"]]
-    ]
+    x: Column[Literal["bar"], Datetime[Literal["us"], Literal["Not/AZone"]]]  # E: Zone 'Not/AZone' is not a recognized IANA time zone name  [marker-arg]
 
 - case: datetime_dtype_zone_accepts_a_real_iana_name
   main: |
@@ -133,9 +123,7 @@
     import polars as pl
     from astrolabe import Column, Duration
 
-    x: Column[  # E: Duration[...] requires exactly 1 type argument: Duration[unit]  [marker-arity]
-        Literal["bar"], Duration[Literal["ms"], Literal["us"]]
-    ]
+    x: Column[Literal["bar"], Duration[Literal["ms"], Literal["us"]]]  # E: Duration[...] requires exactly 1 type argument: Duration[unit]  [marker-arity]
 
 - case: duration_dtype_unit_must_be_a_string_literal
   main: |
@@ -143,9 +131,7 @@
     import polars as pl
     from astrolabe import Column, Duration
 
-    x: Column[  # E: Duration[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
-        Literal["bar"], Duration[str]
-    ]
+    x: Column[Literal["bar"], Duration[str]]  # E: Duration[...] unit argument must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
 
 - case: duration_dtype_unit_rejects_an_unrecognized_value
   main: |
@@ -153,9 +139,7 @@
     import polars as pl
     from astrolabe import Column, Duration
 
-    x: Column[  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
-        Literal["bar"], Duration[Literal["seconds"]]
-    ]
+    x: Column[Literal["bar"], Duration[Literal["seconds"]]]  # E: Unit must be Literal["ms"], Literal["us"], or Literal["ns"]  [marker-arg]
 
 - case: decimal_dtype_column_with_precision_declares_and_narrows
   main: |
@@ -205,9 +189,7 @@
     import polars as pl
     from astrolabe import Column, Decimal
 
-    x: Column[  # E: Decimal[...] requires exactly 2 type arguments: Decimal[precision, scale]  [marker-arity]
-        Literal["bar"], Decimal[Literal[38]]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[38]]]  # E: Decimal[...] requires exactly 2 type arguments: Decimal[precision, scale]  [marker-arity]
 
 - case: decimal_dtype_precision_rejects_a_non_literal
   main: |
@@ -215,9 +197,7 @@
     import polars as pl
     from astrolabe import Column, Decimal
 
-    x: Column[  # E: Decimal[...] precision argument must be None or a literal int, e.g. Literal[38]  [marker-arg]
-        Literal["bar"], Decimal[str, Literal[2]]
-    ]
+    x: Column[Literal["bar"], Decimal[str, Literal[2]]]  # E: Decimal[...] precision argument must be None or a literal int, e.g. Literal[38]  [marker-arg]
 
 - case: decimal_dtype_precision_rejects_a_negative_value
   main: |
@@ -227,9 +207,7 @@
 
     # Real polars raises OverflowError the moment a column of this dtype
     # is materialized, confirmed empirically, with no data involved.
-    x: Column[  # E: Decimal[...] precision argument must be non-negative  [marker-arg]
-        Literal["bar"], Decimal[Literal[-1], Literal[2]]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[-1], Literal[2]]]  # E: Decimal[...] precision argument must be non-negative  [marker-arg]
 
 - case: decimal_dtype_scale_rejects_a_negative_value
   main: |
@@ -239,9 +217,7 @@
 
     # Real polars raises OverflowError the moment a column of this dtype
     # is materialized, confirmed empirically, with no data involved.
-    x: Column[  # E: Decimal[...] scale argument must be non-negative  [marker-arg]
-        Literal["bar"], Decimal[Literal[5], Literal[-1]]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[5], Literal[-1]]]  # E: Decimal[...] scale argument must be non-negative  [marker-arg]
 
 - case: decimal_dtype_scale_rejects_exceeding_precision
   main: |
@@ -252,9 +228,7 @@
     # Real polars raises InvalidOperationError: scale must be less than
     # or equal to precision, confirmed empirically, the moment a column
     # of this dtype is materialized.
-    x: Column[  # E: Decimal[...] scale must not exceed precision  [marker-arg]
-        Literal["bar"], Decimal[Literal[2], Literal[5]]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[2], Literal[5]]]  # E: Decimal[...] scale must not exceed precision  [marker-arg]
 
 - case: decimal_dtype_scale_within_omitted_precision_declares_cleanly
   main: |
@@ -281,9 +255,7 @@
     # class as every other Decimal Precision/Scale check in this file.
     # Before Stage 17, an omitted Precision resolved to None, so this
     # cross-check never ran at all for this shape.
-    x: Column[  # E: Decimal[...] scale must not exceed precision  [marker-arg]
-        Literal["bar"], Decimal[None, Literal[40]]
-    ]
+    x: Column[Literal["bar"], Decimal[None, Literal[40]]]  # E: Decimal[...] scale must not exceed precision  [marker-arg]
 
 - case: decimal_dtype_precision_bare_int_does_not_double_report
   main: |
@@ -296,9 +268,7 @@
     # ArrayTypeHook's identical shape argument: this hook's own
     # precision/scale checks must not report a second, redundant error
     # on top of mypy's own placeholder for the already-invalid argument.
-    x: Column[  # E: Invalid type: try using Literal[5] instead?  [valid-type]
-        Literal["bar"], Decimal[5, Literal[2]]
-    ]
+    x: Column[Literal["bar"], Decimal[5, Literal[2]]]  # E: Invalid type: try using Literal[5] instead?  [valid-type]
 
 - case: decimal_dtype_scale_bare_int_does_not_double_report
   main: |
@@ -306,9 +276,7 @@
     import polars as pl
     from astrolabe import Column, Decimal
 
-    x: Column[  # E: Invalid type: try using Literal[2] instead?  [valid-type]
-        Literal["bar"], Decimal[Literal[5], 2]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[5], 2]]  # E: Invalid type: try using Literal[2] instead?  [valid-type]
 
 - case: a_bool_literal_is_not_a_width_a_precision_or_a_scale
   main: |
@@ -333,9 +301,7 @@
     # returns mypy's error placeholder, mypy's own separate Scale: int
     # bound-check on the original, unresolved annotation does not also
     # fire -- this is the one diagnostic reported, not two.
-    x: Column[  # E: Decimal[...] scale argument must be a literal int, e.g. Literal[2]  [marker-arg]
-        Literal["bar"], Decimal[Literal[5], str]
-    ]
+    x: Column[Literal["bar"], Decimal[Literal[5], str]]  # E: Decimal[...] scale argument must be a literal int, e.g. Literal[2]  [marker-arg]
 
 - case: enum_dtype_column_declares_and_narrows
   main: |
@@ -381,9 +347,7 @@
     import polars as pl
     from astrolabe import Column, Enum
 
-    x: Column[  # E: Enum[...] arguments must be string literals, e.g. Literal["a"]  [marker-arg]
-        Literal["bar"], Enum[Literal["a"], int]
-    ]
+    x: Column[Literal["bar"], Enum[Literal["a"], int]]  # E: Enum[...] arguments must be string literals, e.g. Literal["a"]  [marker-arg]
 
 - case: enum_declaration_with_duplicate_category_errors
   main: |
@@ -396,9 +360,7 @@
     # deferred to first use: mypy's own eager __class_getitem__
     # evaluation means the mere act of writing this annotation would
     # crash the import, with no data and no operation involved at all.
-    x: Column[  # E: Enum[...] arguments must all be different, found duplicate 'a'  [marker-arg]
-        Literal["bar"], Enum[Literal["a"], Literal["a"]]
-    ]
+    x: Column[Literal["bar"], Enum[Literal["a"], Literal["a"]]]  # E: Enum[...] arguments must all be different, found duplicate 'a'  [marker-arg]
 
 - case: a_datetime_selector_with_no_zone_picks_every_zone_of_its_unit
   main: |

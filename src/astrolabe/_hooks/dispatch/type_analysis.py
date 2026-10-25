@@ -7,8 +7,9 @@ example, a bare `pl.Datetime` gets the default parameters of polars.
 
 This module registers one hook for each marker type of the project
 (`Column`, `List`, `Array`, `Struct`, `Datetime`, `Duration`, `Decimal`,
-`Enum`, `Suffixed` and `Prefixed`), and one hook each for
-`TypedDataFrame` and `TypedLazyFrame`.
+`Enum`, `Suffixed` and `Prefixed`), one hook each for
+`TypedDataFrame` and `TypedLazyFrame`, and one for each placeholder of an
+inferred return type.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING
 from astrolabe._hooks.dispatch.generic import HookDispatcher, Target
 from astrolabe._hooks.calls.dtype_constructor_readers import SemanticAnalyzerLiteralTypeBuilder
 from astrolabe._hooks.fresh_type_info import FreshTypeInfo
+from astrolabe._hooks.inferred.interface import PlaceholderTypeHook
 from astrolabe._hooks.type_analysis import (
     ArrayTypeHook,
     BareDtypeDefaults,
@@ -40,6 +42,7 @@ from astrolabe._hooks.type_analysis import (
     SuffixedTypeHook,
     TimeUnitValidator,
 )
+from astrolabe.declare import InferredDataFrame, InferredExpr, InferredLazyFrame, InferredRemainder
 from astrolabe.remainder import Prefixed, Suffixed
 from astrolabe.frame import (
     Array,
@@ -106,6 +109,10 @@ class TypeAnalyzeHooks:
         )
         for group_by in (TypedGroupBy, TypedLazyGroupBy):
             self._dispatcher.register(Target.of(group_by), GroupByTypeHook(Target.of(group_by)))
+        placeholders = (InferredExpr, InferredDataFrame, InferredLazyFrame, InferredRemainder)
+        for placeholder in placeholders:
+            target = Target.of(placeholder)
+            self._dispatcher.register(target, PlaceholderTypeHook(target))
 
     @property
     def dispatcher(self) -> HookDispatcher[AnalyzeTypeContext, MypyType]:
