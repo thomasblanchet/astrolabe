@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from astrolabe._rules.casts import CastKernel
 from astrolabe._rules.dtypes import Decimals, DType, Parameter
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -511,7 +512,10 @@ class Recast:
     `unwrap` says that a failed cast panics, and not that it raises. `then` is
     the dispatch of the second call where it is not the same kernel, and that
     call does not recurse. `physical` casts the physical type, for a kernel
-    that reads the physical type first.
+    that reads the physical type first. `checked` says that the kernel checks
+    the type that the cast gives: from polars 1.44.0, such a kernel refuses a
+    cast that does not give the target, so a `Struct` raises and no longer
+    ends the process.
 
     Example:
         >>> floats = (Arm(Kinds("Float32", "Float64"), Same()),)
@@ -524,11 +528,14 @@ class Recast:
     unwrap: bool = False
     then: Dispatch | None = None
     physical: bool = False
+    checked: bool = False
 
     def give(self, data: Data, kernel: Dispatch) -> DType:
         """Give the type of the second call after the cast.
 
-        It raises `PolarsRefusal` where the cast fails (`RunCast`).
+        It raises `PolarsRefusal` where the cast fails (`RunCast`), and where
+        the kernel refuses the type that the cast gives or calls itself without
+        end (`_check_cast`).
 
         Args:
             data: The data.
@@ -537,9 +544,6 @@ class Recast:
 
         Returns:
             The type of the output.
-
-        Raises:
-            PolarsRefusal: The kernel calls itself without end.
 
         Example:
             >>> floats = (Arm(Kinds("Float32", "Float64"), Same()),)
@@ -555,10 +559,64 @@ class Recast:
         cast = RunCast(unwrap=self.unwrap).of(source, self.target)
         if self.then is not None:
             return self.then.output(cast)
+        self._check_cast(source, cast, kernel)
+        return kernel.output(cast)
+
+    @polars_releases
+    def _check_cast(self, source: Data, cast: Data, kernel: Dispatch) -> None:
+        """Refuse a cast that a checked kernel does not accept, then a cast that recurses.
+
+        A checked kernel refuses a cast that does not give the target. Every
+        other kernel follows the rule of the older releases (`_check_recursion`).
+
+        Args:
+            source: The data before the cast.
+            cast: The data after the cast.
+            kernel: The dispatch that holds the arm.
+
+        Raises:
+            PolarsRefusal: A checked kernel does not get its target.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> nested = Data(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> recast = Recast(DType("Float64"), checked=True)
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     recast._check_cast(nested, nested, Dispatch("sqrt", (), recast))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `sqrt` operation ...
+        """
+        if self.checked and not cast.dtype.same(self.target):
+            message = f"`{kernel.name}` operation not supported for dtype `{source.dtype!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._check_recursion(source, cast, kernel)
+
+    @_check_cast.before("1.44.0")
+    def _check_recursion(self, source: Data, cast: Data, kernel: Dispatch) -> None:
+        """Refuse a cast that gives the type back, so that the kernel calls itself without end.
+
+        Args:
+            source: The data before the cast.
+            cast: The data after the cast.
+            kernel: The dispatch that holds the arm.
+
+        Raises:
+            PolarsRefusal: The cast gives the type back.
+
+        Example:
+            >>> nested = Data(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> recast = Recast(DType("Float64"), checked=True)
+            >>> recast._check_recursion(nested, nested, Dispatch("sqrt", (), recast))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: crashes: sqrt calls ...
+        """
         if cast.dtype.same(source.dtype):
             message = f"{kernel.name} calls itself on {cast.dtype!r} without end"
             raise PolarsRefusal(Stop.CRASHES, message)
-        return kernel.output(cast)
 
 
 @dataclass(frozen=True)

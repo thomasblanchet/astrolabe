@@ -35,6 +35,7 @@ from spec.tests.rule_probes import (
 )
 from astrolabe._rules.cast_pass import (
     BinaryCasts,
+    EwmCasts,
     FunctionCasts,
     SettledCasts,
     TernaryCasts,
@@ -173,6 +174,47 @@ class UnaryNode:
     build: Callable[[pl.Expr], pl.Expr]
     rule: Callable[[DType], DType]
     scalar: bool = False
+
+
+class EwmPlanned:
+    """Give the planner type of an exponentially weighted function, after its cast pass.
+
+    The cast pass of these functions casts the input to `Float64`, and it
+    refuses some inputs (`EwmCasts`). Polars types the node with its field
+    at the input before the cast.
+
+    Example:
+        >>> EwmPlanned(lambda d: FieldsMapper(d).var_dtype())(DType("Int8"))
+        Float64
+    """
+
+    def __init__(self, field: Callable[[DType], DType]) -> None:
+        """Keep the field of the function.
+
+        Args:
+            field: The rule of the field, at the type of the input.
+
+        Example:
+            >>> EwmPlanned(lambda d: d)(DType("Float32"))
+            Float32
+        """
+        self._field = field
+
+    def __call__(self, dtype: DType) -> DType:
+        """Give the planner type, or raise the refusal of the cast pass.
+
+        Args:
+            dtype: The type of the input.
+
+        Returns:
+            The type of the field.
+
+        Example:
+            >>> EwmPlanned(lambda d: d)(DType("Int8"))
+            Int8
+        """
+        EwmCasts().visit([Operand.column(dtype)])
+        return self._field(dtype)
 
 
 @dataclass(frozen=True)
@@ -444,11 +486,15 @@ class Nodes:
             lambda x: x.rolling_min(2),
             lambda d: FieldsMapper(d).with_same_dtype(),
         ),
-        UnaryNode("ewm_var", lambda x: x.ewm_var(alpha=0.5), lambda d: FieldsMapper(d).var_dtype()),
+        UnaryNode(
+            "ewm_var",
+            lambda x: x.ewm_var(alpha=0.5),
+            EwmPlanned(lambda d: FieldsMapper(d).var_dtype()),
+        ),
         UnaryNode(
             "ewm_mean",
             lambda x: x.ewm_mean(alpha=0.5),
-            lambda d: FieldsMapper(d).map_numeric_to_float_dtype(coerce_decimal=True),
+            EwmPlanned(lambda d: FieldsMapper(d).map_numeric_to_float_dtype(coerce_decimal=True)),
         ),
         UnaryNode(
             "sign",

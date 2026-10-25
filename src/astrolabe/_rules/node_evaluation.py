@@ -32,6 +32,7 @@ from astrolabe._rules.cast_pass import (
     SettledCasts,
     StepKind,
     StepOperand,
+    VisitTurn,
 )
 from astrolabe._rules.casts import CastKernel, SeriesCast
 from astrolabe._rules.dtypes import DType
@@ -782,7 +783,7 @@ class CastVisits:
             >>> CastVisits(Elementwise.ABS).root([Operand.column(DType("Int8"))])
             ((),)
         """
-        return self._settled(folded, again=False).steps
+        return self._settled(folded, turn=VisitTurn.ROOT).steps
 
     def inner(
         self,
@@ -811,21 +812,21 @@ class CastVisits:
             >>> CastVisits(Elementwise.FILL_NULL).inner(inputs, inputs)
             ((cast(Int16, overflowing),), ())
         """
-        first = self._settled(planned, again=False)
+        first = self._settled(planned, turn=VisitTurn.FIRST)
         if first.root is not None and first.root.kind is not RootKind.SWAPPED:
             return first.steps
         pairs = zip(folded, first.steps, strict=True)
         after = list(starmap(StepOperand().after, pairs))
-        second = self._settled(after, again=True)
+        second = self._settled(after, turn=VisitTurn.SECOND)
         joined = zip(first.steps, second.steps, strict=True)
         return tuple(earlier + later for earlier, later in joined)
 
-    def _settled(self, inputs: Sequence[Operand], *, again: bool) -> Visit:
+    def _settled(self, inputs: Sequence[Operand], *, turn: VisitTurn) -> Visit:
         """Give one visit, with the visits of the cast nodes that it inserts.
 
         Args:
             inputs: The inputs as the node reads them at the visit.
-            again: Whether the pass visits the node a second time.
+            turn: The visit.
 
         Returns:
             The visit.
@@ -840,19 +841,21 @@ class CastVisits:
 
         Example:
             >>> from astrolabe._rules.definitions.aggregations import Aggregations
-            >>> CastVisits(Aggregations.SUM)._settled([Operand.of_value(1)], again=False).steps
+            >>> turn = VisitTurn.FIRST
+            >>> CastVisits(Aggregations.SUM)._settled([Operand.of_value(1)], turn=turn).steps
             ((),)
             >>> from astrolabe._rules.definitions.binary_operators import BinaryOperators
             >>> inputs = [Operand.column(DType("UInt8")), Operand.of_value(300)]
-            >>> CastVisits(BinaryOperators.GT)._settled(inputs, again=True)
+            >>> CastVisits(BinaryOperators.GT)._settled(inputs, turn=VisitTurn.SECOND)
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.UndecidedError: not translated: a new root of the cast pass
         """
         definition = self._definition
         options = definition.shape().options
-        visit = definition.casts.visit(inputs, options, again=again)
-        if again and visit.root is not None:  # pragma: no cover -- the first visit gives one type
+        visit = definition.casts.visit(inputs, options, turn=turn)
+        replaced_again = turn is VisitTurn.SECOND and visit.root is not None
+        if replaced_again:  # pragma: no cover -- the first visit gives one type
             raise UndecidedError(Undecided.NOT_TRANSLATED, "a new root of the cast pass")
         return SettledCasts().of(visit, inputs)
 
@@ -876,7 +879,7 @@ class CastVisits:
         """
         definition = self._definition
         options = definition.shape().options
-        root = definition.casts.visit(inputs, options, again=False).root
+        root = definition.casts.visit(inputs, options, turn=VisitTurn.FIRST).root
         if root is None or root.kind is RootKind.SWAPPED:
             return None
         return root
@@ -1604,10 +1607,13 @@ class NodeEvaluation:
             UInt32
             >>> sliced = ColumnLeaf(DType("Float64"), RowForm.OTHER_LENGTH)
             >>> evaluation = NodeEvaluation(Elementwise.LOG, [leaf, sliced], GroupBy((3,)))
-            >>> evaluation._run_select(((), ()))  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     evaluation._run_select(((), ()))
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cannot do a binary ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: can't compute broadcast length, ...
         """
         return self._select_output(steps, self._folded).data.dtype
 

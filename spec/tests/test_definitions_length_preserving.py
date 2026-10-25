@@ -57,6 +57,7 @@ from astrolabe._rules.dtypes import DType
 from astrolabe._rules.failures import Stop
 from astrolabe._rules.node_evaluation import ColumnLeaf, NodeEvaluation, Refused
 from astrolabe._rules.options import RowForm
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from astrolabe._rules.definitions.definition import Definition
@@ -635,7 +636,9 @@ class StructRule:
     literal count `1` at its second place.
 
     Example:
-        >>> StructRule(LengthPreserving.EWM_MEAN, 1).answer(agg=False)
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     StructRule(LengthPreserving.EWM_MEAN, 1).answer(agg=False)
         hangs
     """
 
@@ -666,7 +669,9 @@ class StructRule:
             How the run stops, or `None`.
 
         Example:
-            >>> StructRule(LengthPreserving.PCT_CHANGE, 2).answer(agg=True)
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.2"):
+            ...     StructRule(LengthPreserving.PCT_CHANGE, 2).answer(agg=True)
             crashes
         """
         answers = NodeEvaluation(self._definition, self._leaves, CellCheck.GROUPS).answers()
@@ -744,9 +749,14 @@ def test_option_of_two_inputs_gives_the_answers_of_polars(
 @pytest.mark.parametrize("node", list(Nodes.OUT_OF_PROCESS))
 @pytest.mark.parametrize("agg", [False, True], ids=["select", "agg"])
 def test_node_over_a_struct_ends_or_hangs_the_process(node: str, *, agg: bool) -> None:
-    """Over a struct, the run of the node ends the process or never returns, as the rules say."""
+    """Over a struct, the run of the node in its own process gives the answer of the rules.
+
+    Before polars 1.44.0, that run ends the process or never returns. From
+    that release, the node checks the type of its input, and raises.
+    """
     definition, code, arity = Nodes.OUT_OF_PROCESS[node]
     rule = StructRule(definition, arity).answer(agg=agg)
     assert rule is not None
-    assert rule.stop in CellCheck.OUT_OF_PROCESS, rule
+    if PolarsRelease.installed() < PolarsRelease.parse("1.44.0"):
+        assert rule.stop in CellCheck.OUT_OF_PROCESS, rule
     assert IsolatedCell(code).answer(agg=agg) == rule

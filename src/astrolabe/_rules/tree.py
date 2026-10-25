@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, ClassVar
 from astrolabe._rules.dtypes import KnownNan
 from astrolabe._rules.definitions.node_options import NodeIdentity, NodeOptions
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     import polars as pl
@@ -92,6 +93,62 @@ class HorizontalLogic:
         for part in inputs[1:]:
             folded = {"Function": {**body, "input": [folded, part]}}
         return folded
+
+
+class AnyCast:
+    """Take away a cast to the planner type `Unknown(Any)`, as the conversion of polars does.
+
+    The engine of polars runs a cast to `Unknown(Any)` as no cast at all. From
+    polars 1.44.1, the conversion builds no node for such a cast, so the node
+    above reads the input of the cast directly, with its own type. Older
+    releases keep the cast node, whose planner type is `Unknown(Any)`.
+
+    Example:
+        >>> cast = {"Cast": {"expr": {"Column": "a"}, "dtype": AnyCast.ANY, "options": "Strict"}}
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.1"):
+        ...     AnyCast().rewritten(cast)
+        {'Column': 'a'}
+    """
+
+    ANY: ClassVar[dict[str, object]] = {"Literal": {"Unknown": "Any"}}
+
+    @polars_releases
+    def rewritten(self, serialized: object) -> object:
+        """Give a node as the conversion leaves it: the input of a cast to `Unknown(Any)`.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The input of the cast, where the node is a cast to `Unknown(Any)`,
+            and the node otherwise.
+
+        Example:
+            >>> AnyCast().rewritten({"Column": "a"})
+            {'Column': 'a'}
+        """
+        body = serialized.get("Cast") if isinstance(serialized, dict) else None
+        if isinstance(body, dict) and body.get("dtype") == self.ANY:
+            return self.rewritten(body.get("expr"))
+        return serialized
+
+    @rewritten.before("1.44.1")
+    def _kept(self, serialized: object) -> object:
+        """Give a node as the conversion of the older releases leaves it: unchanged.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The node.
+
+        Example:
+            >>> cast = {"Cast": {"expr": {"Column": "a"}, "dtype": AnyCast.ANY}}
+            >>> AnyCast()._kept(cast) == cast
+            True
+        """
+        return serialized
 
 
 class KeptName:
@@ -305,7 +362,7 @@ class ExpressionTree:
             >>> tree.identity.shape, tree.inputs[0].identity.shape
             ('Alias', 'Column')
         """
-        serialized = HorizontalLogic().rewritten(serialized)
+        serialized = AnyCast().rewritten(HorizontalLogic().rewritten(serialized))
         if not isinstance(serialized, dict):
             return TreeNode(serialized, NodeIdentity(str(serialized), ""))
         shape = next(iter(serialized))

@@ -67,6 +67,7 @@ from astrolabe._rules.kernels.binary import OperatorKernel
 from astrolabe._rules.kernels.comparison import CompareOp, Comparison
 from astrolabe._rules.kernels.dispatch import Data, Dispatch, KernelFacts
 from astrolabe._rules.kernels.fill import FillNull
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.kernels.floats import FloatKernels, Log
 from astrolabe._rules.kernels.layout import LayoutKernels
 from astrolabe._rules.kernels.logic import BitOp, BitOps, BitwiseKernels
@@ -994,7 +995,7 @@ class CrashCheck:
 
         Example:
             >>> struct = pl.Struct({"a": pl.Int8()})
-            >>> CrashCheck("sqrt", FloatKernels.SQRT).cells([pl.Int8(), struct])
+            >>> CrashCheck("exp", FloatKernels.EXP).cells([pl.Int8(), struct])
             [Struct({'a': Int8})]
         """
         cells = []
@@ -1313,7 +1314,27 @@ class Kernels:
     GROUPED: ClassVar[dict[str, tuple[Callable[[pl.Expr], pl.Expr], Dispatch]]] = {
         "sum": (lambda column: column.sum(), NumericKernels.SUM_GROUPS),
     }
-    CRASHING: ClassVar[tuple[str, ...]] = ("sqrt", "cbrt", "exp", "log1p", "log")
+    CRASHING: ClassVar[tuple[str, ...]] = ("exp", "log1p", "log")
+    CHECKED: ClassVar[tuple[str, ...]] = ("sqrt", "cbrt")
+
+    @classmethod
+    def crashing(cls) -> tuple[str, ...]:
+        """Give the float kernels that end the process over a struct, in the installed release.
+
+        `sqrt` and `cbrt` check the type that their cast gives from polars
+        1.44.0, so a struct raises there, and the other tests of the kernels
+        run it in this process.
+
+        Returns:
+            The names of the kernels.
+
+        Example:
+            >>> "exp" in Kernels.crashing()
+            True
+        """
+        if PolarsRelease.installed() < PolarsRelease.parse("1.44.0"):
+            return cls.CHECKED + cls.CRASHING
+        return cls.CRASHING
 
     def every_dtype(self) -> list[pl.DataType]:
         """Give the types of the rules and of the nested kernels, each once.
@@ -1473,7 +1494,7 @@ class TestUnaryKernels:
         problems = check.problems(Kernels().every_dtype())
         assert not problems, "\n".join(problems)
 
-    @pytest.mark.parametrize("function", Kernels.CRASHING)
+    @pytest.mark.parametrize("function", Kernels.crashing())
     def test_float_kernel_over_a_struct_ends_the_process(self, function: str) -> None:
         """Each cell where the dispatch says that the process ends does end it, in a subprocess."""
         _, dispatch = Kernels.UNARY[function]

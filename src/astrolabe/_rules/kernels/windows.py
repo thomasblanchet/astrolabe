@@ -965,7 +965,7 @@ class WindowKernels:
     EWM_RECAST: ClassVar[Dispatch] = Dispatch(
         "ewm_std",
         (Arm(Is.float, Same()),),
-        Recast(FLOAT64),
+        Recast(FLOAT64, checked=True),
     )
     MOMENT: ClassVar[Dispatch] = Dispatch(
         "rolling_skew",
@@ -2041,9 +2041,9 @@ class PercentChange:
 
     The kernel checks that the count has one row. It keeps a float, and casts
     any other type to `Float64` and calls itself again. A struct stays a
-    struct after the cast, so the kernel calls itself without end, and the
-    process crashes. Then it casts the count to `Int64`, and divides two
-    floats.
+    struct after the cast. From polars 1.44.0 the kernel then raises, and in
+    older releases it calls itself without end, so the process crashes
+    (`Recast`). Then it casts the count to `Int64`, and divides two floats.
 
     Example:
         >>> PercentChange().output([Data(DType("Int8")), Data(DType("Int32"))], (5, 1))
@@ -2051,7 +2051,9 @@ class PercentChange:
     """
 
     FLOATS: ClassVar[Dispatch] = Dispatch(
-        "pct_change", (Arm(Is.float, Same()),), Recast(DType("Float64"))
+        "pct_change",
+        (Arm(Is.float, Same()),),
+        Recast(DType("Float64"), checked=True),
     )
 
     def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
@@ -2068,11 +2070,14 @@ class PercentChange:
             PolarsRefusal: The count has another length than one row.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> struct = Data(DType("Struct", ((("a", DType("Int8")),),)))
-            >>> PercentChange().output([struct, Data(DType("Int32"))], (5, 1))  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     PercentChange().output([struct, Data(DType("Int32"))], (5, 1))
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: crashes: ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `pct_change` ...
         """
         if len(lengths) > 1 and lengths[1] != 1:
             raise PolarsRefusal(ErrorClass.COMPUTE, "n must be a single value.")

@@ -25,7 +25,14 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from astrolabe._rules.dtypes import DType, IntegerRange, Is
-from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, Undecided, UndecidedError
+from astrolabe._rules.failures import (
+    ErrorClass,
+    PolarsRefusal,
+    Stop,
+    UnequalLengths,
+    Undecided,
+    UndecidedError,
+)
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import FunctionOptions, Height, KernelLength, NodeKind, Shape
 from astrolabe._rules.type_functions import Operand
@@ -2133,11 +2140,13 @@ class BinaryDispatch:
             >>> state, unknown = AggState.NOT_AGGREGATED, Height.UNKNOWN
             >>> sliced = InGroups(state, (2, 2), unknown, 5, original=False)
             >>> sides = [frame.column(), sliced]
-            >>> BinaryDispatch(Shape.of(NodeKind.BINARY), Kernel(), sides)._group_aware()
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     BinaryDispatch(Shape.of(NodeKind.BINARY), Kernel(), sides)._group_aware()
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: can't compute broadcast length, ...
         """
         left, right = self._inputs
         pairs = zip(left.values(), right.values(), strict=True)
@@ -2152,15 +2161,15 @@ class BinaryDispatch:
     def _group_length(self, left: int, right: int) -> int:
         """Give the length of the operation of two columns in one group.
 
+        It raises `PolarsRefusal` where the two sides have other lengths, and
+        neither has one value (`UnequalLengths`).
+
         Args:
             left: The values of the left side in the group.
             right: The values of the right side in the group.
 
         Returns:
             The length of the longer side, where a side has one value or the two agree.
-
-        Raises:
-            PolarsRefusal: The two sides have other lengths, and neither has one value.
 
         Example:
             >>> sides = [GroupBy((3, 2)).column()] * 2
@@ -2174,7 +2183,7 @@ class BinaryDispatch:
         message = (
             f"cannot do a binary operation on columns of different lengths: got {left} and {right}"
         )
-        raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        raise UnequalLengths().refusal([left, right], message)
 
     def _elementwise(self) -> InGroups:
         """Run the operation on the flat values of the two sides.

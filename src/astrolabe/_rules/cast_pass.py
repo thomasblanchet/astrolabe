@@ -35,6 +35,7 @@ from astrolabe._rules.casts import (
 from astrolabe._rules.dtypes import DType, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
 from astrolabe._rules.operators import NumericOp, Operator
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import LosslessUpcast, Supertype, SupertypeFlag
 from astrolabe._rules.type_functions import Operand
 
@@ -204,6 +205,24 @@ class NewRoot:
             is_null
         """
         return self.kind.value if self.value is None else f"{self.kind.value}({self.value})"
+
+
+class VisitTurn(enum.Enum):
+    """Name one visit of the cast pass to a node, by the time that it reads the inputs of the node.
+
+    The pass reaches the inputs of the root before the root, so the root has
+    one visit, which reads its inputs after their own visits (`ROOT`). The
+    pass reaches every other node before its inputs (`FIRST`), and once more
+    after them (`SECOND`).
+
+    Example:
+        >>> VisitTurn.ROOT.value
+        'root'
+    """
+
+    ROOT = "root"
+    FIRST = "first"
+    SECOND = "second"
 
 
 @dataclass(frozen=True)
@@ -592,7 +611,8 @@ class CastNodeVisit:
     is not strict otherwise. Where the policy does not allow it, the cast stays
     strict. Then a cast of a literal to a known type folds into the literal,
     with the option that the cast had before the policy. A failed fold raises
-    `PolarsRefusal`.
+    `PolarsRefusal`. From polars 1.44.1, a cast to the planner type
+    `Unknown(Any)` goes away, because the engine runs it as no cast at all.
 
     Example:
         >>> int8 = Operand.column(DType("Int8"))
@@ -602,8 +622,12 @@ class CastNodeVisit:
         literal(Int8)
     """
 
+    @polars_releases
     def visit(self, operand: Operand, target: DType, option: CastOption) -> Step | None:
         """Give the step that the cast node becomes.
+
+        A cast to the planner type `Unknown(Any)` goes away. Every other cast
+        follows the rule of the older releases (`_keeps_cast_to_any`).
 
         Args:
             operand: The input of the cast.
@@ -618,6 +642,38 @@ class CastNodeVisit:
             >>> int8 = Operand.column(DType("Int8"))
             >>> CastNodeVisit().visit(int8, DType("Int8"), CastOption.STRICT) is None
             True
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.1"):
+            ...     CastNodeVisit().visit(int8, DType.unknown("any"), CastOption.STRICT) is None
+            True
+        """
+        if Is.unknown_any(target):
+            return None
+        return self._keeps_cast_to_any(operand, target, option)
+
+    @visit.before("1.44.1")
+    def _keeps_cast_to_any(
+        self,
+        operand: Operand,
+        target: DType,
+        option: CastOption,
+    ) -> Step | None:
+        """Give the step that the cast node becomes, where a cast to `Unknown(Any)` stays a cast.
+
+        Args:
+            operand: The input of the cast.
+            target: The target of the cast.
+            option: The option of the cast.
+
+        Returns:
+            The cast with its new option, the literal of its new type, or
+            `None` where the cast goes away.
+
+        Example:
+            >>> int8 = Operand.column(DType("Int8"))
+            >>> any_type = DType.unknown("any")
+            >>> CastNodeVisit()._keeps_cast_to_any(int8, any_type, CastOption.STRICT)
+            cast(Unknown, strict)
         """
         settled = self._option(operand.dtype, target, option)
         if settled is None:
@@ -1619,8 +1675,10 @@ class EwmCasts:
     the cast pass, and no casting rule in their options. The rule casts an
     input that is not a float to `Float64`, with a cast that is not strict. A
     float, a float literal included, stays. The rule applies at each visit,
-    and a second visit finds a float. The rule also refuses a weight `alpha`
-    outside of 0 to 1, which the Python API of polars never builds.
+    and a second visit finds a float. From polars 1.44.0, the rule refuses a
+    `Struct`, whose cast to a number gives a `Struct` again. The rule also
+    refuses a weight `alpha` outside of 0 to 1, which the Python API of
+    polars never builds.
 
     Example:
         >>> EwmCasts().visit([Operand.column(DType("Int8"))])
@@ -1631,6 +1689,7 @@ class EwmCasts:
 
     TARGET: ClassVar[DType] = DType("Float64")
 
+    @polars_releases
     def visit(self, operands: Sequence[Operand]) -> Visit:
         """Give the steps of the one input.
 
@@ -1640,9 +1699,39 @@ class EwmCasts:
         Returns:
             The visit.
 
+        Raises:
+            PolarsRefusal: The input is a `Struct`.
+
         Example:
             >>> EwmCasts().visit([Operand.column(DType("Float16"))]).steps
             ((),)
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> nested = Operand.column(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     EwmCasts().visit([nested])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `ewm` operation ...
+        """
+        dtype = operands[0].dtype
+        if dtype.name == "Struct":
+            message = f"`ewm` operation not supported for dtype `{dtype!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        return self._casts_any_input(operands)
+
+    @visit.before("1.44.0")
+    def _casts_any_input(self, operands: Sequence[Operand]) -> Visit:
+        """Give the steps of the one input, where the rule casts a `Struct` as it casts any type.
+
+        Args:
+            operands: The one input.
+
+        Returns:
+            The visit.
+
+        Example:
+            >>> EwmCasts()._casts_any_input([Operand.column(DType("Int8"))]).steps
+            ((cast(Float64, non_strict),),)
         """
         if Is.float(operands[0].dtype):
             return Visit.unchanged(1)
