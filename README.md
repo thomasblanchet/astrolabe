@@ -78,7 +78,7 @@ Pinned target: Polars `1.43.2`.
 
 [`spec/`](spec/) is the type system: what it promises, what its rules are, and what every Polars operation does under it. Start with [`spec/DATAFRAME_SPECIFICATION.md`](spec/DATAFRAME_SPECIFICATION.md). Every claim there is proved on the page or recomputed by a test in [`spec/tests/`](spec/tests/).
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is how the plugin is built. [`POLARS_ISSUES.md`](POLARS_ISSUES.md) lists the polars behaviors the checker works around.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is how the plugin is built. [`spec/POLARS_BEHAVIORS.md`](spec/POLARS_BEHAVIORS.md) lists the polars behaviors the checker works around.
 
 ## Development
 

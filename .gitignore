@@ -22,7 +22,8 @@ site/dist/
 # Lean: the build and the downloaded mathlib cache
 spec/lean/.lake/
 
-# Local files
+# Local files: plans that outlive a session live here, out of git
+/PLAN_*.md
 .DS_Store
 *.code-workspace
 out.parquet/
