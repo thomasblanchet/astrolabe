@@ -1,0 +1,42 @@
+---
+/**
+ * The banner above each page of the documentation.
+ *
+ * Every page says that Astrolabe is a pre-release. A page that sets a
+ * banner of its own in its frontmatter shows it under this one.
+ */
+import { PRERELEASE } from '../../lib/versions';
+
+const { banner } = Astro.locals.starlightRoute.entry.data;
+---
+
+<div class="docs-banner" data-pagefind-ignore>
+  <span class="tag">Pre-release</span>
+  <span>{PRERELEASE}</span>
+</div>
+{banner && <div class="sl-banner" data-pagefind-ignore set:html={banner.content} />}
+
+<style>
+  .docs-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 12px;
+    padding: 9px var(--sl-content-pad-x);
+    border-bottom: 1px solid var(--line);
+    background: var(--caution-bg);
+    color: var(--text-soft);
+    font-size: 14px;
+    line-height: 1.45;
+    text-align: center;
+  }
+
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--caution);
+  }
+</style>

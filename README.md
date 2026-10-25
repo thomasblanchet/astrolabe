@@ -6,6 +6,8 @@ A frame's static type carries its schema: the columns it declares, and a *remain
 
 The documentation is at <https://thomasblanchet.github.io/astrolabe/docs/>.
 
+> **Pre-release.** The API, the messages and the supported versions can change in any release.
+
 ## Setup
 
 Install astrolabe, then run this command in the project directory:
