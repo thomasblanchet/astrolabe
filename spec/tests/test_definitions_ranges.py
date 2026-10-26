@@ -21,20 +21,42 @@ below one half casts to a step of zero, where polars panics. The large
 sample casts to a step of 1, and its bounds make ranges that take more
 memory than the machine holds. A value further from zero than one half
 casts to a step of 1 or -1, so the panic is a fact of the values, which the
-rules accept.
+rules accept. An answer that no sample shows before a release of polars is
+left out (`RangeNodes.UNSHOWN`), and a test of its own checks it.
 
 Each test names the node and the cell, so a failure names both.
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 from typing import ClassVar
 
 import polars as pl
 import pytest
 
-from spec.tests.rule_probes import CellCheck, Input, Inputs, NodeSample, Values
+from spec.tests.rule_probes import (
+    CellCheck,
+    Input,
+    Inputs,
+    NodeSample,
+    PolarsAnswer,
+    Stopped,
+    Values,
+)
+from astrolabe._rules.definitions.node_options import NodeOptions
 from astrolabe._rules.definitions.ranges import Ranges
+from astrolabe._rules.dtypes import DType
+from astrolabe._rules.node_evaluation import (
+    ColumnLeaf,
+    Leaf,
+    LiteralLeaf,
+    NodeEvaluation,
+    Refused,
+)
+from astrolabe._rules.options import RowForm
+from astrolabe._rules.releases import PolarsRelease
 
 
 class RangeNodes:
@@ -56,6 +78,14 @@ class RangeNodes:
         if entry.label.startswith(("Datetime(", "Duration(", "Time/", "lit int 2**40"))
         or entry.label == "lit int -1/derived"
     )
+    # The answers that no sample shows before a release of polars, by the call and
+    # the cell, each with that release. A place that ends at `run` names both
+    # runs. A test of its own checks each one
+    # (`test_int_range_over_a_struct_of_a_date_stops_as_the_rules_say`).
+    UNSHOWN: ClassVar[dict[tuple[str, str], str]] = {
+        ("int_range UInt8", "Struct({'a': Date})/one value, lit int 1/direct: run"): "1.40.0",
+        ("int_range UInt8", "Int64/one value, Struct({'a': Date})/one value: run"): "1.40.0",
+    }
     ZERO_STEPS: ClassVar[frozenset[str]] = frozenset(
         entry.label
         for entry in Inputs().all()
@@ -79,17 +109,21 @@ class RangeNodes:
 
     NODES: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...], bool]]] = {
         "int_range": (
-            CellCheck(Ranges.INT_RANGE, pl.int_range),
+            CellCheck(Ranges.INT_RANGE, pl.int_range, Values.NUMBER_TEXT),
             (INTEGER, ONE),
             True,
         ),
         "int_range UInt8": (
-            CellCheck(Ranges.INT_RANGE, lambda x, y: pl.int_range(x, y, dtype=pl.UInt8)),
+            CellCheck(
+                Ranges.INT_RANGE,
+                lambda x, y: pl.int_range(x, y, dtype=pl.UInt8),
+                Values.NUMBER_TEXT,
+            ),
             (INTEGER, ONE),
             True,
         ),
         "int_ranges": (
-            CellCheck(Ranges.INT_RANGES, pl.int_ranges),
+            CellCheck(Ranges.INT_RANGES, pl.int_ranges, Values.NUMBER_TEXT),
             (INTEGERS, INTEGERS, ONE),
             True,
         ),
@@ -203,6 +237,38 @@ class RangeNodes:
     ids=RangeNodes.ids(RangeNodes.cells()),
 )
 def test_range_gives_the_answers_of_polars(node: str, cell: tuple[Input, ...]) -> None:
-    """The four answers of a range function match polars, at one cell of its sample."""
+    """The four answers of a range function match polars, at one cell of its sample.
+
+    An answer that no sample shows in the installed release is left out (`RangeNodes.UNSHOWN`).
+    """
     problems = RangeNodes.NODES[node][0].problems(list(cell))
-    assert not problems, "\n".join(problems)
+    installed = PolarsRelease.installed()
+    unshown = {
+        place
+        for (call, place), release in RangeNodes.UNSHOWN.items()
+        if call == node and installed < PolarsRelease.parse(release)
+    }
+    shown = [problem for problem in problems if not problem.startswith(tuple(unshown))]
+    assert not shown, "\n".join(shown)
+
+
+def test_int_range_over_a_struct_of_a_date_stops_as_the_rules_say() -> None:
+    """`int_range` over a struct of one `Date` stops in the way of the rules, where the date fits.
+
+    Before polars 1.40.0, the cast pass casts each bound to the type of the
+    call with a strict cast, and a struct casts field by field. A date that
+    fits `UInt8` leaves a struct, and the kernel panics over it. Each date of
+    the samples is too large for `UInt8`, so the strict cast raises first,
+    and no sample shows the panic (`RangeNodes.UNSHOWN`). From polars 1.40.0,
+    the conversion refuses a struct, whatever its values.
+    """
+    node = pl.int_range(pl.col("s").first(), 1, dtype=pl.UInt8)
+    tree = json.loads(node.meta.serialize(format="json"))
+    definition = Ranges.INT_RANGE.at(NodeOptions(tree))
+    struct = DType("Struct", ((("a", DType("Date")),),))
+    leaves: list[Leaf] = [ColumnLeaf(struct, RowForm.ONE_VALUE), LiteralLeaf(1)]
+    rules = NodeEvaluation(definition, leaves, CellCheck.GROUPS).answers().run_select
+    frame = pl.DataFrame({"s": [{"a": dt.date(1970, 1, 2)}]})
+    ran = PolarsAnswer().answer(lambda: frame.select(node.alias("o")).schema["o"])
+    assert isinstance(rules, Refused)
+    assert ran == Stopped(rules.stop, None if rules.error is None else rules.error.value)

@@ -3,6 +3,22 @@
 # Every frame type here is confirmed against real polars.
 
 - case: a_negative_bare_value_keeps_its_sign_in_repeat
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The smallest Int32 value fits Int32. Its positive twin needs Int64.
+    reveal_type(df.select(pl.repeat(-2147483648, 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(pl.repeat(2147483648, 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_negative_bare_value_keeps_its_sign_in_repeat_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -17,6 +33,24 @@
     reveal_type(df.select(pl.repeat(2147483648, 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'repeat': polars.datatypes.classes.Int64}, closed=True), None]"
 
 - case: a_lit_call_with_one_argument_is_read_as_its_value
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # The checker reads the value inside pl.lit(value).
+    reveal_type(df.select(pl.repeat(pl.lit(5), 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(pl.repeat(pl.lit(-2147483649), 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    # A pl.lit call with a dtype argument is not a bare value. The call keeps its plain type.
+    reveal_type(df.select(pl.repeat(pl.lit(5, dtype=pl.Int8), 3)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int8}, closed=True), None]"
+
+- case: a_lit_call_with_one_argument_is_read_as_its_value_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame

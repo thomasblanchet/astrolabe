@@ -137,6 +137,7 @@
     reveal_type(pl.concat([x, y], how="diagonal"))  # E: pl.concat(how="diagonal") column "a" does not reconcile: Int64 vs. String  [schema-mismatch] # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: concat_by_name_builds_the_result_from_the_columns_of_the_first_frame
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -154,6 +155,26 @@
     reveal_type(pl.concat([x, z], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
     # A horizontal_extend concat of one frame keeps the class name of that frame.
     reveal_type(pl.concat([z], how="horizontal_extend"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.AB, {'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: concat_by_name_builds_the_result_from_the_columns_of_the_first_frame_before_polars_1_42
+  skip: not __import__("tests.releases").releases.polars_before("1.42.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class A(Columns):
+        a: pl.Int64
+
+    class AB(Columns):
+        a: pl.Int64
+        b: pl.String
+
+    x: TypedDataFrame[A]
+    z: TypedDataFrame[AB]
+    # The result of a diagonal concat lists its columns. It does not take the class name of a later frame.
+    reveal_type(pl.concat([x, z], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.String}, closed=True), None]"
+    # Before polars 1.42.0, horizontal_extend is not a value of how: mypy reports it, and the call gives the plain frame.
+    reveal_type(pl.concat([z], how="horizontal_extend"))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "concat" has incompatible type "Literal['horizontal_extend']"; expected "Literal['vertical', 'vertical_relaxed', 'diagonal', 'diagonal_relaxed', 'horizontal', 'align', 'align_full', 'align_inner', 'align_left', 'align_right']"  [arg-type]
 
 - case: gate_never_reports_no_gap_for_a_proven_or_accounted_expression
   main: |

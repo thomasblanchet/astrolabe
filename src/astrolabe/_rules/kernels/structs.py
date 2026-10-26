@@ -72,12 +72,15 @@ class FieldOf:
 class Renamed:
     """Give a struct with new names for its fields, in order, as `struct.rename_fields` does.
 
-    The kernel pairs each field with a name, in order. A struct with more
-    fields than names keeps only the fields that have a name.
+    The kernel pairs each field with a name, in order. Before polars 2.0.0,
+    a struct with more fields than names keeps only the fields that have a
+    name. From that release, the type function refuses another count of names.
 
     Example:
         >>> pair = DType("Struct", ((("a", DType("Int8")), ("b", DType("Date"))),))
-        >>> Renamed(("x",)).give(Data(pair), StructKernels().rename_fields(("x",)))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     Renamed(("x",)).give(Data(pair), StructKernels().rename_fields(("x",)))
         Struct({'x': Int8})
     """
 
@@ -95,7 +98,9 @@ class Renamed:
 
         Example:
             >>> one = DType("Struct", ((("a", DType("Int8")),),))
-            >>> Renamed(("x", "y")).give(Data(one), StructKernels().rename_fields(("x", "y")))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Renamed(("x", "y")).give(Data(one), StructKernels().rename_fields(("x", "y")))
             Struct({'x': Int8})
         """
         del kernel

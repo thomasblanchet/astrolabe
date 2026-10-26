@@ -39,7 +39,7 @@ from astrolabe._hooks.errors import DuplicateColumnError, WrongColumnShapeError
 from astrolabe._hooks.propagate import not_none, propagates
 from astrolabe._hooks.expression.outcome import UNCHECKED
 from astrolabe._hooks.unproven import Reason
-from astrolabe.frame import Unchecked
+from astrolabe.frame import TypedLazyFrame, Unchecked
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -119,12 +119,19 @@ class WholeFrameReducerFallback:
         self._promotion = ReducerPromotion()
         self._unchecked = UncheckedCompatibility()
 
-    def resolve(self, reducer: str, source_dtype: MypyType) -> MypyType | None:
+    def resolve(
+        self,
+        reducer: str,
+        source_dtype: MypyType,
+        *,
+        planner: bool = False,
+    ) -> MypyType | None:
         """Give the data type of one column after one reducer.
 
         Args:
             reducer: The name of the reducer, one of `ALL_REDUCERS`.
             source_dtype: The data type of the column before the reducer.
+            planner: Whether the type is the planner type of a lazy frame.
 
         Returns:
             The data type after the reducer, or None if the lookup of a polars
@@ -141,7 +148,7 @@ class WholeFrameReducerFallback:
         own_rule = own_rules.get(reducer)
         if own_rule is not None:
             return own_rule(source_dtype)
-        return self._reducer_dtype.resolve(reducer, source_dtype)
+        return self._reducer_dtype.resolve(reducer, source_dtype, planner=planner)
 
     def _counted_dtype(self, source_dtype: MypyType) -> MypyType | None:
         """Give the data type after `count()` or `null_count()`, which is `UInt32` for every column.
@@ -278,8 +285,9 @@ class WholeFrameReducerHook:
         """Build the reduced frame, or give up at the first step that fails.
 
         Each declared column keeps its name and gets the data type that the
-        rules give. A column of a lazy frame that holds a stored type of its
-        own gets the reducer of each of its two types. A data type that no
+        rules give. A column of a lazy frame gets the reducer of its type of
+        the data and of its planner type, which can differ: the sum of a
+        `Decimal` widens in the planner of polars 1.40 only. A data type that no
         rule answers, for example a type variable of a generic schema class,
         depends on the caller. The column then gets the data type
         `Unchecked`, as the remainder does.
@@ -300,9 +308,11 @@ class WholeFrameReducerHook:
         known = not_none(frame.known_columns)
         reduced: list[ColumnRef] = []
         rule = functools.partial(self._fallback.resolve, self._reducer)
+        lazy = Target.of(TypedLazyFrame).is_base_of(get_proper_type(ctx.type))
+        planner = functools.partial(self._fallback.resolve, self._reducer, planner=lazy)
         planned = PlannedMap(self._plugin)
         for column in known.columns:
-            dtype = planned.mapped(column.dtype, rule)
+            dtype = planned.mapped(column.dtype, rule, planner)
             if dtype is None:
                 unchecked = FreshTypeInfo(self._plugin).resolved(Target.of(Unchecked).fullname)
                 dtype = Instance(checked_not_none(unchecked), [])

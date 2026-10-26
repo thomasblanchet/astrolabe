@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.casts import SeriesCast
 from astrolabe._rules.dtypes import DType, Parameter, TimeUnit
-from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, UnequalLengths
 from astrolabe._rules.kernels.binary import OperatorKernel
 from astrolabe._rules.kernels.dispatch import (
     Arm,
@@ -555,7 +555,7 @@ class DateKernels:
             The dispatch.
 
         Example:
-            >>> DateKernels().timestamp("ns").output(Data(DType("String")))
+            >>> DateKernels().timestamp("ns").output(Data(DType("Date")))
             Int64
         """
         arms = (Arm(Kinds("Time", "Duration"), Refuse()),)
@@ -1323,7 +1323,8 @@ class Combine:
         zone = Parameter().text(moment.dtype, 1) if moment.dtype.name == "Datetime" else None
         start = moment.with_dtype(DType("Datetime", (self.unit, None)))
         span = RunCast().of(time, DType("Duration", (self.unit,)))
-        Lengths("dt.combine", ErrorClass.INVALID_OPERATION).check(lengths)
+        message = f"arguments for `dt.combine` have different lengths {tuple(lengths)}"
+        UnequalLengths().check(lengths, message)
         total = OperatorKernel(owned=False).output(Operator.PLUS, start, span)
         if zone is None:
             return total

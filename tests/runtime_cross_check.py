@@ -20,13 +20,17 @@ from __future__ import annotations
 import ast
 import datetime
 import decimal
+import os
+import platform
 import re
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 import astrolabe
 import polars as pl
 import polars.datatypes.classes
+import pytest
 import yaml
 from astrolabe._hooks.propagate import not_falsy, not_none, propagates
 from astrolabe.frame import Unchecked, DTypeLike, TypedDataFrame, TypedLazyFrame, _TypedFrameBase
@@ -518,8 +522,31 @@ class YamlCorpus:
         for file in sorted(self._directory.glob("**/test_*.yml")):
             entries = yaml.safe_load(file.read_text(encoding="utf-8")) or []
             for entry in entries:
-                if "case" in entry:
+                if "case" in entry and not self._skipped(entry):
                     yield CaseSource(file, entry["case"], entry["main"])
+
+    def _skipped(self, entry: dict[str, object]) -> bool:
+        """Say whether the `skip:` key of a case leaves it out, as pytest-mypy-plugins reads it.
+
+        The key is a Python expression, which pytest-mypy-plugins evaluates
+        with the modules `sys`, `os`, `pytest` and `platform`. A case whose
+        answer depends on the release of polars names the releases that it
+        leaves out (`tests.releases`).
+
+        Args:
+            entry: The case, as `yaml.safe_load` gives it.
+
+        Returns:
+            Whether the case is left out.
+
+        Example:
+            >>> from pathlib import Path
+            >>> corpus = YamlCorpus(Path("tests/typing"))
+            >>> corpus._skipped({"case": "a", "skip": "True"}), corpus._skipped({"case": "b"})
+            (True, False)
+        """
+        names = {"sys": sys, "os": os, "pytest": pytest, "platform": platform}
+        return bool(eval(str(entry.get("skip", "False")), names))  # ruff: ignore[suspicious-eval-usage]
 
 
 class RuntimeCrossCheck:
