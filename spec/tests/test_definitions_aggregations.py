@@ -52,8 +52,8 @@ class AggregationNodes:
     the literal float of the census, 1.5, is outside of them.
 
     Example:
-        >>> sorted(AggregationNodes.ONE_INPUT)[:3]
-        ['agg_groups', 'all', 'any']
+        >>> "all" in AggregationNodes.ONE_INPUT
+        True
         >>> AggregationNodes.HALF.label
         'lit float 0.5/direct'
     """

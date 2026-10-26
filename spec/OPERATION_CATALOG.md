@@ -47,7 +47,7 @@ Every identifier is defined in `OPERATIONS.md`. The ones used most:
 
 ### 0.4 How the Polars column was measured
 
-Every behavior stated here was executed on **polars 1.39.3**, **polars 1.40.1**, **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
+Every behavior stated here was executed on **polars 1.39.3**, **polars 1.40.1**, **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2**, **polars 1.44.2** and **polars 2.0.0**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
 
 ```
 uv run pytest spec
@@ -57,21 +57,21 @@ A polars release that changes one of these behaviors fails the test that names i
 
 ### 0.5 Scope, and why nothing is missing
 
-In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Polars 1.41.0 adds `gather` to both frames and `LazyFrame.execute`, so the frame API of polars 1.39 and of polars 1.40 has 149 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
+In polars 2.0.0, the frame API is 147 methods across `DataFrame` and `LazyFrame`. Polars 2.0.0 adds `LazyFrame.from_lazyframe_resolver`, and removes `approx_n_unique`, `fetch`, `melt`, `profile`, `with_context` and `with_row_count`, so the frame API of polars 1.44 has 152 methods. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Polars 1.41.0 adds `gather` to both frames and `LazyFrame.execute`, so the frame API of polars 1.39 and of polars 1.40 has 149 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
 
 | Group | Count | Where |
 | -- | -- | -- |
-| frame methods that shape a schema | 75 | Part I |
-| frame methods that cannot | 80 | Part II |
+| frame methods that shape a schema | 73 | Part I |
+| frame methods that cannot | 77 | Part II |
 | named in both, having two meanings | 3 | `clear`, `n_unique`, `sql` |
-| `GroupBy` and `LazyGroupBy` methods | 17 | Part I, section 7 |
-| selector constructors, `cs.*` | 36 | Part I, section 9 |
-| frame-level `pl.*` functions | 41 | 4 in Part I, 37 in Part II |
+| `GroupBy` and `LazyGroupBy` methods | 16 | Part I, section 7 |
+| selector constructors, `cs.*` | 37 | Part I, section 9 |
+| frame-level `pl.*` functions | 43 | 4 in Part I, 39 in Part II |
 | `pl.Expr` methods | 212 | Part III, section 19 |
-| `pl.Expr` namespace members | 223 | Part III, sections 20 and 21 |
-| expression constructors, `pl.*` | 82 | Part III, section 18 |
+| `pl.Expr` namespace members | 233 | Part III, sections 20 and 21 |
+| expression constructors, `pl.*` | 81 | Part III, section 18 |
 
-The first three rows give $75 + 80 - 3 = 152$, so the partition is exact, and a test checks it. And Part I's content is replayed: `spec/tests/test_catalog_rows.py` executes every Part I operation over a frame holding declared columns and remainder stand-ins and asserts the full output schema, so a row whose stated behavior drifts from the library fails by name (`TestEveryRowReplays` in `spec/tests/test_catalog_rows.py`), and an operation the replay misses fails the coverage gate (`TestTheReplayCoversPartOne` in the same file). Three names appear twice. `n_unique` returns a number on a frame and a frame under a group-by. `clear` keeps a schema while emptying rows. `sql` is the method `DataFrame.sql` in Part I and the function `pl.sql` in Part II, two members that share a name.
+The first three rows give $73 + 77 - 3 = 147$, so the partition is exact. A method that polars 2.0.0 removes keeps its row, which says so, and a test checks it. And Part I's content is replayed: `spec/tests/test_catalog_rows.py` executes every Part I operation over a frame holding declared columns and remainder stand-ins and asserts the full output schema, so a row whose stated behavior drifts from the library fails by name (`TestEveryRowReplays` in `spec/tests/test_catalog_rows.py`), and an operation the replay misses fails the coverage gate (`TestTheReplayCoversPartOne` in the same file). Three names appear twice. `n_unique` returns a number on a frame and a frame under a group-by. `clear` keeps a schema while emptying rows. `sql` is the method `DataFrame.sql` in Part I and the function `pl.sql` in Part II, two members that share a name.
 
 `LazyFrame` differs from `DataFrame` in *when* work happens, not in what the columns become. Every Part I row holds for both unless it says otherwise.
 
@@ -118,7 +118,7 @@ A row-only operation changes which rows survive, or in what order. It never chan
 | `.sample(fraction=f)` needs $f \le 1$ without replacement | otherwise `ShapeError`, the same one `n` too large gives |
 | a count of rows fits the integer that polars reads | polars converts `n`, `k`, `offset` and `length` to an integer of a fixed width before it reads any data, so `.head(2**64)` raises `OverflowError` and a lazy `.head(-1)` raises `ValueError` |
 
-The width depends on the method and on the kind of frame. An eager frame reads the count of `.head`, `.tail` and `.limit`, and the `length` of `.slice`, as an unsigned 64-bit integer, and takes a negative count as a count from the end. A lazy frame reads them as the index type, from 0 to $2^{32} - 1$, and refuses a negative count. Both read the `offset` of `.slice` as a signed 64-bit integer, the counts of `.gather_every` and of the `head` and `tail` of a group-by as an unsigned 64-bit integer, a step `n` of 0 included, which raises `InvalidOperationError` when the query runs, and the `k` of `.top_k` and `.bottom_k` and the `offset` of `.with_row_index` as the index type. The checker reports a count outside its range where the call states it (measured by `TestRowCountWidths` in `spec/tests/test_polars_facts.py`).
+The width depends on the method and on the kind of frame. An eager frame reads the count of `.head`, `.tail` and `.limit`, and the `length` of `.slice`, as an unsigned 64-bit integer, and takes a negative count as a count from the end. A lazy frame reads them as the index type, from 0 to $2^{32} - 1$, and refuses a negative count. Both read the `offset` of `.slice` as a signed 64-bit integer, the counts of `.gather_every` and of the `head` and `tail` of a group-by as an unsigned 64-bit integer, a step `n` of 0 included, which raises `InvalidOperationError` when the query runs, and the `k` of `.top_k` and `.bottom_k` and the `offset` of `.with_row_index` as the index type. From polars 2.0.0, an eager frame runs `.gather_every` on the streaming engine, which reads its two counts as signed 64-bit integers and panics past them (`POLARS_ISSUES.md`). The checker reports a count outside its range where the call states it (measured by `TestRowCountWidths` in `spec/tests/test_polars_facts.py`).
 
 > `B-1` boundaries here: `.upsample` needs a sorted time column, and every row-count argument (`n`, `k`, `fraction`) can exceed the frame's height. Both are outside the model.
 
@@ -143,7 +143,7 @@ These change which columns exist, or what they are called. They are where most o
 | `.rename(mapping)` | renames the named columns | renamed | `E-1` | `R-2` on each destination |
 | `.rename(callable)` | renames every column by a function | see 2.4 | see 2.4 | `B-6` |
 | `.with_row_index(name="index")` | adds a counter at the front | plus `name : UInt32` | `E-3`, `Minus[name]` | `R-2` on `name` |
-| `.with_row_count(name="row_nr")` | the deprecated spelling, different default name | plus `name : UInt32` | `E-3`, `Minus[name]` | `R-2` on `name` |
+| `.with_row_count(name="row_nr")` | the deprecated spelling, different default name; polars 2.0.0 removes it | plus `name : UInt32` | `E-3`, `Minus[name]` | `R-2` on `name` |
 | `.insert_column(index, series)` | adds a column at a position | plus that column | `E-3`, `Minus` of its name | `R-2` on its name |
 | `.replace_column(index, series)` | replaces the column at a position, name included | minus the old name, plus the series' name | `E-3`, `Minus` of the new name | `B-4` |
 | `.map_columns(names, f)` | applies a function to whole columns, keeping names | those columns retyped to `Unchecked` | `E-1` | `none` |
@@ -204,7 +204,7 @@ These change the *shape* of the frame, so several of them are where the model re
 | `.unnest(*names)` | replaces a struct **in place** with its fields | minus the struct, plus its fields | `E-1` | `R-2` on each field name |
 | `.unnest()` with no argument | unnests every struct column; before polars 1.40.0, `columns` has no default, and the call raises `TypeError` | the same, for every declared struct | `E-1` | `R-9` on `pl.Struct` |
 | `.unpivot(on=..., index=...)` | turns every non-index column into rows | the index columns, plus `variable : String` and `value` | `E-2` | `none` |
-| `.melt(...)` | the deprecated spelling of `.unpivot` | as `.unpivot` | `E-2` | `none` |
+| `.melt(...)` | the deprecated spelling of `.unpivot`; polars 2.0.0 removes it | as `.unpivot` | `E-2` | `none` |
 | `.pivot(on=..., index=..., values=...)` | output names come from **data** | the index columns, plus unknown names | `E-2` | `B-5` |
 | `.pivot(on=..., values=...)`, no `index=` | uses **every remaining column** as the index | every other column, plus unknown names | `E-1` | `B-5` |
 | `.pivot(on=..., on_columns=[...], index=..., values=...)` | output names come from the literal `on_columns` | the index columns, plus one column per listed value, typed by the aggregate function | `E-2` | `none` |
@@ -385,7 +385,7 @@ These combine two or more frames. What each demands of the two column sets is wh
 | `.merge_sorted(other, key=...)` | as `how="vertical"`, interleaved by key; before polars 1.41.0, it panics over a column that holds a `List` or an `Array`, and before polars 1.40.0, it has no parameter `maintain_order`, so `maintain_order=True` raises `TypeError` | that schema | `E-1` | rejected over a remainder |
 | `.update(other, on=..., how=...)` | replaces values, keeping the left columns | the left schema, a shared column widened | `E-1` | `R-2` naming the right's columns |
 
-The schema check of `how="vertical"`, `how="diagonal"`, `.vstack` and `.extend` reads every `Decimal` as one type, at any depth: a `Decimal(10, 2)` column beside a `Decimal(38, 3)` column runs, and the result keeps the type of the first frame. The relaxed forms widen two `Decimal` types to the larger precision and the larger scale. An align strategy and `.merge_sorted` refuse two different `Decimal` types (measured by `TestDecimalStacks` in `spec/tests/test_polars_facts.py`).
+The schema check of `how="vertical"`, `how="diagonal"`, `.vstack` and `.extend` reads every `Decimal` as one type, at any depth: a `Decimal(10, 2)` column beside a `Decimal(38, 3)` column runs, and the result keeps the type of the first frame. The relaxed forms widen two `Decimal` types to the larger scale. Before polars 2.0.0, they take the larger precision, and from that release, the precision that holds the integer digits of both types beside that scale, at most 38: `Decimal(5, 2)` beside `Decimal(6, 4)` gives `Decimal(6, 4)` before that release and `Decimal(7, 4)` from it. An align strategy and `.merge_sorted` refuse two different `Decimal` types (measured by `TestDecimalStacks` in `spec/tests/test_polars_facts.py`).
 
 The relaxed forms and `.update` widen a column that two frames hold to the supertype of its two data types: an `Int32` column beside an `Int64` column gives `Int64`, and an `Int64` column beside a `String` column gives `String`, in either order. `unpivot` widens its `value` column the same way. A side of the data type `Unchecked` makes that supertype `Unchecked`, at any depth, because the unknown side decides it (`D-41`): `List(Unchecked)` beside `List(Int64)` gives `List(Unchecked)`. `how="diagonal"` needs one type on both sides, so it gives the known side instead, because a column of another type raises there. Two structs widen to the union of their fields: the fields of the longer struct, or of the first where both have as many, in their order, then each field of the other that it lacks, and a field of both at the supertype of its two types (measured by `TestWideningTakesTheSupertype` in `spec/tests/test_polars_facts.py`).
 
@@ -454,7 +454,7 @@ The windows of `.rolling` and `.group_by_dynamic` take the place of the groups i
 | `.sum()`, `.mean()`, `.median()`, `.min()`, `.max()`, `.first()`, `.last()`, `.n_unique()`, `.quantile(q)` | as `.agg(pl.all().<reducer>())` (section 17.2 of `OPERATIONS.md`): the keys, then every other column retyped by the reducer in the aggregation context, so `.mean()` keeps a `String` column | as for that `.agg`: `E-6`, kind by kind (`T-20`) | the reducer's domain in the aggregation context |
 | `.all()` | as `.agg(pl.all())`: the keys, then every other column as a list of its own type | `E-6`, to `List(Unchecked)`: the wrap of each data type is outside the effect language, per section 12.1 of `OPERATIONS.md` | `none` |
 | `.head(n)`, `.tail(n)` | the input's schema, keys first | `E-1` | `none` |
-| `.count()` | the keys plus one column, `count : UInt32`; a deprecated spelling of `.len()` | `E-2` | no key named `count` |
+| `.count()` | the keys plus one column, `count : UInt32`; a deprecated spelling of `.len()`, which polars 2.0.0 removes | `E-2` | no key named `count` |
 | `.len()` | the keys plus one column, `len : UInt32` | `E-2` | no key named `len` |
 | `.having(pred)` | no frame: a group-by over the groups `pred` keeps, and the call after it decides the schema | as the call after it | `none` |
 | `.map_groups(f)` | arbitrary Python; not expressible | `E-2` | `B-6` |
@@ -486,9 +486,9 @@ So a reducer's domain must be read per context and, apart from both, for the who
 Two consequences, both stated rather than approximated:
 
 - The gate is written as an explicit set, since `R-9` takes one. For `sum` in a `select` that is `none_of={pl.String, pl.Date, pl.Datetime, pl.Time, pl.List}`, which is exact. Choosing the nearest family would accept programs that raise: `TemporalType` would exclude `Duration`, which `sum` accepts.
-- An error message about such a gate must name the set the operation actually enforces. `var` rejects exactly `Duration` and accepts everything `std` accepts, so a message about it naming "numeric or Boolean" describes a different operation.
+- An error message about such a gate must name the set the operation actually enforces. `var` rejects exactly `Duration`, and before polars 2.0.0 it accepts everything `std` accepts, so a message about it naming "numeric or Boolean" describes a different operation. From polars 2.0.0, `std` rejects `Duration` too.
 
-> Measured by `test_var_rejects_a_duration_where_std_accepts_it` in `spec/tests/test_polars_facts.py`.
+> Measured by `test_var_rejects_a_duration_and_std_does_from_2_0` in `spec/tests/test_polars_facts.py`.
 
 ______________________________________________________________________
 
@@ -546,7 +546,7 @@ ______________________________________________________________________
 
 ## 9. Selectors
 
-A selector picks columns. There are thirty-six constructors, in four groups, and the group decides how exactly a selector resolves over a remainder.
+A selector picks columns. There are thirty-seven constructors, in four groups, since polars 2.0.0 adds `cs.map`, and the group decides how exactly a selector resolves over a remainder.
 
 ### 9.1 Name selectors: exact over a remainder
 
@@ -586,7 +586,7 @@ These read only the data type.
 | `cs.string()`, `cs.binary()`, `cs.boolean()` | by scalar family |
 | `cs.temporal()`, `cs.date()`, `cs.datetime()`, `cs.duration()`, `cs.time()` | by temporal family |
 | `cs.categorical()`, `cs.enum()` | by categorical family |
-| `cs.nested()`, `cs.list()`, `cs.array()`, `cs.struct()` | by nested family |
+| `cs.nested()`, `cs.list()`, `cs.array()`, `cs.struct()`, `cs.map()` | by nested family; `cs.map()` from polars 2.0.0 |
 | `cs.object()` | the `Object` type |
 | `cs.by_dtype(*dtypes)` | an explicit set of data types |
 | `cs.datetime(units, zones)`, `cs.duration(units)` | the `Datetime` data types of those units and zones, or the `Duration` data types of those units |
@@ -686,6 +686,8 @@ ______________________________________________________________________
 
 `approx_n_unique`, `equals`, `estimated_size`, `get_column_index`, `is_duplicated`, `is_empty`, `is_sorted`, `is_unique`, `n_chunks`, `n_unique`
 
+Polars 2.0.0 removes the frame method `approx_n_unique`.
+
 `DataFrame.n_unique()` returns an `int`, which is why it is here and `GroupBy.n_unique()` is in Part I: the two share a name and do different things.
 
 ______________________________________________________________________
@@ -696,6 +698,8 @@ The frame that comes out has the same columns as the frame that went in, the cal
 
 `cache`, `clear` *(in Part I: it keeps the schema and is usable in a pipeline)*, `collect`, `collect_async`, `pl.collect_all_async`, `collect_batches`, `collect_schema`, `execute`, `explain`, `fetch`, `glimpse`, `inspect`, `lazy`, `map_batches`, `pipe`, `pipe_with_schema`, `profile`, `rechunk`, `remote`, `show`, `show_graph`, `shrink_to_fit`, `with_context`
 
+Polars 2.0.0 removes `fetch`, `profile` and `with_context`.
+
 `pipe(f)` calls `f` on the frame. The type system computes nothing for it: the result's type is the return type `f`'s own signature declares, which mypy reads there. `map_batches` and `map_rows` run arbitrary Python per batch or per row, so their output schema is not readable at all (`B-6`): those are rejected rather than guessed.
 
 ______________________________________________________________________
@@ -705,6 +709,10 @@ ______________________________________________________________________
 These mint a schema rather than transform one. The schema of the result is whatever the file, database or object holds, which no signature can state, so it is declared at the point it enters the program.
 
 `pl.defer`, `pl.from_arrow`, `pl.from_dataframe`, `pl.from_dict`, `pl.from_dicts`, `pl.from_numpy`, `pl.from_pandas`, `pl.from_records`, `pl.from_repr`, `pl.from_torch`, `pl.json_normalize`, `pl.read_avro`, `pl.read_clipboard`, `pl.read_csv`, `pl.read_database`, `pl.read_database_uri`, `pl.read_delta`, `pl.read_excel`, `pl.read_ipc`, `pl.read_ipc_stream`, `pl.read_json`, `pl.read_lines`, `pl.read_ndjson`, `pl.read_ods`, `pl.read_parquet`, `pl.scan_arrow_c_stream`, `pl.scan_csv`, `pl.scan_delta`, `pl.scan_iceberg`, `pl.scan_ipc`, `pl.scan_lines`, `pl.scan_ndjson`, `pl.scan_parquet`, `pl.scan_pyarrow_dataset`, `pl.sql`, `pl.wrap_df`
+
+Polars 2.0.0 adds `pl.scan_external_reader` and `pl.scan_lance`.
+
+From polars 2.0.0, the class method `from_lazyframe_resolver` of `LazyFrame` builds a lazy frame from an object that resolves it, so it reads a frame from outside the program too.
 
 A reader's result is given a schema by an annotation at the call site, and every later operation is checked against it. That is the boundary of the system on the input side, and it is where a program states what it believes the data to be.
 
@@ -728,30 +736,31 @@ A row names the family of the node that the call builds. A call with arguments o
 
 Polars answers schema questions in its planner, and runs data in its kernels, and the two disagree in measured ways (`D-36`). The binding layer for this catalog is the run: what `select` and `agg` do with real values. The planner can give a type where every run raises, as `.abs()` on `String` does, and the checker types by the run, so a call that the planner accepts and every run refuses is an error. Where the planner and the run give two types, a frame column takes the run type, and a declaration refuses the argument (`D-40`).
 
-The run of a frame passes through the optimizer of polars, and the kind of frame decides which passes run. An eager `select` or `with_columns` simplifies the expressions: the optimizer can put an input or a literal in place of a node. An eager `group_by().agg()` runs no pass at all, so `pl.col("l") & True` over a `List` column raises there, where a lazy `agg` simplifies it to `l`, and `-pl.lit(2**31)` gives `Int64` there and `Int32` in a lazy `agg`. A lazy frame runs every pass when it collects, the slice pushdown included: a slice whose offset or length is a column hangs where the sliced value is elementwise, leaves the tree otherwise, and raises on an eager frame (`POLARS_ISSUES.md`). In a `select` of one expression, the pushdown moves the slices that cut every column into the plan, so the expression runs over the rows of the slice (`D-36` of `OPERATIONS.md`). The checker evaluates each expression with the passes of the frame that runs it (measured by `TestEngines` in `spec/tests/test_expression_facts.py`).
+The run of a frame passes through the optimizer of polars, and the kind of frame decides which passes run. An eager `select` or `with_columns` simplifies the expressions: the optimizer can put an input or a literal in place of a node. Before polars 2.0.0, an eager `group_by().agg()` runs no pass at all, so `pl.col("l") & True` over a `List` column raises there, where a lazy `agg` simplifies it to `l`, and `-pl.lit(2**31)` gives `Int64` there and `Int32` in a lazy `agg`. From polars 2.0.0, an eager `agg` simplifies the expressions too. A lazy frame runs every pass when it collects, the slice pushdown included: a slice whose offset or length is a column hangs where the sliced value is elementwise, leaves the tree otherwise, and raises on an eager frame (`POLARS_ISSUES.md`). From polars 1.40.0 and before polars 2.0.0, in a `select` of one expression, the pushdown moves the slices that cut every column into the plan, so the expression runs over the rows of the slice (`D-36` of `OPERATIONS.md`). The checker evaluates each expression with the passes of the frame that runs it (measured by `TestEngines` in `spec/tests/test_expression_facts.py`).
 
 A lazy frame stores the planner type of each column, and plans each later step at it, while the data has the run type. Where the two differ, the column holds both, as `Planned[run, planner]`, `collect()` gives the run type, and a join checks its keys at both (`D-45` of `OPERATIONS.md`).
 
 ### 17.3 The counts
 
-`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.41.0 adds the method `is_empty`. Polars 1.42.0 adds the method `is_sorted`. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
+`pl.Expr` carries 10 namespaces, and 11 from polars 2.0.0, which adds `map`. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.41.0 adds the method `is_empty`. Polars 1.42.0 adds the method `is_sorted`. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`. Polars 2.0.0 adds the methods `approx_quantile`, `bin_intervals`, `bin_quantiles`, `bin_ranks`, `erf`, `erfc` and `pipe_with_dtype`, the members `list.to_map`, `meta.is_known_length`, `meta.is_length_preserving`, `meta.is_row_separable`, `meta.is_scalar`, `name.strip_prefix`, `name.strip_suffix`, `struct.eval` and the six members of `map`, and the constructor `pl.pipe_with_dtype`. It removes the methods `agg_groups`, `flatten`, `from_json`, `rechunk`, `register_plugin`, `shrink_dtype` and `where`, the members `cat.get_categories`, `dt.datetime`, `dt.with_time_unit`, `meta.write_json`, `str.concat` and `str.explode`, and the constructors `pl.arctan2d` and `pl.groups`.
 
-| Polars | Methods | Methods that the census calls | Members of the namespaces | Methods and members | Constructors |
-| -- | -- | -- | -- | -- | -- |
-| 1.39.3 | 208 | 201 | 221 | 429 | 81 |
-| 1.40.1 | 208 | 201 | 221 | 429 | 81 |
-| 1.41.2 | 209 | 202 | 221 | 430 | 81 |
-| 1.42.1 | 210 | 203 | 221 | 431 | 81 |
-| 1.43.2 | 212 | 205 | 223 | 435 | 82 |
-| 1.44.2 | 212 | 205 | 225 | 437 | 82 |
+| Polars | Methods | Methods that the census calls | Methods of code outside the call | Members of the namespaces | Methods and members | Constructors | Constructors that the census calls |
+| -- | -- | -- | -- | -- | -- | -- | -- |
+| 1.39.3 | 208 | 201 | 7 | 221 | 429 | 81 | 73 |
+| 1.40.1 | 208 | 201 | 7 | 221 | 429 | 81 | 73 |
+| 1.41.2 | 209 | 202 | 7 | 221 | 430 | 81 | 73 |
+| 1.42.1 | 210 | 203 | 7 | 221 | 431 | 81 | 73 |
+| 1.43.2 | 212 | 205 | 7 | 223 | 435 | 82 | 73 |
+| 1.44.2 | 212 | 205 | 7 | 225 | 437 | 82 | 73 |
+| 2.0.0 | 212 | 206 | 6 | 233 | 445 | 81 | 72 |
 
-The methods that the census does not call are the 7 whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars, and fails when the table has no row for that release or when the row and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
+The methods that the census does not call are those whose output type comes from code outside the call, so no rule holds it. The suite computes every one of these numbers from the installed polars, and fails when the table has no row for that release or when the row and the library disagree (`M-12`). Measured by `TestExpressionCensus` in `spec/tests/test_documents.py`.
 
 ______________________________________________________________________
 
 ## 18. Constructors: `pl.*`
 
-The callables in `pl` that build expressions are counted in section 17.3. The census calls 73 of them, and leaves out the ones that work only inside another expression, the ones that run a function of the user, and the ones that build a data type.
+The callables in `pl` that build expressions are counted in section 17.3, with the ones that the census calls. The census leaves out the ones that work only inside another expression, the ones that run a function of the user, and the ones that build a data type.
 
 | Family | Typed as |
 | -- | -- |
@@ -769,7 +778,7 @@ The callables in `pl` that build expressions are counted in section 17.3. The ce
 | array functions | `pl.concat_arr` |
 | leaves of the tree (`D-34`) | `pl.col`, `pl.len`, `pl.lit` |
 | a selector (`D-38`) | `pl.all`, `pl.exclude`, `pl.nth` |
-| a function of the user: typed by `return_dtype=` where the call takes one, and `Unchecked` otherwise (`B-6`) | `pl.cum_fold`, `pl.cum_reduce`, `pl.cum_sum_horizontal`, `pl.fold`, `pl.map_batches`, `pl.map_groups`, `pl.reduce` |
+| a function of the user: typed by `return_dtype=` where the call takes one, and `Unchecked` otherwise (`B-6`) | `pl.cum_fold`, `pl.cum_reduce`, `pl.cum_sum_horizontal`, `pl.fold`, `pl.map_batches`, `pl.map_groups`, `pl.pipe_with_dtype` (from polars 2.0.0), `pl.reduce` |
 | leaves bound by an enclosing call (`D-34`) | `pl.element`, `pl.field`, `pl.groups`, `pl.list` |
 | builders of a data type, not of an expression | `pl.dtype_of`, `pl.self_dtype`, `pl.struct_with_fields` |
 
@@ -791,7 +800,10 @@ ______________________________________________________________________
 | an inner expression evaluated at the element of each list or array, or at the fields of a struct | `cumulative_eval` |
 | a selector (`D-38`) | `exclude` |
 | gives its input unchanged | `shrink_dtype` |
-| a function of the user: typed by `return_dtype=` where the call takes one, and `Unchecked` otherwise (`B-6`) | `deserialize`, `from_json`, `inspect`, `map_batches`, `map_elements`, `pipe`, `register_plugin`, `rolling_map` |
+| a function of the user: typed by `return_dtype=` where the call takes one, and `Unchecked` otherwise (`B-6`) | `deserialize`, `from_json`, `inspect`, `map_batches`, `map_elements`, `pipe`, `pipe_with_dtype` (from polars 2.0.0), `register_plugin`, `rolling_map` |
+| no definition states the node, so its answer is `Unchecked` (`D-37`) | `approx_quantile`, `bin_intervals`, `bin_quantiles`, `bin_ranks`, `erf` and `erfc` (from polars 2.0.0) |
+
+Polars 2.0.0 removes `agg_groups`, `flatten`, `from_json`, `rechunk`, `register_plugin`, `shrink_dtype` and `where`, and the constructors `pl.arctan2d` and `pl.groups`.
 
 A method that takes an expression argument takes it as an input of its node, so every input runs and a failure there fails the call (`D-31`). A method that takes a Python value takes it as a literal input, whose value the node reads (`D-34`), or as an option of the node, which the node reads from the tree.
 
@@ -811,19 +823,21 @@ ______________________________________________________________________
 | array functions | `arr.arg_max`, `arr.arg_min`, `arr.contains`, `arr.count_matches`, `arr.explode`, `arr.first`, `arr.get`, `arr.join`, `arr.last`, `arr.len`, `arr.max`, `arr.mean`, `arr.median`, `arr.min`, `arr.shift`, `arr.slice(as_array=True)`, `arr.sort`, `arr.std`, `arr.sum`, `arr.to_list`, `arr.to_struct`, `arr.var` |
 | an inner expression evaluated at the element of each list or array, or at the fields of a struct | `arr.agg`, `arr.all`, `arr.any`, `arr.eval`, `arr.n_unique`, `arr.reverse`, `arr.unique`, `list.agg`, `list.all`, `list.any`, `list.eval`, `list.filter`, `list.item`, `list.n_unique`, `list.reverse`, `list.unique`, `struct.with_fields` |
 | rewrites of the output name (`D-32`) | `name.keep`, `name.prefix`, `name.prefix_fields`, `name.replace`, `name.suffix`, `name.suffix_fields`, `name.to_lowercase`, `name.to_uppercase` |
-| a rewrite of the output name by a function of the user, so the name is unknown (`D-32`) | `name.map`, `name.map_fields` |
-| reads the expression and builds no column (section 21) | `meta.as_expression`, `meta.as_selector`, `meta.eq`, `meta.has_multiple_outputs`, `meta.is_column`, `meta.is_column_selection`, `meta.is_literal`, `meta.is_regex_projection`, `meta.ne`, `meta.output_name`, `meta.pop`, `meta.root_names`, `meta.serialize`, `meta.show_graph`, `meta.tree_format`, `meta.undo_aliases`, `meta.write_json` |
-| no definition states the node, so its answer is `Unchecked` (`D-37`) | `arr.dot` and `struct.drop` (from polars 1.44.0), `ext.storage`, `ext.to` |
+| a rewrite of the output name by a function of the user, so the name is unknown (`D-32`) | `name.map`, `name.map_fields`, and `name.strip_prefix` and `name.strip_suffix` (from polars 2.0.0, which builds them on `name.map`) |
+| reads the expression and builds no column (section 21) | `meta.as_expression`, `meta.as_selector`, `meta.eq`, `meta.has_multiple_outputs`, `meta.is_column`, `meta.is_column_selection`, `meta.is_known_length`, `meta.is_length_preserving`, `meta.is_literal`, `meta.is_regex_projection`, `meta.is_row_separable`, `meta.is_scalar`, `meta.ne`, `meta.output_name`, `meta.pop`, `meta.root_names`, `meta.serialize`, `meta.show_graph`, `meta.tree_format`, `meta.undo_aliases`, `meta.write_json` |
+| no definition states the node, so its answer is `Unchecked` (`D-37`) | `arr.dot` and `struct.drop` (from polars 1.44.0), `ext.storage`, `ext.to`, and `list.to_map`, `map.contains_key`, `map.entries`, `map.get`, `map.keys`, `map.len`, `map.values` and `struct.eval` (from polars 2.0.0) |
+
+Polars 2.0.0 removes `cat.get_categories`, `dt.datetime`, `dt.with_time_unit`, `meta.write_json`, `str.concat` and `str.explode`.
 
 A `list` or `arr` member that evaluates an inner expression, `list.eval(pl.element() * 2)`, evaluates it at the element of the list, with the element as the one column of the inner tree. The `name` members rewrite the output name and never a data type, so a selection admits only the two affixes (`T-3`, `M-13`).
 
 ______________________________________________________________________
 
-## 21. `meta` (17 members)
+## 21. `meta`
 
 The introspection namespace reads an expression instead of building one. None of its members produces a column, so none has a row above beside the introspection row.
 
-The seventeen: `meta.as_expression`, `meta.as_selector`, `meta.eq`, `meta.has_multiple_outputs`, `meta.is_column`, `meta.is_column_selection`, `meta.is_literal`, `meta.is_regex_projection`, `meta.ne`, `meta.output_name`, `meta.pop`, `meta.root_names`, `meta.serialize`, `meta.show_graph`, `meta.tree_format`, `meta.undo_aliases`, `meta.write_json`.
+It has 17 members before polars 2.0.0, and 20 from that release, which adds `meta.is_known_length`, `meta.is_length_preserving`, `meta.is_row_separable` and `meta.is_scalar`, and removes `meta.write_json`: `meta.as_expression`, `meta.as_selector`, `meta.eq`, `meta.has_multiple_outputs`, `meta.is_column`, `meta.is_column_selection`, `meta.is_known_length`, `meta.is_length_preserving`, `meta.is_literal`, `meta.is_regex_projection`, `meta.is_row_separable`, `meta.is_scalar`, `meta.ne`, `meta.output_name`, `meta.pop`, `meta.root_names`, `meta.serialize`, `meta.show_graph`, `meta.tree_format`, `meta.undo_aliases`, `meta.write_json`.
 
 ______________________________________________________________________
 

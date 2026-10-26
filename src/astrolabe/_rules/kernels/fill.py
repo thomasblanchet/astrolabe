@@ -44,7 +44,9 @@ class FillNull:
         >>> from astrolabe._rules.kernels.dispatch import Data
         >>> FillNull().output(Data(DType("Int8")), Data(DType("Int16")))
         Int8
-        >>> FillNull().output(Data(DType("Null")), Data(DType("Int16")))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     FillNull().output(Data(DType("Null")), Data(DType("Int16")))
         Int16
     """
 

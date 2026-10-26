@@ -89,7 +89,10 @@ class Elementwise:
     EXP: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Exp"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.map_to_float_dtype),
+        type_function=Mapper(
+            FieldsMapper.map_to_float_dtype,
+            checks=[MapperCheck(FieldsMapper.ensure_number_or_boolean, op="exp")],
+        ),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
         kernel=OneInput(FloatKernels.EXP),
@@ -97,7 +100,10 @@ class Elementwise:
     LOG1P: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Log1p"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.map_to_float_dtype),
+        type_function=Mapper(
+            FieldsMapper.map_to_float_dtype,
+            checks=[MapperCheck(FieldsMapper.ensure_number_or_boolean, op="log1p")],
+        ),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
         kernel=OneInput(FloatKernels.LOG1P),
@@ -105,7 +111,10 @@ class Elementwise:
     LOG: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Log"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.log_dtype),
+        type_function=Mapper(
+            FieldsMapper.log_dtype,
+            checks=[MapperCheck(FieldsMapper.ensure_number_or_boolean, op="log")],
+        ),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
         kernel=AllInputs(Log()),
@@ -243,7 +252,7 @@ class Elementwise:
         identity=NodeIdentity("Function", "Sign"),
         nulls=NullRule.FIRST,
         type_function=Mapper(
-            FieldsMapper.with_same_dtype,
+            FieldsMapper.sign_dtype,
             checks=[
                 MapperCheck(
                     FieldsMapper.ensure_satisfies,
@@ -254,31 +263,41 @@ class Elementwise:
         ),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
-        kernel=OneInput(NumericKernels.KEEP_NUMBER),
+        kernel=OneInput(NumericKernels.SIGN),
     )
     FLOOR: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Floor"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.with_same_dtype),
+        type_function=Mapper(FieldsMapper.carry_dtype),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
-        kernel=OneInput(NumericKernels.KEEP_NUMBER),
+        kernel=OneInput(NumericKernels().rounding()),
     )
     CEIL: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Ceil"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.with_same_dtype),
+        type_function=Mapper(FieldsMapper.carry_dtype),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
-        kernel=OneInput(NumericKernels.KEEP_NUMBER),
+        kernel=OneInput(NumericKernels().rounding()),
     )
     ROUND: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Round"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.with_same_dtype),
+        type_function=Mapper(
+            FieldsMapper.carry_dtype,
+            decimals=NodeOption.integer("function", "Round", "decimals"),
+            mode=NodeOption.variant("function", "Round", "mode"),
+        ),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
-        kernel=OneInput(NumericKernels.KEEP_NUMBER),
+        kernel=OneInput(
+            FromOptions(
+                NumericKernels().rounding,
+                NodeOption.integer("function", "Round", "decimals"),
+                NodeOption.variant("function", "Round", "mode"),
+            ),
+        ),
     )
     TRUNCATE: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Truncate"),
@@ -291,7 +310,7 @@ class Elementwise:
     ROUND_SIG_FIGS: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "RoundSF"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.with_same_dtype),
+        type_function=Mapper(FieldsMapper.carry_dtype, decimals=None),
         options=Shape.function(FunctionOptions.elementwise()),
         casts=FunctionCasting(),
         kernel=OneInput(

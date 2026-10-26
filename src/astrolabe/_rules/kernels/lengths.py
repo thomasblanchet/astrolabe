@@ -476,19 +476,23 @@ class Appended:
             The type of the first input after its cast.
 
         Example:
-            >>> Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
             Int16
             >>> unknown = DType("Unknown", ("any",))
-            >>> Appended().output([Data(DType("Time")), Data(DType("Int32"))], unknown)
-            ... # doctest: +ELLIPSIS
+            >>> times = [Data(DType("Time")), Data(DType("Int32"))]
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(times, unknown)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...
             >>> from astrolabe._rules.type_functions import Operand
             >>> big, one = Operand.of_value(2**40), Operand.of_value(1)
             >>> inputs = [Data(DType("Int64")), Data(DType("Int32"))]
-            >>> Appended().output(inputs, DType.dynamic_int(2**40), [big, one])
-            ... # doctest: +ELLIPSIS
+            >>> wide = DType.dynamic_int(2**40)
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(inputs, wide, [big, one])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...

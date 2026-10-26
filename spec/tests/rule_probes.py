@@ -716,7 +716,7 @@ class JoinCalls:
             how="full",
             coalesce=True,
         )
-        return PolarsAnswer().dtype(lambda: joined.collect().schema["k"])
+        return PolarsAnswer().dtype(lambda: joined.collect(engine="in-memory").schema["k"])
 
 
 class CastPassCheck:
@@ -1307,7 +1307,7 @@ class PolarsCell:
             >>> PolarsCell(pl.col("o"))._dtype(query, pl.QueryOptFlags())
             Int64
         """
-        return query.collect(optimizations=flags)["o"].dtype
+        return query.collect(optimizations=flags, engine="in-memory")["o"].dtype
 
     def _query(self, frame: pl.DataFrame, *, agg: bool) -> pl.LazyFrame:
         """Give the query of the node in a context.
@@ -1536,13 +1536,16 @@ class CellCheck:
         return Stopped(answer.stop, error)
 
 
+@dataclass(frozen=True)
 class ApiGate:
     """Leave out the samples of a function that the installed release of polars does not have.
 
     A sample of a node is keyed by the name of the function that builds it,
-    as `cat.to`, and a key can add words after a space, as `cat.to Enum`. The
-    census holds the first release of each function that a recent release
-    of polars adds (`CensusCalls.SINCE`).
+    as `cat.to`, and a key can add words after a space, as `cat.to Enum`. A
+    table of one namespace can leave the namespace out of its keys, and
+    gives it as `prefix`, as `dt.`. The census holds the first release of each
+    function that a recent release of polars adds (`CensusCalls.SINCE`), and
+    the release that removes a function (`CensusCalls.UNTIL`).
 
     `NODES` gives the node of the rules that each such function builds, so a
     test that reads every definition can leave out the nodes that the
@@ -1560,7 +1563,12 @@ class ApiGate:
         "ewm_sum_by": NodeIdentity("Function", "EwmSumBy"),
         "cat.physical": NodeIdentity("Function", "Categorical.Physical"),
         "cat.to": NodeIdentity("Function", "Categorical.To"),
+        "rechunk": NodeIdentity("Function", "Rechunk"),
+        "dt.with_time_unit": NodeIdentity("Function", "TemporalExpr.WithTimeUnit"),
+        "dt.datetime": NodeIdentity("Function", "TemporalExpr.Datetime"),
     }
+
+    prefix: str = ""
 
     def absent(self) -> set[NodeIdentity]:
         """Give the node of each function of `NODES` that the installed release does not have.
@@ -1586,8 +1594,10 @@ class ApiGate:
         Example:
             >>> ApiGate().has("cat.len_bytes of a literal")
             True
+            >>> ApiGate(prefix="dt.").has("year")
+            True
         """
-        return CensusCalls().installed(key.split(" ", maxsplit=1)[0])
+        return CensusCalls().installed(self.prefix + key.split(" ", maxsplit=1)[0])
 
     def built[T](self, name: str, build: Callable[[], dict[str, T]]) -> dict[str, T]:
         """Build the samples of a function where the installed release has it.
@@ -1962,8 +1972,8 @@ class TreeFrame:
         runs: list[Callable[[], pl.DataType]] = [
             lambda: lazy.select(node).collect_schema()["o"],
             lambda: lazy.group_by("g").agg(node).collect_schema()["o"],
-            lambda: lazy.select(node).collect().schema["o"],
-            lambda: lazy.group_by("g").agg(node).collect().schema["o"],
+            lambda: lazy.select(node).collect(engine="in-memory").schema["o"],
+            lambda: lazy.group_by("g").agg(node).collect(engine="in-memory").schema["o"],
         ]
         return [self.answer(run) for run in runs]
 
@@ -2019,7 +2029,7 @@ class TreeFrame:
             "'n' must be a scalar value"
         """
         try:
-            self._frame.lazy().select(expression.alias("o")).collect()
+            self._frame.lazy().select(expression.alias("o")).collect(engine="in-memory")
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
         except BaseException as error:
@@ -2138,7 +2148,7 @@ class WindowFrame:
         """
         runs: list[Callable[[], pl.DataType]] = [
             lambda: grouped.collect_schema()["o"],
-            lambda: grouped.collect().schema["o"],
+            lambda: grouped.collect(engine="in-memory").schema["o"],
         ]
         return [TreeFrame().answer(run) for run in runs]
 

@@ -2077,6 +2077,36 @@ class TreeEvaluation:
 
     @polars_releases
     def _lifted(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
+        """Give the answers as they are: polars 2.0.0 moves no slice of a lone expression.
+
+        From polars 1.40.0 to 1.44, the slice pushdown moves the slices of a
+        lone expression into the plan (`_lifted_slices`). From polars 2.0.0,
+        the slices stay in the expression, as before polars 1.40.0.
+
+        Args:
+            tree: The root of the tree, which the answers already read.
+            answers: The answers of the tree.
+
+        Returns:
+            The same answers.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.execution import QueryFlags
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> columns = {"x": ColumnLeaf(DType("Int8"), RowForm.PER_ROW)}
+            >>> tree = ExpressionTree().of(pl.col("x").head(2).over(pl.lit(0)))
+            >>> lone = TreeEvaluation(columns, GroupBy((3, 2), QueryFlags.lazy(lone=True)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     lone.answers(tree).run_select
+            raises ShapeError
+        """
+        del tree
+        return answers
+
+    @_lifted.before("2.0.0")
+    def _lifted_slices(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
         """Give the answers, with the run of a `select` whose slices polars moves into the plan.
 
         In a lazy `select` of one expression, the slice pushdown can move the
@@ -3550,13 +3580,16 @@ class JoinKeyRows:
 
 
 class LoneCount:
-    """Give the run of a `len` that stands alone in a lazy `select`, where polars counts the rows.
+    """Give the run of a `len` in a lone lazy `select`, where polars counts the rows in its place.
 
     From polars 1.41.0, the projection pushdown of polars puts a count of the
-    rows in place of such a `len` where its input has the height of the frame
+    rows in place of a `len` where its input has the height of the frame
     (`RowCount`). The input then never runs. The slice pushdown runs first
     (`SlicePushdown`), and where it moves a slice into the plan, the input
-    loses the slice and can get the height of the frame.
+    loses the slice and can get the height of the frame. Before polars 2.0.0,
+    the `len` must be the root of the expression (`_counted_root`). From that
+    release, each such `len` of an expression that gives one value counts the
+    rows, where the expression reads no column outside them (`_counts`).
 
     Example:
         >>> import polars as pl
@@ -3584,7 +3617,160 @@ class LoneCount:
         self._evaluation = evaluation
         self._flags = flags
 
+    @polars_releases
     def counted(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
+        """Give the answers, with the run over the counts of the rows where polars counts them.
+
+        The expression must give one value. Each `len` that counts the rows
+        becomes a count of the rows of the frame, and the expression runs again
+        over the counts.
+
+        Args:
+            tree: The root of the tree.
+            answers: The answers of the tree.
+
+        Returns:
+            The answers, with the run in a `select` over the counts of the rows,
+            and a run that never returns where an input reads a cycle that the
+            slice pushdown builds.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.execution import QueryFlags
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> columns = {"s": ColumnLeaf(DType("String"), RowForm.PER_ROW)}
+            >>> lone = TreeEvaluation(columns, GroupBy((3,), QueryFlags.lazy(lone=True)))
+            >>> plus_one = ExpressionTree().of(pl.col("s").abs().len() + 1)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     lone.answers(plus_one).run_select
+            UInt32
+            >>> beside_column = ExpressionTree().of(pl.col("s").abs().len() + pl.col("s").len())
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     lone.answers(beside_column).run_select
+            UInt32
+            >>> beside_values = ExpressionTree().of(pl.col("s").abs().len() + pl.col("s"))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     lone.answers(beside_values).run_select
+            raises InvalidOperationError
+            >>> offsets = {**columns, "o": ColumnLeaf(DType("Int8"), RowForm.PER_ROW)}
+            >>> by_offsets = TreeEvaluation(offsets, GroupBy((3,), QueryFlags.lazy(lone=True)))
+            >>> cycle = ExpressionTree().of(pl.col("s").abs().slice(pl.col("o"), 2).len())
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     by_offsets.answers(cycle).run_select
+            hangs
+        """
+        if isinstance(answers.run_select, DType):
+            return answers
+        try:
+            counts = self._counts(tree)
+            if (
+                not counts
+                or SlicePushdown(self._evaluation).pushed(tree).height is not Height.SCALAR
+            ):
+                return answers
+        except PolarsRefusal as refusal:
+            return replace(answers, run_select=Answers().failure(refusal))
+        replaced = self._replaced(tree, {id(node) for node in counts})
+        return replace(answers, run_select=self._evaluation.answers(replaced).run_select)
+
+    def _counts(self, node: TreeNode) -> list[TreeNode] | None:
+        """Give each `len` of a tree that counts the rows, or `None` where the tree reads a column.
+
+        A `len` that counts its nulls, over an input with the height of the
+        frame, counts the rows, and the walk does not read its input. A column,
+        an element and a field read the frame, and a window, an `eval` and a
+        `rolling` give `len` another meaning. Polars then counts no row.
+
+        It raises `PolarsRefusal` where an input reads a cycle that the slice
+        pushdown builds.
+
+        Args:
+            node: The node.
+
+        Returns:
+            The `len` nodes, or `None`.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> lone = TreeEvaluation({}, GroupBy((3,), QueryFlags.lazy(lone=True)))
+            >>> count = LoneCount(lone, QueryFlags.lazy(lone=True))
+            >>> count._counts(ExpressionTree().of(pl.col("s"))) is None
+            True
+        """
+        if node.identity == self.COUNT and self._counts_rows(node):
+            return [node]
+        if node.identity.shape in self.READS_FRAME:
+            return None
+        found: list[TreeNode] = []
+        for child in node.inputs:
+            below = self._counts(child)
+            if below is None:
+                return None
+            found += below
+        return found
+
+    READS_FRAME: ClassVar[frozenset[str]] = frozenset({
+        "Column",
+        "Element",
+        "Field",
+        "Selector",
+        "Over",
+        "Eval",
+        "StructEval",
+        "Rolling",
+    })
+
+    def _counts_rows(self, count: TreeNode) -> bool:
+        """Say whether polars counts the rows in place of one `len` node.
+
+        It raises `PolarsRefusal` where the input reads a cycle that the slice
+        pushdown builds.
+
+        Args:
+            count: The `len` node.
+
+        Returns:
+            Whether it counts them.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> columns = {"s": ColumnLeaf(DType("String"), RowForm.PER_ROW)}
+            >>> lone = TreeEvaluation(columns, GroupBy((3,), QueryFlags.lazy(lone=True)))
+            >>> count = LoneCount(lone, QueryFlags.lazy(lone=True))
+            >>> count._counts_rows(ExpressionTree().of(pl.col("s").count()))
+            False
+        """
+        nulls = count.options().value(("Count", "include_nulls")) is True
+        pushed = SlicePushdown(self._evaluation).pushed(count.inputs[0])
+        return RowCount().counts(self._flags, nulls=nulls, height=pushed.height)
+
+    def _replaced(self, node: TreeNode, counts: set[int]) -> TreeNode:
+        """Give the tree with a count of the rows, `pl.len()`, in place of each counted `len`.
+
+        Args:
+            node: The node.
+            counts: The ids of the counted `len` nodes.
+
+        Returns:
+            The tree.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> count = LoneCount(TreeEvaluation({}, GroupBy((3,))), QueryFlags.lazy())
+            >>> tree = ExpressionTree().of(pl.col("s").len())
+            >>> count._replaced(tree, {id(tree)}).identity
+            NodeIdentity(shape='Len', function='')
+        """
+        if id(node) in counts:
+            return ExpressionTree().read("Len")
+        return replace(node, inputs=tuple(self._replaced(child, counts) for child in node.inputs))
+
+    @counted.before("2.0.0")
+    def _counted_root(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
         """Give the answers, with the count of the rows as the run where polars counts them.
 
         Args:
@@ -3618,7 +3804,7 @@ class LoneCount:
             >>> refused = Answers().failure(PolarsRefusal(ErrorClass.COMPUTE, "no plan"))
             >>> plain = CellAnswers(refused, refused, refused, refused)
             >>> count = LoneCount(lone, QueryFlags.lazy(lone=True))
-            >>> count.counted(ExpressionTree().of(pl.col("s").len()), plain) == plain
+            >>> count._counted_root(ExpressionTree().of(pl.col("s").len()), plain) == plain
             True
             >>> count.counted(ExpressionTree().of(pl.col("s").abs()), plain) == plain
             True

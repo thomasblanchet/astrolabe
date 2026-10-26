@@ -955,8 +955,8 @@ class IsIn:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in cannot check ...
-            >>> wide = Data(DType("Int64"))
-            >>> IsIn().output(wide, Data(DType("List", (DType("Int32"),))), [5, 5])
+            >>> wide, listed = Data(DType("Int64")), Data(DType("List", (DType("Int32"),)))
+            >>> IsIn().output(wide, listed, [5, 5])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
@@ -983,30 +983,97 @@ class IsIn:
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         one_row = collection.one_row or (len(lengths) > 1 and lengths[1] == 1)
         if accepted is None and not (one_row and collection.nulls):
-            self._physical(value.dtype.physical(), collection.dtype.inner().physical())
+            self._check_physical(value, collection, one_row=one_row)
         return DType("Boolean")
 
-    def _physical(self, value: DType, inner: DType) -> None:
+    def _check_physical(self, value: Data, collection: Data, *, one_row: bool) -> None:
         """Refuse numbers whose physical type differs from the physical type of the inner values.
 
         Args:
-            value: The physical type of the values to look for.
-            inner: The physical type of the inner values of the collection.
+            value: The data of the values.
+            collection: The data of the collection.
+            one_row: Whether the collection has one row.
 
         Raises:
-            PolarsRefusal: The value is a number of another physical type than
-                the inner values, where polars panics.
+            PolarsRefusal: The kernel cannot read the inner values as the
+                type of the values (`_mismatch`).
 
         Example:
-            >>> IsIn()._physical(DType("Int32"), DType("Int32")) is None
+            >>> listed = Data(DType("List", (DType("Int32"),)))
+            >>> IsIn()._check_physical(Data(DType("Date")), listed, one_row=False) is None
             True
-            >>> IsIn()._physical(DType("Int64"), DType("Int32"))
+            >>> IsIn()._check_physical(Data(DType("Int64")), listed, one_row=False)
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsIn()._check_physical(Data(DType("Int64")), listed, one_row=True)
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in operation ...
         """
-        if Is.primitive_numeric(value) and not value.same(inner):
-            raise PolarsRefusal(Stop.PANICS, f"cannot get ref {value!r} from {inner!r}")
+        value_type, inner = value.dtype.physical(), collection.dtype.inner().physical()
+        if Is.primitive_numeric(value_type) and not value_type.same(inner):
+            how = self._mismatch(one_row=one_row)
+            if how is Stop.PANICS:
+                raise PolarsRefusal(how, f"cannot get ref {value_type!r} from {inner!r}")
+            raise PolarsRefusal(how, self._message(value, collection))
+
+    def _message(self, value: Data, collection: Data) -> str:
+        """Give the message of the error on numbers of another physical type than the inner values.
+
+        Args:
+            value: The data of the values.
+            collection: The data of the collection.
+
+        Returns:
+            The message.
+
+        Example:
+            >>> IsIn()._message(Data(DType("Int8")), Data(DType("List", (DType("Int32"),))))
+            'is_in operation not supported for dtypes Int8 and List(Int32)'
+        """
+        return f"is_in operation not supported for dtypes {value.dtype!r} and {collection.dtype!r}"
+
+    @polars_releases
+    def _mismatch(self, *, one_row: bool) -> ErrorClass | Stop:
+        """Give how the kernel stops on numbers of another physical type than the inner values.
+
+        A collection of one row raises an `InvalidOperationError`, and a
+        collection of more rows panics where the kernel reads the inner values.
+
+        Args:
+            one_row: Whether the collection has one row.
+
+        Returns:
+            The class of the error, or the panic.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsIn()._mismatch(one_row=True)
+            <ErrorClass.INVALID_OPERATION: 'InvalidOperationError'>
+        """
+        return ErrorClass.INVALID_OPERATION if one_row else Stop.PANICS
+
+    @_mismatch.before("2.0.0")
+    def _panics(self, *, one_row: bool) -> ErrorClass | Stop:
+        """Give the panic of the older releases, at every length of the collection.
+
+        Args:
+            one_row: Whether the collection has one row.
+
+        Returns:
+            The panic.
+
+        Example:
+            >>> IsIn()._panics(one_row=True)
+            <Stop.PANICS: 'panics'>
+        """
+        del one_row
+        return Stop.PANICS
 
 
 @dataclass(frozen=True)
@@ -1035,8 +1102,8 @@ class Membership:
             `Boolean`.
 
         Example:
-            >>> wide = Data(DType("Int64"))
-            >>> Membership().output([wide, Data(DType("List", (DType("Int32"),)))], [1, 1])
+            >>> wide, listed = Data(DType("Int64")), Data(DType("List", (DType("Int32"),)))
+            >>> Membership().output([wide, listed], [5, 5])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
@@ -1316,7 +1383,10 @@ class Sampled:
             >>> lists = Data(DType("List", (DType("Int8"),)))
             >>> half = [Operand.column(lists.dtype), Operand.of_value(1.5)]
             >>> share = Sampled(fraction=True, replaces=False)
-            >>> share.output([lists, Data(DType("Float64"))], [5, 1], half)  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> floats = Data(DType("Float64"))
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     share.output([lists, floats], [5, 1], half)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: ...

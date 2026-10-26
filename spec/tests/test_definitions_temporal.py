@@ -37,6 +37,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     CellCheck,
     Input,
     Inputs,
@@ -177,7 +178,7 @@ class TemporalNodes:
     BY_VALUES: ClassVar[frozenset[str]] = frozenset({"Struct", "Categorical"})
     INTEGERS: ClassVar[Input] = Inputs().labelled("Int64/per row")
 
-    ONE_INPUT: ClassVar[dict[str, CellCheck]] = {
+    ONE_INPUT: ClassVar[dict[str, CellCheck]] = ApiGate(prefix="dt.").kept({
         "millennium": CellCheck(Temporal.MILLENNIUM, lambda x: x.dt.millennium()),
         "century": CellCheck(Temporal.CENTURY, lambda x: x.dt.century()),
         "year": CellCheck(Temporal.YEAR, lambda x: x.dt.year()),
@@ -228,8 +229,8 @@ class TemporalNodes:
             Temporal.CONVERT_TIME_ZONE,
             lambda x: x.dt.convert_time_zone("UTC"),
         ),
-    }
-    ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = {
+    })
+    ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = ApiGate(prefix="dt.").kept({
         "timestamp ms": CellCheck(Temporal.TIMESTAMP, lambda x: x.dt.timestamp("ms")),
         "epoch ns": CellCheck(Temporal.TIMESTAMP, lambda x: x.dt.epoch("ns")),
         "to_string iso:strict": CellCheck(
@@ -257,7 +258,7 @@ class TemporalNodes:
             Temporal.CONVERT_TIME_ZONE,
             lambda x: x.dt.convert_time_zone("Asia/Tokyo"),
         ),
-    }
+    })
     TWO_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input], str]]] = {
         "truncate": (
             CellCheck(Temporal.TRUNCATE, lambda x, y: x.dt.truncate(y)),
@@ -372,8 +373,10 @@ class TemporalNodes:
             The name of the node and the cell, for each cell.
 
         Example:
-            >>> len(TemporalNodes.one_input_cells())
-            9724
+            >>> one, options = len(NodeSample().cells(1)), len(NodeSample().options())
+            >>> nodes = len(TemporalNodes.ONE_INPUT), len(TemporalNodes.ONE_INPUT_OPTIONS)
+            >>> len(TemporalNodes.one_input_cells()) == one * nodes[0] + options * nodes[1]
+            True
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
         for name in cls.ONE_INPUT:

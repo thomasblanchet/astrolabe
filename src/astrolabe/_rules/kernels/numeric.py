@@ -31,7 +31,7 @@ from astrolabe._rules.kernels.dispatch import (
     Same,
 )
 from astrolabe._rules.releases import polars_releases
-from astrolabe._rules.type_functions import CutBins
+from astrolabe._rules.type_functions import CutBins, FieldsMapper
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -243,6 +243,85 @@ class DecimalSum:
         return Same().give(data, kernel)
 
 
+class Carry:
+    """Give the type of a rounding of a `Decimal`, which can carry into one more integer digit.
+
+    The kernel gives the type of the type function (`FieldsMapper.carry_dtype`).
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> kernel = Dispatch("round", (), Refuse())
+        >>> with PolarsRelease.pretend("2.0.0"):
+        ...     Carry(None, "HalfToEven").give(Data(DType("Decimal", (5, 2))), kernel)
+        Decimal(precision=6, scale=2)
+    """
+
+    def __init__(self, decimals: int | None, mode: str) -> None:
+        """Keep the options of the rounding.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps, or
+                `None` where it can carry at every scale.
+            mode: The mode of the rounding, as polars writes it.
+
+        Example:
+            >>> Carry(1, "ToZero")._mode
+            'ToZero'
+        """
+        self._decimals = decimals
+        self._mode = mode
+
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of the rounding.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> kernel = Dispatch("round", (), Refuse())
+            >>> Carry(0, "HalfToEven").give(Data(DType("Decimal", (5, 0))), kernel)
+            Decimal(precision=5, scale=0)
+        """
+        del kernel
+        return FieldsMapper(data.dtype).carry_dtype(self._decimals, self._mode)
+
+
+class SignDigit:
+    """Give the type of `sign` for a `Decimal`, which needs one integer digit for the result 1.
+
+    The kernel gives the type of the type function (`FieldsMapper.sign_dtype`).
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> kernel = Dispatch("sign", (), Refuse())
+        >>> with PolarsRelease.pretend("2.0.0"):
+        ...     SignDigit().give(Data(DType("Decimal", (3, 3))), kernel)
+        Decimal(precision=4, scale=3)
+    """
+
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of `sign`.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> kernel = Dispatch("sign", (), Refuse())
+            >>> SignDigit().give(Data(DType("Decimal", (5, 0))), kernel)
+            Decimal(precision=5, scale=0)
+        """
+        del kernel
+        return FieldsMapper(data.dtype).sign_dtype()
+
+
 class NumericKernels:
     """Hold the dispatch of each shared numeric kernel.
 
@@ -330,6 +409,15 @@ class NumericKernels:
         ),
         Refuse(),
     )
+    SIGN: ClassVar[Dispatch] = Dispatch(
+        "sign",
+        (
+            Arm(Is.float, Same()),
+            Arm(Kinds("Decimal"), SignDigit()),
+            Arm(Is.integer, Same()),
+        ),
+        Refuse(),
+    )
     CUM_SUM: ClassVar[Dispatch] = Dispatch(
         "cum_sum",
         (
@@ -409,7 +497,35 @@ class NumericKernels:
         """
         if digits < 1:
             return Dispatch("round_sig_figs", (), Refuse())
-        return self.KEEP_NUMBER
+        return self.rounding(None)
+
+    def rounding(self, decimals: int | None = 0, mode: str = "HalfToEven") -> Dispatch:
+        """Give the kernel of a rounding: `round`, `floor`, `ceil` or `round_sig_figs`.
+
+        It keeps a float and an integer, and gives a `Decimal` the type of
+        `Carry`. Every other type raises.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps, or
+                `None` where it can carry at every scale.
+            mode: The mode of the rounding, as polars writes it.
+
+        Returns:
+            The dispatch.
+
+        Example:
+            >>> NumericKernels().rounding(2).output(Data(DType("Int8")))
+            Int8
+        """
+        return Dispatch(
+            "round",
+            (
+                Arm(Is.float, Same()),
+                Arm(Kinds("Decimal"), Carry(decimals, mode)),
+                Arm(Is.integer, Same()),
+            ),
+            Refuse(),
+        )
 
     def cut(
         self,
