@@ -326,6 +326,33 @@
     reveal_type(pl.select(pl.lit(1).alias("a"), pl.lit(2).alias("a")))  # E: select would produce duplicate column "a"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: coalesce_joins_the_parameters_of_two_decimals
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class Prices(Columns):
+        d1: Decimal[Literal[10], Literal[2]]
+        d2: Decimal[Literal[12], Literal[4]]
+        d3: Decimal[Literal[12], Literal[2]]
+        d4: Decimal[Literal[10], Literal[4]]
+        i: pl.Int32
+
+    df: TypedDataFrame[Prices]
+
+    # Two decimals meet at the larger precision and the larger scale.
+    reveal_type(df.select(pl.coalesce(pl.col("d1"), pl.col("d2")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[12], Literal[4]]}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("d3"), pl.col("d4")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[14], Literal[4]]}, closed=True), None]"
+
+    # An integer beside a decimal: polars gives the whole precision to a
+    # decimal whose integer digits cannot hold an Int32, and keeps the
+    # precision of one that can.
+    reveal_type(df.select(pl.coalesce(pl.col("d1"), pl.col("i")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("d3"), pl.col("i")).alias("k")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': astrolabe.frame.Decimal[Literal[12], Literal[2]]}, closed=True), None]"
+
+- case: coalesce_joins_the_parameters_of_two_decimals_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl

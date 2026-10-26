@@ -1207,6 +1207,7 @@
     reveal_type(pl.concat([other, df], how="align"))  # E: This concat combines columns differently for some callers: another frame's remainder can hold "bar". Exclude the names with without=/without_prefix=  [concat-collision] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "possible" # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: concat_horizontal_extend_narrows_to_every_column_side_by_side
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -1231,6 +1232,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = pl.concat([left, right], how="horizontal_extend")
 
 - case: concat_horizontal_extend_with_a_duplicate_name_errors
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -1250,6 +1252,7 @@
     reveal_type(pl.concat([left, right], how="horizontal_extend"))  # E: concat would produce duplicate column "a"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: concat_horizontal_extend_tolerates_mismatched_row_counts
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame

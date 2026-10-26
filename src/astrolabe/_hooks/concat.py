@@ -28,7 +28,9 @@ least one column name that every frame holds, and the hook reports a
 call without one.
 
 `"horizontal_extend"` puts the columns of each frame side by side, in
-frame order. Every column name of every frame must be different.
+frame order. Every column name of every frame must be different. Polars
+1.42.0 adds this `how`. An older release raises `ValueError` for it, and
+mypy reports the value, because the stub of polars does not list it.
 
 The hook does not type any other `how`, for example `"horizontal"`,
 which is ambiguous about the number of rows. The call then falls back:
@@ -63,6 +65,7 @@ from astrolabe._hooks.errors import (
     VerticalConcatDisallowedError,
 )
 from astrolabe._hooks.propagate import Refusal, explains, not_falsy, not_none, propagates
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from mypy.plugin import FunctionContext, Plugin
@@ -428,8 +431,40 @@ class ConcatHook:
         if how in self._UNION_BY_NAME_HOW:
             return self._diagonal_frame(ctx, how)
         if how == self._HORIZONTAL_EXTEND_HOW:
-            return self._horizontal_extend_frame(ctx)
+            return self._extended_frame(ctx)
         return Refusal(Reason.CHECKER_GAP)
+
+    @polars_releases
+    def _extended_frame(self, ctx: FunctionContext) -> MypyType | Refusal:
+        """Build the typed result of a `"horizontal_extend"` concat.
+
+        Args:
+            ctx: The mypy context of the `pl.concat(...)` call.
+
+        Returns:
+            The typed result, or the refusal of `_horizontal_extend_frame`.
+        """
+        return self._horizontal_extend_frame(ctx)
+
+    @_extended_frame.before("1.42.0")
+    def _no_extend(self, ctx: FunctionContext) -> MypyType | Refusal:
+        """Give up on `"horizontal_extend"`, which the older releases do not have.
+
+        Polars raises `ValueError` for that value of `how`. The stub of polars
+        does not list it, so mypy already reports the call.
+
+        Args:
+            ctx: The mypy context of the `pl.concat(...)` call, which the method does not read.
+
+        Returns:
+            A refusal for an error that is already reported.
+
+        Example:
+            >>> ConcatHook.__new__(ConcatHook)._no_extend(None).reason.name
+            'REPORTED'
+        """
+        del ctx
+        return Refusal(Reason.REPORTED)
 
     def _report_if_empty_items(self, ctx: FunctionContext) -> bool:
         """Report `pl.concat([])`, a list of items written empty.

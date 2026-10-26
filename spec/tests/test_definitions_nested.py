@@ -54,6 +54,7 @@ from astrolabe._rules.dtypes import DType
 from astrolabe._rules.failures import Stop
 from astrolabe._rules.node_evaluation import LiteralLeaf, NodeEvaluation, Refused, Unchecked
 from astrolabe._rules.operators import Operator
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,16 +89,33 @@ class FittingCounts:
             >>> len(FittingCounts().inputs((300, 2**40))) == len(Inputs().all())
             True
         """
-        direct = Input("lit int 0/direct", LiteralLeaf(0), pl.lit(0))
-        leaf = LiteralLeaf(0, Operator.PLUS, 0)
-        derived = Input("lit int 0/derived", leaf, pl.lit(0) + pl.lit(0))
+        return [self.fitted(entry, outside) for entry in Inputs().all()]
+
+    def fitted(self, entry: Input, outside: tuple[int, ...]) -> Input:
+        """Give an input, or the literal 0 in place of a literal int outside the lists.
+
+        Args:
+            entry: The input.
+            outside: The values of the literal classes that lie outside the lists.
+
+        Returns:
+            The input, or the literal 0, direct or derived as the input is.
+
+        Example:
+            >>> large = Inputs().labelled("lit int 300/direct")
+            >>> FittingCounts().fitted(large, (300,)).label, FittingCounts().fitted(large, ()).label
+            ('lit int 0/direct', 'lit int 300/direct')
+        """
         names = {"int 300": 300, "int 2**40": 2**40}
-        replaced: dict[str, Input] = {}
         for name, value in names.items():
-            if value in outside:
-                replaced[f"lit {name}/direct"] = direct
-                replaced[f"lit {name}/derived"] = derived
-        return [replaced.get(entry.label, entry) for entry in Inputs().all()]
+            if value not in outside:
+                continue
+            if entry.label == f"lit {name}/direct":
+                return Input("lit int 0/direct", LiteralLeaf(0), pl.lit(0))
+            if entry.label == f"lit {name}/derived":
+                leaf = LiteralLeaf(0, Operator.PLUS, 0)
+                return Input("lit int 0/derived", leaf, pl.lit(0) + pl.lit(0))
+        return entry
 
 
 class NestedCheck:
@@ -224,7 +242,9 @@ class NestedCheck:
         named = node.alias("o")
         query = frame.group_by("g", maintain_order=True).agg(named) if agg else frame.select(named)
         eager = pl.QueryOptFlags._eager()  # ruff: ignore[private-member-access]
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=eager)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=eager, engine="in-memory")["o"].dtype
+        )
 
 
 class TripleSample:
@@ -302,12 +322,18 @@ class NestedNodes:
     large. Such a count takes more memory than the machine holds, and the
     rules read only its type.
 
+    Before polars 1.40.0, `list.sample` does not check the range of its
+    fraction (`UNCHECKED`). A fraction of 300 or of 2**40 then asks for more
+    values than a list holds, which is a fact of the data, so these cells
+    take the literal 0 in its place (`FittingCounts`).
+
     Example:
         >>> sorted(NestedNodes.ONE_INPUT)[:3]
         ['arr.arg_max', 'arr.arg_min', 'arr.explode']
     """
 
     ALLOCATING: ClassVar[frozenset[str]] = frozenset({"list.sample with replacement"})
+    UNCHECKED: ClassVar[frozenset[str]] = frozenset({"list.sample fraction"})
     LARGE: ClassVar[frozenset[str]] = frozenset(
         entry.label
         for entry in Inputs().all()
@@ -328,7 +354,10 @@ class NestedNodes:
         "list.sort": NestedCheck(Lists.SORT, lambda x: x.list.sort()),
         "list.drop_nulls": NestedCheck(Lists.DROP_NULLS, lambda x: x.list.drop_nulls()),
         "list.to_array": NestedCheck(Lists.TO_ARRAY, lambda x: x.list.to_array(2)),
-        "list.to_struct": NestedCheck(Lists.TO_STRUCT, lambda x: x.list.to_struct(upper_bound=2)),
+        "list.to_struct": NestedCheck(
+            Lists.TO_STRUCT,
+            lambda x: x.list.to_struct(fields=["field_0", "field_1"]),
+        ),
         "concat_list": NestedCheck(Lists.CONCAT, pl.concat_list),
         "arr.len": NestedCheck(Arrays.LENGTH, lambda x: x.arr.len()),
         "arr.min": NestedCheck(Arrays.MIN, lambda x: x.arr.min()),
@@ -527,11 +556,30 @@ class NestedNodes:
             cells.extend((name, pair) for pair in PairSample(inputs, left, right).pairs())
         for name, (_, labels) in cls.TWO_OPTIONS.items():
             left, right = Inputs().labelled(labels[0]), Inputs().labelled(labels[1])
+            outside = cls.outside(name)
             for (entry,) in NodeSample().options():
                 cells.append((name, (entry, right)))
                 if name not in cls.ALLOCATING or entry.label not in cls.LARGE:
-                    cells.append((name, (left, entry)))
+                    cells.append((name, (left, FittingCounts().fitted(entry, outside))))
         return cells
+
+    @classmethod
+    def outside(cls, name: str) -> tuple[int, ...]:
+        """Give the values of the literal classes outside the lists, for a node of an option.
+
+        Args:
+            name: The name of the node.
+
+        Returns:
+            The values: 300 and 2**40 for a fraction that the installed
+            release does not check, and none otherwise.
+
+        Example:
+            >>> NestedNodes.outside("list.first")
+            ()
+        """
+        older = PolarsRelease.installed() < PolarsRelease.parse("1.40.0")
+        return (300, 2**40) if older and name in cls.UNCHECKED else ()
 
     @classmethod
     def triples(cls) -> list[tuple[str, tuple[Input, ...]]]:

@@ -18,6 +18,7 @@ from astrolabe._hooks.domain.column import ColumnRef
 from astrolabe._hooks.encoding.marker_minter import MarkerMinter
 from astrolabe._hooks.encoding.rendering_codec import ConstDtypeReads
 from astrolabe._hooks.encoding.schema_renderings import MaterializedColumn
+from astrolabe._rules.releases import polars_releases
 from astrolabe.frame import TypedLazyDynamicGroupBy, TypedLazyRollingGroupBy
 
 if TYPE_CHECKING:
@@ -30,8 +31,9 @@ class WindowColumns:
     """Give the leading columns of a group-by, and the windows that its aggregations run over.
 
     The bounds take the data type of the index, with one exception: over a
-    `Date` index, the run gives `Datetime("us")` bounds, while a lazy frame
-    plans them as `Date`. A lazy frame then holds both types for each bound.
+    `Date` index, the run gives `Datetime("us")` bounds. Before polars 2.0.0,
+    a lazy frame plans them as `Date`, and then holds both types for each
+    bound. From that release, it plans them as `Datetime("us")` too.
 
     Example:
         >>> WindowColumns.BOUNDS
@@ -96,9 +98,41 @@ class WindowColumns:
         minter = MarkerMinter(self._plugin, CheckerLiteralTypeBuilder(), api)
         materialized = MaterializedColumn(minter)
         lazy = receiver.receiver_fullname in self.LAZY
+        stored = self._stored()
         bounds: list[ColumnRef] = []
         for name in self.BOUNDS:
-            planned = materialized.planned(name, self.DATETIME, "Date")
-            built = planned if lazy else materialized.built(name, self.DATETIME)
+            if lazy and stored is not None:
+                built = materialized.planned(name, self.DATETIME, stored)
+            else:
+                built = materialized.built(name, self.DATETIME)
             bounds.append(checked_not_none(built))
         return bounds
+
+    @polars_releases
+    def _stored(self) -> str | None:
+        """Give the type that a lazy frame plans for a bound over a `Date` index, where it differs.
+
+        Returns:
+            `None`: the planner gives the type of the run.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> columns = WindowColumns(new_plugin(new_type_fixture()))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     columns._stored() is None
+            True
+        """
+        return None
+
+    @_stored.before("2.0.0")
+    def _planned_as_date(self) -> str | None:
+        """Give the type that a lazy frame of the older releases plans for such a bound.
+
+        Returns:
+            `Date`.
+
+        Example:
+            >>> WindowColumns(new_plugin(new_type_fixture()))._planned_as_date()
+            'Date'
+        """
+        return "Date"

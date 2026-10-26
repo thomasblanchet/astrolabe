@@ -43,7 +43,7 @@ Frame = TypedDataFrame[FrameSchema]
 stepped = pl.col("t").diff()
 total = pl.col("l").list.sum() + 1
 chain = pl.when(pl.col("b")).then(pl.col("l").list.len())
-stamped = pl.col("k").cast(pl.Datetime("ms", "UTC"))
+stamped = pl.col("k").str.to_datetime("%Y-%m-%d", time_unit="ms", time_zone="UTC")
 zoned = pl.col("t").dt.cast_time_unit("ms").dt.replace_time_zone(None).alias("m")
 built = pl.struct(pl.col("k"), pl.col("f").alias("g")).alias("st")
 stacked = pl.concat_arr("f", "f").alias("ar")

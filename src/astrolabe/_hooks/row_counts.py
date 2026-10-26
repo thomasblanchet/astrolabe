@@ -20,6 +20,7 @@ from mypy.types import Instance, LiteralType, get_proper_type
 
 from astrolabe._hooks.calls.constant_fold import ConstantFold
 from astrolabe._hooks.errors import InvalidCallShapeError
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -100,6 +101,9 @@ class RowCounts:
     An eager frame reads `head`, `tail` and `limit` as an unsigned 64-bit
     integer and takes a negative count as a count from the end. A lazy
     frame reads them as the index type, and refuses a negative count.
+    From polars 2.0.0, an eager frame runs `gather_every` as a lazy query
+    on the streaming engine. That engine reads the two counts as signed
+    64-bit integers, and it panics past them.
 
     Example:
         >>> RowCounts().ranges("LazyFrame", "head")["n"].high
@@ -114,6 +118,10 @@ class RowCounts:
     OFFSET: ClassVar[CountRange] = CountRange(-I64 - 1, I64)
     UNSIGNED: ClassVar[CountRange] = CountRange(0, U64)
     STEP: ClassVar[CountRange] = CountRange(0, U64, zero="InvalidOperationError")
+    STREAMED: ClassVar[dict[str, CountRange]] = {
+        "n": CountRange(0, I64, above="PanicException", zero="InvalidOperationError"),
+        "offset": CountRange(0, I64, above="PanicException"),
+    }
     INDEXED: ClassVar[CountRange] = CountRange(0, INDEX)
     ROW_INDEX: ClassVar[CountRange] = CountRange(0, INDEX, below="ValueError", above="ValueError")
     SHARED: ClassVar[dict[str, dict[str, CountRange]]] = {
@@ -155,7 +163,38 @@ class RowCounts:
             >>> RowCounts().ranges("DataFrame", "select")
             {}
         """
-        return self.KINDS.get(kind, {}).get(method, {})
+        return self._kinds().get(kind, {}).get(method, {})
+
+    @polars_releases
+    def _kinds(self) -> dict[str, dict[str, dict[str, CountRange]]]:
+        """Give the ranges of each kind of receiver, with `gather_every` on the streaming engine.
+
+        Returns:
+            The ranges, by the kind of the receiver and the name of the method.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     RowCounts()._kinds()["DataFrame"]["gather_every"]["n"].high
+            9223372036854775807
+        """
+        return {
+            **self.KINDS,
+            "DataFrame": {**self.KINDS["DataFrame"], "gather_every": self.STREAMED},
+        }
+
+    @_kinds.before("2.0.0")
+    def _kinds_in_memory(self) -> dict[str, dict[str, dict[str, CountRange]]]:
+        """Give the ranges of each kind of receiver, as the older releases read them.
+
+        Returns:
+            The ranges, by the kind of the receiver and the name of the method.
+
+        Example:
+            >>> RowCounts()._kinds_in_memory()["DataFrame"]["gather_every"]["n"].high
+            18446744073709551615
+        """
+        return self.KINDS
 
 
 class RowCountCheck:

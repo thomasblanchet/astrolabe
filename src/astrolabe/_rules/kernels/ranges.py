@@ -89,7 +89,9 @@ class IntRange:
     """Give the type of `int_range`: the integer type of the call.
 
     Each bound holds one value of that type, which the cast pass gave it. A
-    null bound raises, and so does a step of zero.
+    bound of another type panics: a struct stays a struct through its cast,
+    which reaches the kernel before polars 1.40.0. A null bound raises, and
+    so does a step of zero.
 
     Example:
         >>> IntRange(DType("Int64"), 1).output([Data(DType("Int64"))] * 2, (1, 1))
@@ -112,7 +114,8 @@ class IntRange:
             The type of the call.
 
         Raises:
-            PolarsRefusal: A bound is null, or the step is zero.
+            PolarsRefusal: A bound has another type than the call, a bound is null,
+                or the step is zero.
 
         Example:
             >>> null = Data(DType("Int64"), nulls=True)
@@ -125,8 +128,16 @@ class IntRange:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: step must not be zero
+            >>> struct = Data(DType("Struct", ((("a", DType("Int64")),),)))
+            >>> IntRange(DType("Int64"), 1).output([struct, bound], (1, 1))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: a bound of Struct...
         """
         RangeRows().single(lengths, ("start", "end"))
+        for data in inputs[:2]:
+            if not data.dtype.same(self.dtype):
+                raise PolarsRefusal(Stop.PANICS, f"a bound of {data.dtype!r}, not {self.dtype!r}")
         if any(data.nulls for data in inputs[:2]):
             raise PolarsRefusal(ErrorClass.COMPUTE, "invalid null input for `int_range`")
         if self.step == 0:
@@ -138,8 +149,10 @@ class IntRange:
 class IntRanges:
     """Give the type of `int_ranges`: a list of the integer type of the call.
 
-    The cast pass gave each input the type `Int64`. A null input gives a null
-    list. A literal step of zero panics, at every row.
+    The cast pass gave each input the type `Int64`, and an input of another
+    type raises: a struct stays a struct through its cast, which reaches the
+    kernel before polars 1.40.0. A null input gives a null list. A literal
+    step of zero panics, at every row.
 
     Example:
         >>> IntRanges(DType("Int16")).output([Data(DType("Int64"))] * 3, (4, 1, 4), ())
@@ -167,7 +180,8 @@ class IntRanges:
             The type.
 
         Raises:
-            PolarsRefusal: The step is a literal of zero, where polars panics.
+            PolarsRefusal: An input is not `Int64`, or the step is a literal of
+                zero, where polars panics.
 
         Example:
             >>> from astrolabe._rules.type_functions import Operand
@@ -177,8 +191,16 @@ class IntRanges:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: ...
+            >>> struct = Data(DType("Struct", ((("a", DType("Int64")),),)))
+            >>> IntRanges(DType("Int64")).output([struct] * 3, (), ())  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: SchemaError: invalid series dtype: ...
         """
-        del inputs
+        for data in inputs:
+            if data.dtype.name != "Int64":
+                message = f"invalid series dtype: expected `Int64`, got `{data.dtype!r}`"
+                raise PolarsRefusal(ErrorClass.SCHEMA, message)
         RangeRows().matched(lengths, ("start", "end", "step"))
         step = computed[2] if len(computed) > 2 else None
         if step is not None and step.literal and step.value == 0:

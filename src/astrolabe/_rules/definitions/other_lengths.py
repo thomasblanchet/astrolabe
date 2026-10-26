@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from astrolabe._rules.definitions.cast_adapters import FunctionCasting
+from astrolabe._rules.definitions.cast_adapters import FunctionCasting, SupertypeConversion
 from astrolabe._rules.definitions.value_adapters import KeptValue
 from astrolabe._rules.definitions.definition import Definition, NullRule
 from astrolabe._rules.definitions.kernel_adapters import (
@@ -261,7 +261,7 @@ class OtherLengths:
         identity=NodeIdentity("Function", "Append"),
         type_function=ExprField(ExprFields.append),
         options=Shape.function(FunctionOptions.groupwise(), KernelLength.joined()),
-        casts=FunctionCasting(),
+        casts=SupertypeConversion(),
         kernel=PlannedInputs(Appended()),
     )
     VALUE_COUNTS: ClassVar[Definition] = Definition(
