@@ -713,7 +713,9 @@ class QuantileCut:
     stays a struct, so the kernel finds no floats and raises a `SchemaError`.
     The cast turns a value that does not fit into null, so the value of a
     literal input decides whether any float is left. An input of only nulls
-    gives nulls, with no more checks (`_only_nulls`). Otherwise the kernel
+    gives nulls, with no more checks (`_only_nulls`). Before polars 1.42.0,
+    the kernel counts the nulls before the cast, so an input that only the
+    cast makes null panics (`_finds_only_nulls`). Otherwise the kernel
     refuses a quantile outside of 0 to 1, then breaks that are not unique
     unless the call allows them, then labels that do not number one more than
     the quantiles. One row gives the same break for each quantile. The options
@@ -793,10 +795,66 @@ class QuantileCut:
         if data.dtype.name != "Float64":
             message = f"invalid series dtype: expected `Float64`, got `{data.dtype!r}`"
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
-        if data.nulls:
+        if self._finds_only_nulls(inputs[0], data):
             return self._only_nulls()
         self._check(data)
         return self._with_values(inputs[0])
+
+    @polars_releases
+    def _finds_only_nulls(self, source: Data, floats: Data) -> bool:
+        """Say whether the kernel finds only nulls, which it counts after the cast.
+
+        Args:
+            source: The data of the input, before the cast.
+            floats: The data after the cast.
+
+        Returns:
+            Whether the floats hold only nulls.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=False)
+            >>> text, empty = Data(DType("String")), Data(DType("Float64"), nulls=True)
+            >>> with PolarsRelease.pretend("1.42.0"):
+            ...     qcut._finds_only_nulls(text, empty)
+            True
+        """
+        del source
+        return floats.nulls
+
+    @_finds_only_nulls.before("1.42.0")
+    def _counts_before_the_cast(self, source: Data, floats: Data) -> bool:
+        """Say whether the kernel finds only nulls, which the older releases count before the cast.
+
+        Where only the cast makes every value null, the kernel checks the
+        range of the quantiles. Then it finds no break, and it panics.
+
+        Args:
+            source: The data of the input, before the cast.
+            floats: The data after the cast.
+
+        Returns:
+            Whether the input holds only nulls.
+
+        Raises:
+            PolarsRefusal: The input holds a value, and the cast makes every value null.
+
+        Example:
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=False)
+            >>> text, empty = Data(DType("String")), Data(DType("Float64"), nulls=True)
+            >>> qcut._counts_before_the_cast(Data(DType("Null"), nulls=True), empty)
+            True
+            >>> qcut._counts_before_the_cast(text, empty)
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: qcut finds no value after the cast
+        """
+        if source.nulls:
+            return True
+        if floats.nulls:
+            self._check_range()
+            raise PolarsRefusal(Stop.PANICS, "qcut finds no value after the cast")
+        return False
 
     @polars_releases
     def _only_nulls(self) -> DType:
@@ -841,6 +899,27 @@ class QuantileCut:
             >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
             >>> with PolarsRelease.pretend("1.43.0"):
             ...     qcut._with_values(Data(DType("String"))).name
+            'Struct'
+        """
+        del source
+        return self._dtype
+
+    @_with_values.before("1.42.0")
+    def _struct_or_panic(self, source: Data) -> DType:
+        """Give the type over an input that can hold values, as the releases before 1.42.0 give it.
+
+        Where the cast leaves no value, the kernel panics, so a run that ends
+        gives the type of the options (`_counts_before_the_cast`).
+
+        Args:
+            source: The data of the input, before the cast.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
+            >>> qcut._struct_or_panic(Data(DType("String"))).name
             'Struct'
         """
         del source
@@ -916,15 +995,29 @@ class QuantileCut:
             ...
             astrolabe._rules.failures.PolarsRefusal: DuplicateError: quantiles are not unique ...
         """
-        if any(not 0.0 <= prob <= 1.0 for prob in self._probs):
-            message = "quantile should be between 0.0 and 1.0"
-            raise PolarsRefusal(ErrorClass.COMPUTE, message)
+        self._check_range()
         repeated = len(set(self._probs)) < len(self._probs)
         if not self._allow_duplicates and (repeated or (data.one_row and len(self._probs) > 1)):
             message = "quantiles are not unique while allow_duplicates=False"
             raise PolarsRefusal(ErrorClass.DUPLICATE, message)
         if self._labels is not None and len(self._labels) != len(self._probs) + 1:
             raise PolarsRefusal(ErrorClass.SHAPE, "provide len(quantiles) + 1 labels")
+
+    def _check_range(self) -> None:
+        """Refuse a quantile outside of 0 to 1.
+
+        Raises:
+            PolarsRefusal: A quantile is outside of 0 to 1.
+
+        Example:
+            >>> QuantileCut((1.5,), None, include_breaks=False)._check_range()
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: quantile should be between ...
+        """
+        if any(not 0.0 <= prob <= 1.0 for prob in self._probs):
+            message = "quantile should be between 0.0 and 1.0"
+            raise PolarsRefusal(ErrorClass.COMPUTE, message)
 
 
 class EwmFallback:

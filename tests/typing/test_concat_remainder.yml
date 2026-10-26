@@ -5,6 +5,7 @@
 # and the result's remainder is the union of the members' slots.
 
 - case: concat_horizontal_extend_over_disjoint_remainders_narrows_to_the_union
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, other_columns, TypedDataFrame
@@ -43,6 +44,7 @@
     reveal_type(pl.concat([left, right], how="diagonal"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'foo': polars.datatypes.classes.Int64, 'bar': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[main.L, main.R]]"
 
 - case: concat_a_promise_says_nothing_about_a_suffixed_remainder
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -82,6 +84,7 @@
     reveal_type(pl.concat([one, two], how="align"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.OneSchema, {'k': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[main.A, main.B]]"
 
 - case: concat_over_remainders_without_disjointness_is_an_error
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, other_columns, TypedDataFrame
@@ -101,6 +104,7 @@
     pl.concat([left, right], how="horizontal_extend")  # E: This concat combines columns differently for some callers: two remainders can share a name. Declare disjoint_from= on one of them  [concat-collision] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] concat = "possible"
 
 - case: concat_beside_a_remainder_that_permits_no_column_narrows
+  skip: __import__("tests.releases").releases.polars_before("1.42.0")
   main: |
     import polars as pl
     from astrolabe import Columns, NumericType, other_columns, TypedDataFrame

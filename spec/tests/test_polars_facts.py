@@ -678,8 +678,13 @@ class TestConcatenation:
         assert result.columns == ["k", "x", "y"]
 
     def test_horizontal_rejects_a_shared_name(self) -> None:
-        """Placing two frames side by side needs their names to be disjoint."""
-        with pytest.raises(pl.exceptions.DuplicateError):
+        """Placing two frames side by side needs their names to be disjoint.
+
+        Polars 1.42.0 adds `horizontal_extend`. An older release refuses that
+        value of `how` with `ValueError`.
+        """
+        recent = PolarsRelease.installed() >= PolarsRelease.parse("1.42.0")
+        with pytest.raises(pl.exceptions.DuplicateError if recent else ValueError):
             pl.concat([self.SAME, self.DIFFERENT], how="horizontal_extend")
 
 
@@ -953,8 +958,12 @@ class TestSharedColumnsWhenCombining:
             pl.concat([left, mismatched], how="align")
 
     def test_horizontal_rejects_a_shared_name_outright(self) -> None:
-        """Placing frames side by side never merges; it raises."""
-        with pytest.raises(pl.exceptions.DuplicateError):
+        """Placing frames side by side never merges; it raises.
+
+        Before polars 1.42.0, `horizontal_extend` is not a value of `how`.
+        """
+        recent = PolarsRelease.installed() >= PolarsRelease.parse("1.42.0")
+        with pytest.raises(pl.exceptions.DuplicateError if recent else ValueError):
             pl.concat(self.pair(pl.Int64(), pl.Int64()), how="horizontal_extend")
 
 

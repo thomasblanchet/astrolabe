@@ -47,7 +47,7 @@ Every identifier is defined in `OPERATIONS.md`. The ones used most:
 
 ### 0.4 How the Polars column was measured
 
-Every behavior stated here was executed on **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
+Every behavior stated here was executed on **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
 
 ```
 uv run pytest spec
@@ -57,7 +57,7 @@ A polars release that changes one of these behaviors fails the test that names i
 
 ### 0.5 Scope, and why nothing is missing
 
-The frame API is 152 methods across `DataFrame` and `LazyFrame`. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
+In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
 
 | Group | Count | Where |
 | -- | -- | -- |
@@ -377,7 +377,7 @@ These combine two or more frames. What each demands of the two column sets is wh
 | `pl.concat(how="vertical_relaxed")` | the same, with types widened | that schema, widened | `E-1` | rejected over a remainder |
 | `pl.concat(how="diagonal")` | the union; a shared name needs one type on both sides | the union | `E-4` | `R-10` |
 | `pl.concat(how="diagonal_relaxed")` | the same, with a shared name's types widened | the union | `E-4` | `R-10` |
-| `pl.concat(how="horizontal_extend")` | side by side; a shared name raises | the union | `E-4` | `R-10` |
+| `pl.concat(how="horizontal_extend")` | side by side; a shared name raises. Polars 1.42.0 adds this `how`, and an older release raises `ValueError` for it | the union | `E-4` | `R-10` |
 | `pl.concat(how="align*")` | joins on **every** common column | the union | `E-4` | `R-10` |
 | `.vstack(other)` | as `how="vertical"` | that schema | `E-1` | rejected over a remainder |
 | `.extend(other)` | as `how="vertical"`, in place | that schema | `E-1` | rejected over a remainder |
@@ -416,7 +416,7 @@ A first reading suggests that only `horizontal_extend` cares, because only it ra
 | -- | -- |
 | `diagonal` | must have **one** type on both sides; `Int32` beside `Int64` raises |
 | `diagonal_relaxed` | is widened to the supertype of the two that polars gives |
-| `horizontal_extend` | raises `DuplicateError` |
+| `horizontal_extend` | raises `DuplicateError`, from polars 1.42.0, which adds this `how` |
 | `align*` | becomes a join key, so its types must be castable |
 
 So the requirement is the same for all four: `R-10`, that the two remainders share no name. That is the requirement `disjoint_from=` states, and this group of operations is the one that consumes it.
@@ -734,10 +734,11 @@ A lazy frame stores the planner type of each column, and plans each later step a
 
 ### 17.3 The counts
 
-`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
+`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.42.0 adds the method `is_sorted`. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
 
 | Polars | Methods | Methods that the census calls | Members of the namespaces | Methods and members | Constructors |
 | -- | -- | -- | -- | -- | -- |
+| 1.41.2 | 209 | 202 | 221 | 430 | 81 |
 | 1.42.1 | 210 | 203 | 221 | 431 | 81 |
 | 1.43.2 | 212 | 205 | 223 | 435 | 82 |
 | 1.44.2 | 212 | 205 | 225 | 437 | 82 |

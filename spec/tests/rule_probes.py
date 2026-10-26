@@ -1548,6 +1548,7 @@ class ApiGate:
     """
 
     NODES: ClassVar[dict[str, NodeIdentity]] = {
+        "is_sorted": NodeIdentity("Function", "Boolean.IsSorted"),
         "ewm_sum": NodeIdentity("Function", "EwmSum"),
         "ewm_sum_by": NodeIdentity("Function", "EwmSumBy"),
         "cat.physical": NodeIdentity("Function", "Categorical.Physical"),
