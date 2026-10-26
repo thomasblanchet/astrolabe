@@ -4,9 +4,10 @@
 # The supported versions are the latest patch of each minor release of the
 # last twelve months. A job of the matrix installs its versions over the
 # locked environment, so it tests the checker against that release of mypy
-# and Polars. The gates and the runs with coverage use Python 3.13. Each job changes one tool from the anchor: Python 3.13, mypy
-# 2.3.1 and Polars 1.43.2, the versions that the rules are measured
-# against. So a failure names the tool that causes it. The matrix covers
+# and Polars. The gates and the runs with coverage use Python 3.13. Each
+# job changes one tool from the anchor: Python 3.13, mypy 2.3.1 and Polars
+# 1.43.2, the release of Polars in the lock. So a failure names the tool
+# that causes it. The matrix covers
 # each version of each tool once, and not every combination.
 
 name: CI

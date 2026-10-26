@@ -72,7 +72,7 @@ The site holds the user guide:
 - [Reference](https://thomasblanchet.github.io/astrolabe/docs/reference/api/): the API, the operations, the data types, the error codes, the settings and the command line.
 - [Specification](https://thomasblanchet.github.io/astrolabe/docs/spec/how-to-read-it/): the documents of `spec/`.
 
-Pinned target: Polars `1.43.2`.
+Supported releases: Polars `1.39.3` to `2.0`.
 
 ## Documents
 

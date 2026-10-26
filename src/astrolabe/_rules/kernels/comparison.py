@@ -19,6 +19,7 @@ from astrolabe._rules.dtypes import DType, Is
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
 from astrolabe._rules.kernels.arithmetic import Coercion, Operands
 from astrolabe._rules.kernels.dispatch import Data  # ruff: ignore[typing-only-first-party-import]
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -218,6 +219,7 @@ class Comparison:
             return True
         return "String" in names and bool(set(names) & Is.CATEGORIES)
 
+    @polars_releases
     def _validity(self, coerced: Operands) -> None:
         """Panic where a struct of one null row meets a struct of more rows.
 
@@ -225,7 +227,8 @@ class Comparison:
         validity of both structs. The validity of a struct of one row with a
         null has one bit, so the join or the output of more rows refuses it. A
         comparison that counts nulls reads the validities in another way, and
-        runs.
+        runs. Before polars 1.41.0, the comparison first repeats the struct of
+        one row to the length of the other (`_spread_validity`).
 
         Args:
             coerced: The two structs, of one type after the coercion.
@@ -237,7 +240,9 @@ class Comparison:
             >>> pair = DType("Struct", ((("a", DType("Int8")),),))
             >>> null = Data(pair, nulls=True, one_row=True)
             >>> operands = Operands(Data(pair), null)
-            >>> Comparison(CompareOp.EQUAL)._validity(operands)  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Comparison(CompareOp.EQUAL)._validity(operands)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: ...
@@ -250,6 +255,24 @@ class Comparison:
         if left_short or right_short:
             message = "the validity of one null row meets more rows"
             raise PolarsRefusal(Stop.PANICS, message)
+
+    @_validity.before("1.41.0")
+    def _spread_validity(self, coerced: Operands) -> None:
+        """Refuse no pair of structs, as the older releases do.
+
+        The older releases repeat a struct of one row to the length of the
+        other before they join the validities, so the lengths always fit.
+
+        Args:
+            coerced: The two structs, of one type after the coercion.
+
+        Example:
+            >>> pair = DType("Struct", ((("a", DType("Int8")),),))
+            >>> null = Data(pair, nulls=True, one_row=True)
+            >>> Comparison(CompareOp.EQUAL)._spread_validity(Operands(Data(pair), null)) is None
+            True
+        """
+        del coerced
 
     def _fields(self, coerced: Operands) -> None:
         """Compare each pair of fields of two structs, as the comparison of two structs does.

@@ -365,9 +365,11 @@ class DeferredFit:
             >>> from astrolabe._hooks.deferred.code import Code
             >>> code = Code("pl.col('d').cum_sum()")
             >>> columns = {"d": "Decimal(precision=10, scale=2)"}
-            >>> answer = DeferredEvaluation("row").answer(code, columns)
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> wide = "Decimal(precision=38, scale=2)"
-            >>> reason = DeferredFit()._cell(code, columns, answer, wide)
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     answer = DeferredEvaluation("row").answer(code, columns)
+            ...     reason = DeferredFit()._cell(code, columns, answer, wide)
             >>> reason.startswith("it is planned as Decimal(precision=10, scale=2) and runs as")
             True
 

@@ -145,6 +145,7 @@
         reveal_type(df.select(pl.lit(value)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
 
 - case: lit_of_a_number_variable_joins_by_every_bucket_of_its_type
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -172,6 +173,43 @@
     reveal_type(df.select(pl.col("f").fill_null(pl.lit(share))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.select(pl.coalesce(pl.col("f"), pl.lit(count))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.select(pl.max_horizontal(pl.col("f"), pl.lit(share))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    # Where the values differ, the answer is Unchecked. Where every value
+    # raises, the call is refused.
+    reveal_type(df.select(pl.col("u") + pl.lit(count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    df.select(pl.col("d").fill_null(pl.lit(share)))  # E: "d" has no result type at this frame's column types: got invalid or ambiguous dtypes: Date, Unknown, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("s") + pl.lit(share))  # E: "s" has no result type at this frame's column types: arithmetic on dtypes String and Unknown is not allowed, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    # Alone, each value has a type of its own.
+    reveal_type(df.select(pl.lit(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: lit_of_a_number_variable_joins_by_every_bucket_of_its_type_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        b: pl.Boolean
+        f: pl.Float32
+        u: pl.UInt8
+        d: pl.Date
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # pl.lit of a variable is tried at a few values of its type, as the plain
+    # variable is. Beside an operand, the answer holds where every value
+    # gives it.
+    share: float = 1
+    count: int = 2**40
+    reveal_type(pl.lit(share))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.lit(hole('number'))"]]]"
+    reveal_type(pl.lit(count))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Deferred[Literal["pl.lit(hole('int'))"]]]"
+    reveal_type(df.select(pl.col("f") + pl.lit(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.lit(count) + pl.col("f")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.col("f") + pl.lit(share).abs().alias("z")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.when(pl.col("b")).then(pl.col("f")).otherwise(pl.lit(share))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.col("f").fill_null(pl.lit(share))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("f"), pl.lit(count))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.max_horizontal(pl.col("f"), pl.lit(share))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float64}, closed=True), None]"
     # Where the values differ, the answer is Unchecked. Where every value
     # raises, the call is refused.
     reveal_type(df.select(pl.col("u") + pl.lit(count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"

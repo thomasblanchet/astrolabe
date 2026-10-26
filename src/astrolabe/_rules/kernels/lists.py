@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, ClassVar
 from astrolabe._rules.cast_pass import CastFold
 from astrolabe._rules.dtypes import DType, Is, Parameter
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, Undecided, UndecidedError
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.arithmetic import SeriesArithmetic
 from astrolabe._rules.casts import SeriesCast
 from astrolabe._rules.kernels.comparison import CompareOp, Comparison
@@ -954,14 +955,19 @@ class IsIn:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in cannot check ...
-            >>> wide = Data(DType("Int64"))
-            >>> IsIn().output(wide, Data(DType("List", (DType("Int32"),))), [5, 5])
+            >>> wide, listed = Data(DType("Int64")), Data(DType("List", (DType("Int32"),)))
+            >>> IsIn().output(wide, listed, [5, 5])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
             >>> null = Data(DType("List", (DType("Int32"),)), nulls=True)
             >>> IsIn().output(wide, null, [5, 1])
             Boolean
+            >>> structs = Data(DType("List", (DType("Struct", ((("b", DType("Int8")),),)),)))
+            >>> IsIn().output(Data(DType("Boolean")), structs, [5, 1])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in cannot check ...
         """
         if not Spread().fits(lengths, 0, 1):
             message = "the values and the collection have other lengths"
@@ -972,37 +978,102 @@ class IsIn:
             message = f"is_in cannot check {value.dtype!r} values in {collection.dtype!r} data"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         accepted = self.INNER.get(value.dtype.name)
-        if (  # pragma: no cover -- the cast pass casts the collection first
-            accepted is not None and collection.dtype.inner().name not in accepted
-        ):
+        if accepted is not None and collection.dtype.inner().name not in accepted:
             message = f"is_in cannot check {value.dtype!r} values in {collection.dtype!r} data"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         one_row = collection.one_row or (len(lengths) > 1 and lengths[1] == 1)
         if accepted is None and not (one_row and collection.nulls):
-            self._physical(value.dtype.physical(), collection.dtype.inner().physical())
+            self._check_physical(value, collection, one_row=one_row)
         return DType("Boolean")
 
-    def _physical(self, value: DType, inner: DType) -> None:
+    def _check_physical(self, value: Data, collection: Data, *, one_row: bool) -> None:
         """Refuse numbers whose physical type differs from the physical type of the inner values.
 
         Args:
-            value: The physical type of the values to look for.
-            inner: The physical type of the inner values of the collection.
+            value: The data of the values.
+            collection: The data of the collection.
+            one_row: Whether the collection has one row.
 
         Raises:
-            PolarsRefusal: The value is a number of another physical type than
-                the inner values, where polars panics.
+            PolarsRefusal: The kernel cannot read the inner values as the
+                type of the values (`_mismatch`).
 
         Example:
-            >>> IsIn()._physical(DType("Int32"), DType("Int32")) is None
+            >>> listed = Data(DType("List", (DType("Int32"),)))
+            >>> IsIn()._check_physical(Data(DType("Date")), listed, one_row=False) is None
             True
-            >>> IsIn()._physical(DType("Int64"), DType("Int32"))
+            >>> IsIn()._check_physical(Data(DType("Int64")), listed, one_row=False)
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsIn()._check_physical(Data(DType("Int64")), listed, one_row=True)
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in operation ...
         """
-        if Is.primitive_numeric(value) and not value.same(inner):
-            raise PolarsRefusal(Stop.PANICS, f"cannot get ref {value!r} from {inner!r}")
+        value_type, inner = value.dtype.physical(), collection.dtype.inner().physical()
+        if Is.primitive_numeric(value_type) and not value_type.same(inner):
+            how = self._mismatch(one_row=one_row)
+            if how is Stop.PANICS:
+                raise PolarsRefusal(how, f"cannot get ref {value_type!r} from {inner!r}")
+            raise PolarsRefusal(how, self._message(value, collection))
+
+    def _message(self, value: Data, collection: Data) -> str:
+        """Give the message of the error on numbers of another physical type than the inner values.
+
+        Args:
+            value: The data of the values.
+            collection: The data of the collection.
+
+        Returns:
+            The message.
+
+        Example:
+            >>> IsIn()._message(Data(DType("Int8")), Data(DType("List", (DType("Int32"),))))
+            'is_in operation not supported for dtypes Int8 and List(Int32)'
+        """
+        return f"is_in operation not supported for dtypes {value.dtype!r} and {collection.dtype!r}"
+
+    @polars_releases
+    def _mismatch(self, *, one_row: bool) -> ErrorClass | Stop:
+        """Give how the kernel stops on numbers of another physical type than the inner values.
+
+        A collection of one row raises an `InvalidOperationError`, and a
+        collection of more rows panics where the kernel reads the inner values.
+
+        Args:
+            one_row: Whether the collection has one row.
+
+        Returns:
+            The class of the error, or the panic.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsIn()._mismatch(one_row=True)
+            <ErrorClass.INVALID_OPERATION: 'InvalidOperationError'>
+        """
+        return ErrorClass.INVALID_OPERATION if one_row else Stop.PANICS
+
+    @_mismatch.before("2.0.0")
+    def _panics(self, *, one_row: bool) -> ErrorClass | Stop:
+        """Give the panic of the older releases, at every length of the collection.
+
+        Args:
+            one_row: Whether the collection has one row.
+
+        Returns:
+            The panic.
+
+        Example:
+            >>> IsIn()._panics(one_row=True)
+            <Stop.PANICS: 'panics'>
+        """
+        del one_row
+        return Stop.PANICS
 
 
 @dataclass(frozen=True)
@@ -1031,8 +1102,8 @@ class Membership:
             `Boolean`.
 
         Example:
-            >>> wide = Data(DType("Int64"))
-            >>> Membership().output([wide, Data(DType("List", (DType("Int32"),)))], [1, 1])
+            >>> wide, listed = Data(DType("Int64")), Data(DType("List", (DType("Int32"),)))
+            >>> Membership().output([wide, listed], [5, 5])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int64 from Int32
@@ -1266,8 +1337,10 @@ class Sampled:
 
     The kernel reads its first input as a list. A sample of a number of values
     casts the number to `UInt32` with a strict cast (`StrictCount`). A sample
-    of a fraction casts the fraction to `Float64`, and a fraction outside 0 to
-    1 raises a `ComputeError` where the sample takes each value once. The two
+    of a fraction casts the fraction to `Float64`, and from polars 1.40.0 a
+    fraction outside 0 to 1 raises a `ComputeError` where the sample takes
+    each value once. Before that release, a fraction above 1 asks for more
+    values than a list holds, which is a fact of the data. The two
     inputs have one length, or one of them has one row, or the kernel raises a
     `ShapeError`. The value of a literal is in the code, so a literal that does
     not fit raises at every run. A number larger than a list is a fact of the
@@ -1310,7 +1383,10 @@ class Sampled:
             >>> lists = Data(DType("List", (DType("Int8"),)))
             >>> half = [Operand.column(lists.dtype), Operand.of_value(1.5)]
             >>> share = Sampled(fraction=True, replaces=False)
-            >>> share.output([lists, Data(DType("Float64"))], [5, 1], half)  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> floats = Data(DType("Float64"))
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     share.output([lists, floats], [5, 1], half)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: ...
@@ -1327,6 +1403,7 @@ class Sampled:
             raise PolarsRefusal(ErrorClass.SHAPE, message)
         return values.dtype
 
+    @polars_releases
     def _fraction(self, size: Operand | None) -> None:
         """Refuse a literal fraction outside 0 to 1, where the sample takes each value once.
 
@@ -1347,6 +1424,19 @@ class Sampled:
             message = f"fraction must be between 0.0 and 1.0, got: {value}"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
 
+    @_fraction.before("1.40.0")
+    def _unchecked(self, size: Operand | None) -> None:
+        """Check a fraction in the older releases: no check.
+
+        Args:
+            size: The fraction as the run computes it, or `None` where it is not known.
+
+        Example:
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> Sampled(fraction=True, replaces=False)._unchecked(Operand.of_value(3))
+        """
+        del size
+
 
 class Sliced:
     """Give the type of `list.slice`: a slice of each list, from an offset and of a length.
@@ -1356,7 +1446,8 @@ class Sliced:
     length in its own way:
 
     - a list of one row beside a longer offset or length gives one slice for
-      each row. The kernel casts the length and then the offset to `Int64`;
+      each row. The kernel casts the length and then the offset to `Int64`.
+      Before polars 1.41.0, this path does not exist (`_spreads`);
     - an offset and a length of one row each give one slice for every list.
       The kernel reads the offset as one number (`_number`);
     - an offset of one row beside a longer length: the length must have the
@@ -1422,7 +1513,9 @@ class Sliced:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: ...
-            >>> Sliced().output([lists, number, number], [1, 3, 1], [])
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Sliced().output([lists, number, number], [1, 3, 1], [])
             List(Int8)
         """
         values = Container("List").checked(inputs[0])
@@ -1430,13 +1523,53 @@ class Sliced:
         literal = computed[1] if computed else None
         offset = self._lost(inputs[1], literal)
         count = self._lost(inputs[2], computed[2] if computed else None)
-        if rows == 1 and max(offsets, counts) > 1:
+        if self._spreads(rows, max(offsets, counts)):
             return self._spread(values, offset, count, (offsets, counts))
         self._shape(offsets, rows)
         self._shape(counts, rows)
         read = inputs[1] if offsets == 1 else offset
         self._read(read, count, (offsets, counts), literal)
         return self._sliced(values, offset, count, (offsets, counts))
+
+    @polars_releases
+    def _spreads(self, rows: int, longest: int) -> bool:
+        """Say whether the kernel slices one list for each row of a longer offset or length.
+
+        Args:
+            rows: The number of lists.
+            longest: The number of rows of the longer of the offset and the length.
+
+        Returns:
+            Whether there is one list and the offset or the length has more rows.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Sliced()._spreads(1, 3), Sliced()._spreads(2, 3)
+            (True, False)
+        """
+        return rows == 1 and longest > 1
+
+    @_spreads.before("1.41.0")
+    def _never_spreads(self, rows: int, longest: int) -> bool:
+        """Say that the kernel of the older releases never slices one list for each row: never.
+
+        An offset or a length of another length than the lists then raises
+        (`_shape`).
+
+        Args:
+            rows: The number of lists.
+            longest: The number of rows of the longer of the offset and the length.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> Sliced()._never_spreads(1, 3)
+            False
+        """
+        del rows, longest
+        return False
 
     def _read(
         self,
@@ -1776,7 +1909,9 @@ class Concatenated:
     supertype raise. The kernel casts each input to a list of the supertype,
     and a cast that fails raises. Each other input has the length of the first
     input, or one row, or the kernel raises a `ShapeError`. A first input of
-    one row first repeats to the longest of the others.
+    one row first repeats to the longest of the others. From polars 1.44.0,
+    the kernel checks the lengths before it casts the inputs, so a length that
+    does not fit raises before a cast that fails.
 
     Example:
         >>> lists = Data(DType("List", (DType("Int8"),)))
@@ -1784,8 +1919,38 @@ class Concatenated:
         List(Int16)
     """
 
+    @polars_releases
     def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
-        """Give the type of the output.
+        """Give the type of the output: the check of the lengths, then the casts.
+
+        It raises `PolarsRefusal` where an input has a length that does not
+        fit, where two types have no supertype, or where a cast fails.
+
+        Args:
+            inputs: The data of each input.
+            lengths: The number of rows of each input, or none where they are not known.
+
+        Returns:
+            A list of the supertype.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> lists = Data(DType("List", (DType("Int8"),)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     Concatenated().output([lists, lists], [5, 1])
+            List(Int8)
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     Concatenated().output([lists, lists], [5, 2])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: ...
+        """
+        self._lengths(lengths)
+        return self._target(inputs)
+
+    @output.before("1.44.0")
+    def _lengths_after_casts(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
+        """Give the type of the output: the casts, then the check of the lengths.
 
         It raises `PolarsRefusal` where two types have no supertype, where a
         cast fails, or where an input has a length that does not fit.
@@ -1798,11 +1963,35 @@ class Concatenated:
             A list of the supertype.
 
         Example:
+            >>> fields = (("a", DType("Int8")), ("b", DType("String")))
+            >>> nested = Data(DType("Struct", (fields,)))
             >>> lists = Data(DType("List", (DType("Int8"),)))
-            >>> Concatenated().output([lists, lists], [5, 2])  # doctest: +ELLIPSIS
+            >>> Concatenated()._lengths_after_casts([lists, nested], [5, 2])
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: ShapeError: ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+        """
+        target = self._target(inputs)
+        self._lengths(lengths)
+        return target
+
+    def _target(self, inputs: Sequence[Data]) -> DType:
+        """Join the types of the inputs, and cast each input to a list of the supertype.
+
+        It raises `PolarsRefusal` where two types have no supertype, or where a
+        cast fails.
+
+        Args:
+            inputs: The data of each input.
+
+        Returns:
+            A list of the supertype.
+
+        Example:
+            >>> lists = Data(DType("List", (DType("Int8"),)))
+            >>> Concatenated()._target([lists, Data(DType("Int16"))])
+            List(Int16)
         """
         first = inputs[0]
         if first.dtype.name != "List":
@@ -1815,7 +2004,6 @@ class Concatenated:
         RunCast().of(first, target)
         for other in inputs[1:]:
             self._cast(other, inner, target)
-        self._lengths(lengths)
         return target
 
     def _cast(self, other: Data, inner: DType, target: DType) -> None:
