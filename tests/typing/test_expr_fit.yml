@@ -352,6 +352,32 @@
 # cast gives `ms` where the column is `us`, although both generalize to
 # `Datetime`. A fixed outcome keeps its parameters.
 - case: a_kind_with_parameters_fits_at_each_data_type_of_its_sample
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import column, typed_expr
+
+    Stamp = column("t", pl.Datetime)
+    Items = column("items", pl.List)
+    Money = typed_expr(column("d", pl.Decimal), gives=pl.Decimal(38, 2))
+
+    def stamped(t: Stamp) -> Stamp:
+        return t
+
+    def listed(items: Items) -> Items:
+        return items
+
+    def money(d: Money) -> Money:
+        return d
+
+    reveal_type(stamped(pl.col("t")))  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['t'], polars.datatypes.classes.Datetime]"
+    stamped(pl.col("t").dt.cast_time_unit("ms"))  # E: Argument "t" does not match its declared type: it makes a Datetime(time_unit='ms', time_zone=None) column, but the declared type is Datetime(time_unit='ns', time_zone=None)  [expression-fit]
+    reveal_type(listed(pl.col("items")))  # N: Revealed type is "astrolabe.expr.TypedColumn[Literal['items'], polars.datatypes.classes.List]"
+    reveal_type(money(pl.col("d").cast(pl.Decimal(38, 2))))  # N: Revealed type is "astrolabe.expr.TypedExpr[astrolabe.expr.Reads[astrolabe.frame.Column[Literal['d'], polars.datatypes.classes.Decimal]], astrolabe.frame.Column[Literal['d'], astrolabe.frame.Decimal[Literal[38], Literal[2]]]]"
+    money(pl.col("d").cum_sum())  # E: Argument "d" does not match its declared type: it makes a Decimal(precision=38, scale=0) column, but the declared type is Decimal(precision=38, scale=2)  [expression-fit]
+
+- case: a_kind_with_parameters_fits_at_each_data_type_of_its_sample_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import column, typed_expr

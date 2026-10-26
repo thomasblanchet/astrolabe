@@ -29,6 +29,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     CellCheck,
     Input,
     Inputs,
@@ -51,8 +52,8 @@ class AggregationNodes:
     the literal float of the census, 1.5, is outside of them.
 
     Example:
-        >>> sorted(AggregationNodes.ONE_INPUT)[:3]
-        ['agg_groups', 'all', 'any']
+        >>> "all" in AggregationNodes.ONE_INPUT
+        True
         >>> AggregationNodes.HALF.label
         'lit float 0.5/direct'
     """
@@ -62,7 +63,7 @@ class AggregationNodes:
     ONE: ClassVar[Input] = Inputs().labelled("lit int 1/direct")
     HALF: ClassVar[Input] = Input("lit float 0.5/direct", LiteralLeaf(0.5), pl.lit(0.5))
 
-    ONE_INPUT: ClassVar[dict[str, CellCheck]] = {
+    ONE_INPUT: ClassVar[dict[str, CellCheck]] = ApiGate().kept({
         "agg_groups": CellCheck(Aggregations.AGG_GROUPS, lambda x: x.agg_groups()),
         "count": CellCheck(Aggregations.COUNT, lambda x: x.count()),
         "len": CellCheck(Aggregations.COUNT, lambda x: x.len()),
@@ -102,8 +103,8 @@ class AggregationNodes:
         "kurtosis": CellCheck(Aggregations.KURTOSIS, lambda x: x.kurtosis(), Values.NUMBER_TEXT),
         "lower_bound": CellCheck(Aggregations.LOWER_BOUND, lambda x: x.lower_bound()),
         "upper_bound": CellCheck(Aggregations.UPPER_BOUND, lambda x: x.upper_bound()),
-    }
-    ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = {
+    })
+    ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = ApiGate().kept({
         "item allow_empty": CellCheck(Aggregations.ITEM, lambda x: x.item(allow_empty=True)),
         "implode unordered": CellCheck(
             Aggregations.IMPLODE,
@@ -139,7 +140,7 @@ class AggregationNodes:
             lambda x: x.kurtosis(fisher=False, bias=False),
             Values.NUMBER_TEXT,
         ),
-    }
+    })
     TWO_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input]]]] = {
         "corr": (
             CellCheck(Aggregations.CORRELATION, TemplateCall("pl.corr('x', 'y')")),
@@ -202,8 +203,8 @@ class AggregationNodes:
             The name of the node and the cell, for each cell.
 
         Example:
-            >>> len(AggregationNodes.one_input_cells())
-            9252
+            >>> len(AggregationNodes.one_input_cells()) > 8000
+            True
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
         for name in cls.ONE_INPUT:

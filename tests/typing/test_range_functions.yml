@@ -556,6 +556,7 @@
     df.select(pl.date_range(datetime.date(2020, 1, 1), pl.col("s").abs().max()))  # E: "literal" has no result type at this frame's column types: 'end' must be Date or Datetime, got String, and polars raises ComputeError  [unsupported-dtype-op]
 
 - case: a_range_refuses_a_bound_of_a_kind_that_it_does_not_accept
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -575,6 +576,31 @@
     reveal_type(df.select(pl.time_ranges(pl.col("t").min(), pl.col("t").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.List[polars.datatypes.classes.Time]}, closed=True), None]"
     df.select(pl.int_range(pl.col("s").max()))  # E: "literal" has no result type at this frame's column types: `end` must be numeric for `int_range`, got String, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.int_ranges(0, pl.col("d").max()))  # E: "literal" has no result type at this frame's column types: `end` must be numeric for `int_range`, got Date, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.date_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.datetime_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.datetime_range(pl.col("d").min(), pl.col("s").max(), time_unit="ms"))  # E: "d" has no result type at this frame's column types: 'end' must be Date or Datetime, got String, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.time_range(pl.col("d").min(), pl.col("t").max()))  # E: "d" has no result type at this frame's column types: casting from Date to Time not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+- case: a_range_refuses_a_bound_of_a_kind_that_it_does_not_accept_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.Int64
+        s: pl.String
+        d: pl.Date
+        t: pl.Time
+
+    df: TypedDataFrame[FrameSchema]
+
+    # An integer range needs integer bounds, a date range needs `Date` or
+    # `Datetime` bounds, and a time range accepts a `String` bound.
+    reveal_type(df.select(pl.int_range(pl.col("g").min(), pl.col("g").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.date_range(pl.col("d").min(), pl.col("d").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(pl.time_ranges(pl.col("t").min(), pl.col("t").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'t': astrolabe.frame.List[polars.datatypes.classes.Time]}, closed=True), None]"
+    df.select(pl.int_range(pl.col("s").max()))
+    df.select(pl.int_ranges(0, pl.col("d").max()))
     df.select(pl.date_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.datetime_range(pl.col("g").min(), pl.col("g").max()))  # E: "g" has no result type at this frame's column types: 'start' must be Date or Datetime, got Int64, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.datetime_range(pl.col("d").min(), pl.col("s").max(), time_unit="ms"))  # E: "d" has no result type at this frame's column types: 'end' must be Date or Datetime, got String, and polars raises ComputeError  [unsupported-dtype-op]

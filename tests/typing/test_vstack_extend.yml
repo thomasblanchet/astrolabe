@@ -173,3 +173,67 @@
 
     df: Frame
     df.vstack()  # E: Missing positional argument "other" in call to "vstack" of "TypedDataFrame"  [call-arg]
+
+- case: merge_sorted_merges_a_column_of_lists
+  skip: __import__("tests.releases").releases.polars_before("1.41.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        tags: List[pl.String]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    merged: Frame = left.merge_sorted(right, key="foo")
+
+- case: merge_sorted_merges_a_column_of_lists_before_polars_1_41
+  skip: not __import__("tests.releases").releases.polars_before("1.41.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+        tags: List[pl.String]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    # Before polars 1.41.0, merge_sorted panics over a column of lists, or ends
+    # the process. The call sits in a function, so that no run reaches it.
+    def merged(left: Frame, right: Frame) -> Frame:
+        return left.merge_sorted(right, key="foo")  # E: "tags" has no result type at this frame's column types: merge_sorted does not merge a List or an Array before polars 1.41.0, and polars panics or ends the process  [unsupported-dtype-op]
+
+- case: merge_sorted_keeps_the_order_of_equal_keys
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedLazyFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    merged: Frame = left.merge_sorted(right, key="foo", maintain_order=True)
+
+- case: merge_sorted_keeps_the_order_of_equal_keys_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedLazyFrame[FrameSchema]
+
+    left: Frame
+    right: Frame
+    left.merge_sorted(right, key="foo", maintain_order=True)  # E: This call raises TypeError: polars has the parameter maintain_order of merge_sorted from release 1.40.0  [invalid-call-shape]
+    merged: Frame = left.merge_sorted(right, key="foo", maintain_order=False)

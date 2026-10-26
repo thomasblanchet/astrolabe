@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import polars as pl
 
 from astrolabe._rules.casts import CastCheck
-from astrolabe._rules.definitions.node_options import NodeOptions
+from astrolabe._rules.definitions.node_options import NodeIdentity, NodeOptions
 from astrolabe._rules.dtypes import DType, Is
 from astrolabe._rules.execution import GroupBy, QueryFlags
 from astrolabe._rules.failures import PolarsRefusal, Stop, Undecided
@@ -45,6 +45,7 @@ from astrolabe._rules.tree import ExpressionTree
 from astrolabe._rules.tree_evaluation import TreeEvaluation
 from spec.tools.node_census.kinds import AnyValues, CensusKinds, Sample
 from spec.tools.node_census.outcomes import LiteralOutcome, OutcomeSpace
+from spec.tools.node_census.calls import CensusCalls
 from spec.tools.node_census.surface import NodeTemplate
 from spec.tools.rules.census_text import CensusLeaves, CensusText
 
@@ -674,6 +675,11 @@ class JoinCalls:
     def explained(self, dtypes: tuple[pl.DataType, pl.DataType], expression: pl.Expr) -> str | None:
         """Give the text of `explain()` for an expression over two columns `x0` and `x1`.
 
+        The plan runs no projection pushdown, which does not change a cast.
+        Before polars 1.41.0, that pass types the plan again after the cast
+        pass, and it panics where a cast leaves an input of another kind, as
+        `list.set_union` of a list beside text does.
+
         Args:
             dtypes: The types of `x0` and `x1`.
             expression: The expression.
@@ -687,7 +693,8 @@ class JoinCalls:
             False
         """
         frame = pl.LazyFrame(schema={"x0": dtypes[0], "x1": dtypes[1]})
-        return PolarsAnswer().text(lambda: frame.select(expression).explain())
+        flags = pl.QueryOptFlags(projection_pushdown=False)
+        return PolarsAnswer().text(lambda: frame.select(expression).explain(optimizations=flags))
 
     def full_join(self, left: pl.DataType, right: pl.DataType) -> DType | None:
         """Give the type of the key of a full join that coalesces its keys, from a run on no rows.
@@ -709,7 +716,7 @@ class JoinCalls:
             how="full",
             coalesce=True,
         )
-        return PolarsAnswer().dtype(lambda: joined.collect().schema["k"])
+        return PolarsAnswer().dtype(lambda: joined.collect(engine="in-memory").schema["k"])
 
 
 class CastPassCheck:
@@ -1262,28 +1269,28 @@ class PolarsCell:
             answers.append(answer)
         return answers[0]
 
-    def types(self, *, agg: bool, skip: frozenset[Values] = frozenset()) -> set[DType]:
-        """Give the run type of the node in a context, on each sample that runs.
+    def outcomes(self, *, agg: bool, skip: frozenset[Values] = frozenset()) -> set[DType | Stopped]:
+        """Give the outcome of the node in a context on each sample: its run type, or how it stops.
 
         Args:
             agg: Whether to run `agg`.
             skip: The samples that the run does not try.
 
         Returns:
-            The types, one for each sample that runs.
+            The outcomes, one for each sample.
 
         Example:
-            >>> PolarsCell(pl.col("c0").abs().alias("o")).types(agg=False)
+            >>> PolarsCell(pl.col("c0").abs().alias("o")).outcomes(agg=False)
             {Int8}
         """
         eager = pl.QueryOptFlags._eager()  # ruff: ignore[private-member-access]
-        types: set[DType] = set()
+        outcomes: set[DType | Stopped] = set()
         for values in [values for values in Values if values not in skip]:
             query = self._query(self._frames.frame(values), agg=agg)
             answer = PolarsAnswer().answer(functools.partial(self._dtype, query, eager))
-            if isinstance(answer, DType):
-                types.add(answer)
-        return types
+            if isinstance(answer, (DType, Stopped)):
+                outcomes.add(answer)
+        return outcomes
 
     def _dtype(self, query: pl.LazyFrame, flags: pl.QueryOptFlags) -> pl.DataType:
         """Run a query, and give the type of its column `o`.
@@ -1300,7 +1307,7 @@ class PolarsCell:
             >>> PolarsCell(pl.col("o"))._dtype(query, pl.QueryOptFlags())
             Int64
         """
-        return query.collect(optimizations=flags)["o"].dtype
+        return query.collect(optimizations=flags, engine="in-memory")["o"].dtype
 
     def _query(self, frame: pl.DataFrame, *, agg: bool) -> pl.LazyFrame:
         """Give the query of the node in a context.
@@ -1465,8 +1472,9 @@ class CellCheck:
 
         Returns:
             The answer, or `None`. Where the rules say that the values decide
-            the type, the answer is `None` if polars gives two types or more
-            over the samples, and the one type otherwise.
+            the type, the answer is `None` if polars gives two outcomes or more
+            over the samples, a type or a way that it stops, and the one
+            outcome otherwise.
 
         Example:
             >>> from astrolabe._rules.definitions.elementwise import Elementwise
@@ -1479,8 +1487,8 @@ class CellCheck:
         if isinstance(wanted, Refused) and wanted.stop in self.OUT_OF_PROCESS:
             return None
         if isinstance(wanted, Unchecked) and wanted.cause is Undecided.VALUES:
-            types = cell.types(agg=agg, skip=self._skip)
-            return None if len(types) > 1 else cell.run(agg=agg, every=True, skip=self._skip)
+            outcomes = cell.outcomes(agg=agg, skip=self._skip)
+            return None if len(outcomes) > 1 else cell.run(agg=agg, every=True, skip=self._skip)
         if isinstance(wanted, DType):
             return cell.run(agg=agg, every=True, skip=self._skip)
         return cell.run(agg=agg, every=False, first=self._refused)
@@ -1528,6 +1536,105 @@ class CellCheck:
         return Stopped(answer.stop, error)
 
 
+@dataclass(frozen=True)
+class ApiGate:
+    """Leave out the samples of a function that the installed release of polars does not have.
+
+    A sample of a node is keyed by the name of the function that builds it,
+    as `cat.to`, and a key can add words after a space, as `cat.to Enum`. A
+    table of one namespace can leave the namespace out of its keys, and
+    gives it as `prefix`, as `dt.`. The census holds the first release of each
+    function that a recent release of polars adds (`CensusCalls.SINCE`), and
+    the release that removes a function (`CensusCalls.UNTIL`).
+
+    `NODES` gives the node of the rules that each such function builds, so a
+    test that reads every definition can leave out the nodes that the
+    installed release cannot build.
+
+    Example:
+        >>> ApiGate().kept({"abs": 1, "abs of a literal": 2})
+        {'abs': 1, 'abs of a literal': 2}
+    """
+
+    NODES: ClassVar[dict[str, NodeIdentity]] = {
+        "is_empty": NodeIdentity("Function", "Boolean.IsEmpty"),
+        "is_sorted": NodeIdentity("Function", "Boolean.IsSorted"),
+        "ewm_sum": NodeIdentity("Function", "EwmSum"),
+        "ewm_sum_by": NodeIdentity("Function", "EwmSumBy"),
+        "cat.physical": NodeIdentity("Function", "Categorical.Physical"),
+        "cat.to": NodeIdentity("Function", "Categorical.To"),
+        "rechunk": NodeIdentity("Function", "Rechunk"),
+        "dt.with_time_unit": NodeIdentity("Function", "TemporalExpr.WithTimeUnit"),
+        "dt.datetime": NodeIdentity("Function", "TemporalExpr.Datetime"),
+    }
+
+    prefix: str = ""
+
+    def absent(self) -> set[NodeIdentity]:
+        """Give the node of each function of `NODES` that the installed release does not have.
+
+        Returns:
+            The identities of those nodes.
+
+        Example:
+            >>> NodeIdentity("Function", "Abs") in ApiGate().absent()
+            False
+        """
+        return {identity for name, identity in self.NODES.items() if not self.has(name)}
+
+    def has(self, key: str) -> bool:
+        """Say whether the installed release has the function of a sample.
+
+        Args:
+            key: The key of the sample.
+
+        Returns:
+            Whether it has the function that the first word of the key names.
+
+        Example:
+            >>> ApiGate().has("cat.len_bytes of a literal")
+            True
+            >>> ApiGate(prefix="dt.").has("year")
+            True
+        """
+        return CensusCalls().installed(self.prefix + key.split(" ", maxsplit=1)[0])
+
+    def built[T](self, name: str, build: Callable[[], dict[str, T]]) -> dict[str, T]:
+        """Build the samples of a function where the installed release has it.
+
+        A table whose samples are expressions builds each one when the table
+        is defined, and polars refuses to build a function that it does not
+        have.
+
+        Args:
+            name: The name of the function.
+            build: The samples of the function, built at the call.
+
+        Returns:
+            The samples, or none where the release does not have the function.
+
+        Example:
+            >>> ApiGate().built("abs", lambda: {"abs twice": 2})
+            {'abs twice': 2}
+        """
+        return build() if self.has(name) else {}
+
+    def kept[T](self, samples: Mapping[str, T]) -> dict[str, T]:
+        """Give the samples whose function the installed release has.
+
+        Args:
+            samples: The samples, by key.
+
+        Returns:
+            The samples that the installed release can build.
+
+        Example:
+            >>> ApiGate().kept({"pl.col": 1})
+            {'pl.col': 1}
+        """
+        return {key: value for key, value in samples.items() if self.has(key)}
+
+
 class TemplateCall:
     """Build a node of polars from the tree of a call, with any input at each place.
 
@@ -1543,7 +1650,10 @@ class TemplateCall:
     """
 
     def __init__(self, code: str) -> None:
-        """Read the tree of the call.
+        """Keep the call, and read its tree at the first use.
+
+        So a table can hold a call that the installed release of polars does
+        not have, and leave it out (`ApiGate`).
 
         Args:
             code: The call, over the column `x`.
@@ -1552,7 +1662,20 @@ class TemplateCall:
             >>> TemplateCall("pl.col('x').abs()")._template.inputs()
             1
         """
-        self._template = NodeTemplate("test", code)
+        self._code = code
+
+    @functools.cached_property
+    def _template(self) -> NodeTemplate:
+        """Read the tree of the call.
+
+        Returns:
+            The template of the node.
+
+        Example:
+            >>> TemplateCall("pl.col('x').abs()")._template.inputs()
+            1
+        """
+        return NodeTemplate("test", self._code)
 
     def __call__(self, *inputs: pl.Expr) -> pl.Expr:
         """Build the node with the inputs.
@@ -1849,10 +1972,26 @@ class TreeFrame:
         runs: list[Callable[[], pl.DataType]] = [
             lambda: lazy.select(node).collect_schema()["o"],
             lambda: lazy.group_by("g").agg(node).collect_schema()["o"],
-            lambda: lazy.select(node).collect().schema["o"],
-            lambda: lazy.group_by("g").agg(node).collect().schema["o"],
+            lambda: lazy.select(node).collect(engine="in-memory").schema["o"],
+            lambda: lazy.group_by("g").agg(node).collect(engine="in-memory").schema["o"],
         ]
         return [self.answer(run) for run in runs]
+
+    def _leaves(self) -> dict[str, ColumnLeaf]:
+        """Give a leaf for each column of the frame, which says where every value is null.
+
+        Returns:
+            The leaf of each column, by its name.
+
+        Example:
+            >>> nulls = pl.Series([None] * 5, dtype=pl.Date)
+            >>> TreeFrame({"d": nulls})._leaves()["d"].nulls, TreeFrame()._leaves()["x"].nulls
+            (True, False)
+        """
+        return {
+            name: ColumnLeaf(DType.of(series.dtype), RowForm.PER_ROW, nulls=series.is_null().all())
+            for name, series in self._frame.to_dict().items()
+        }
 
     def rules(self, expression: pl.Expr) -> list[str]:
         """Give the four answers of the evaluator, in the text that the census stores.
@@ -1867,10 +2006,7 @@ class TreeFrame:
             >>> TreeFrame().rules(pl.col("x").abs())
             ['Int64', 'List(Int64)', 'Int64', 'List(Int64)']
         """
-        columns = {
-            name: ColumnLeaf(DType.of(dtype), RowForm.PER_ROW)
-            for name, dtype in self._frame.schema.items()
-        }
+        columns = self._leaves()
         evaluation = TreeEvaluation(columns, GroupBy((3, 2), QueryFlags.lazy(lone=True)))
         return list(CensusText().answers(evaluation.answers(ExpressionTree().of(expression))))
 
@@ -1893,7 +2029,7 @@ class TreeFrame:
             "'n' must be a scalar value"
         """
         try:
-            self._frame.lazy().select(expression.alias("o")).collect()
+            self._frame.lazy().select(expression.alias("o")).collect(engine="in-memory")
         except (KeyboardInterrupt, SystemExit, GeneratorExit):
             raise
         except BaseException as error:
@@ -1913,10 +2049,7 @@ class TreeFrame:
             >>> TreeFrame().rules_message(pl.col("x").shift(pl.col("g")))
             "'n' must be a scalar value"
         """
-        columns = {
-            name: ColumnLeaf(DType.of(dtype), RowForm.PER_ROW)
-            for name, dtype in self._frame.schema.items()
-        }
+        columns = self._leaves()
         evaluation = TreeEvaluation(columns, GroupBy((3, 2)))
         answer = evaluation.answers(ExpressionTree().of(expression)).run_select
         return answer.message if isinstance(answer, Refused) else ""
@@ -2015,7 +2148,7 @@ class WindowFrame:
         """
         runs: list[Callable[[], pl.DataType]] = [
             lambda: grouped.collect_schema()["o"],
-            lambda: grouped.collect().schema["o"],
+            lambda: grouped.collect(engine="in-memory").schema["o"],
         ]
         return [TreeFrame().answer(run) for run in runs]
 

@@ -7,6 +7,8 @@ the rules of a node are a short definition in it. Measurement does not supply a
 rule here: the tests in `spec/tests` check each rule against polars. Each
 module translates one mechanism of polars:
 
+- `releases`: the release of polars whose rules apply, and the methods whose
+  rule changes between releases.
 - `dtypes`: the data types as plain values, the type tests of polars, and the
   types of an integer literal by its value. It also holds the range of each
   integer type, the fit of a value in a `Decimal`, and the time units.
@@ -49,5 +51,5 @@ because the state of the process decides or because the package does not
 translate that part of polars, a rule raises `UndecidedError`. The fate of one
 value of a cast is an `Outcome`, not a refusal.
 
-It is a maintainer's tool. Nothing here runs inside the plugin yet.
+The plugin gives an expression the type that these rules give its tree.
 """
