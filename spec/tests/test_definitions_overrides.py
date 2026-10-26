@@ -15,6 +15,8 @@ import pytest
 
 from spec.tests.rule_probes import PolarsAnswer, Stopped
 from astrolabe._rules.definitions.overrides import Override, Overrides
+from astrolabe._rules.failures import Stop
+from astrolabe._rules.releases import PolarsRelease
 
 
 @pytest.mark.parametrize("override", Overrides.ALL, ids=lambda override: override.node)
@@ -27,10 +29,18 @@ def test_override_has_a_reason_and_a_probe(override: Override) -> None:
 
 @pytest.mark.parametrize("override", Overrides.ALL, ids=lambda override: override.node)
 def test_probe_of_an_override_stops_as_its_reason_says(override: Override) -> None:
-    """The probe of each override panics or raises in polars, as its reason says."""
+    """The probe of each override panics or raises in polars, as its reason says.
+
+    In a release older than the first one that has the call, polars has no
+    method for it.
+    """
     namespace = {"pl": pl}
     probe = override.probe
     answer = PolarsAnswer().answer(
         lambda: eval(probe, namespace).dtypes[-1],  # ruff: ignore[suspicious-eval-usage]
     )
-    assert answer == Stopped(override.stop, override.error)
+    first = PolarsRelease.parse(override.since) if override.since is not None else None
+    older = first is not None and PolarsRelease.installed() < first
+    missing = Stopped(Stop.RAISES, "AttributeError")
+    stated = Stopped(override.stop, override.error)
+    assert answer == (missing if older else stated)

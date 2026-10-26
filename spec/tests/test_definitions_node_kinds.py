@@ -41,7 +41,7 @@ from typing import ClassVar
 import polars as pl
 import pytest
 
-from spec.tests.rule_probes import CellCheck, Input, Inputs, NodeSample
+from spec.tests.rule_probes import ApiGate, CellCheck, Input, Inputs, NodeSample
 from astrolabe._rules.definitions.node_kinds import NodeKinds
 
 
@@ -49,8 +49,8 @@ class KindNodes:
     """Hold the nodes of the tests, each with its call and its typical inputs.
 
     Example:
-        >>> sorted(KindNodes.ONE_INPUT)
-        ['alias', 'explode', 'flatten', 'name.keep', 'name.suffix', 'sort']
+        >>> sorted(KindNodes.ONE_INPUT)[:2]
+        ['alias', 'explode']
     """
 
     VARIABLE_SIZE: ClassVar[tuple[str, ...]] = (
@@ -67,14 +67,14 @@ class KindNodes:
     DATE: ClassVar[Input] = Inputs().labelled("Date/one value")
     ONE: ClassVar[Input] = Inputs().labelled("lit int 1/direct")
 
-    ONE_INPUT: ClassVar[dict[str, CellCheck]] = {
+    ONE_INPUT: ClassVar[dict[str, CellCheck]] = ApiGate().kept({
         "sort": CellCheck(NodeKinds.SORT, lambda x: x.sort()),
         "explode": CellCheck(NodeKinds.EXPLODE, lambda x: x.explode()),
         "flatten": CellCheck(NodeKinds.EXPLODE, lambda x: x.flatten()),
         "alias": CellCheck(NodeKinds.ALIAS, lambda x: x.alias("y")),
         "name.keep": CellCheck(NodeKinds.KEEP_NAME, lambda x: x.name.keep()),
         "name.suffix": CellCheck(NodeKinds.RENAME_ALIAS, lambda x: x.name.suffix("_y")),
-    }
+    })
     MANY_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...]]]] = {
         "when": (
             CellCheck(NodeKinds.WHEN, lambda x, y, z: pl.when(x).then(y).otherwise(z)),

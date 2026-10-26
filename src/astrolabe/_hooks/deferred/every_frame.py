@@ -159,7 +159,9 @@ class EveryFrameRefusal:
             True
             >>> EveryFrameRefusal().refusal(Code("pl.col('i').cumulative_eval(pl.element() * 2)"))
             '`cumulative_eval` is not allowed with non-scalar output, and polars raises ...'
-            >>> EveryFrameRefusal().refusal(Code("pl.col('x').head(2).over(pl.lit(0))")) is None
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     EveryFrameRefusal().refusal(Code("pl.col('x').head(2).over(pl.lit(0))")) is None
             True
         """
         if self._unsampled(code):

@@ -418,7 +418,7 @@ class MethodHooks:
             VstackExtendHook(".extend()", plugin),
         )
 
-        merge_sorted_hook = VstackExtendHook(".merge_sorted()", plugin)
+        merge_sorted_hook = VstackExtendHook(".merge_sorted()", plugin, merges=True)
         self._dispatcher.register(Target.of(TypedDataFrame, "merge_sorted"), merge_sorted_hook)
         self._dispatcher.register(Target.of(TypedLazyFrame, "merge_sorted"), merge_sorted_hook)
 

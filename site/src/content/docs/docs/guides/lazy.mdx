@@ -23,6 +23,6 @@ Polars plans each later step at the data type that `collect_schema()` shows. For
 
 <Example name="lazy_planned" />
 
-The cumulative sum gives a `Decimal(38, 2)`, and Polars plans it as a `Decimal(10, 2)`. A later step of the lazy frame works at the planned type.
+The cumulative sum gives a `Decimal(38, 2)`, and Polars 1.x plans it as a `Decimal(10, 2)`. A later step of the lazy frame works at the planned type. From Polars 2.0, the plan gives `Decimal(38, 2)` too, so the column holds one data type.
 
 To give the column one data type, cast it: `pl.col("price").cum_sum().cast(pl.Decimal(38, 2))`.

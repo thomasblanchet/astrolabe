@@ -226,7 +226,7 @@ numpy = [
 requires-dist = [
     { name = "greenery", specifier = ">=4.2.2" },
     { name = "mypy", specifier = ">=2.2" },
-    { name = "polars", specifier = "==1.43.2" },
+    { name = "polars", specifier = ">=1.39.3,<2.1" },
     { name = "tomlkit", specifier = ">=0.13" },
 ]
 

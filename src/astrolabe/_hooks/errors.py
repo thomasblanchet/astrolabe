@@ -925,6 +925,51 @@ class InvalidCallShapeError(AstrolabeError):
         return cls(f"This call raises {error} before any frame meets it: {message}")
 
     @classmethod
+    def absent_method(cls, method: str, first: str) -> InvalidCallShapeError:
+        """Build the message for a method that the installed release of polars does not have.
+
+        A typed frame declares some methods of polars that only a later
+        release has. Polars raises `AttributeError` for such a call.
+
+        Args:
+            method: The class and the method, for example `DataFrame.gather`.
+            first: The first release that has the method.
+
+        Returns:
+            The error.
+
+        Example:
+            >>> InvalidCallShapeError.absent_method("DataFrame.gather", "1.41.0")._message
+            'This call raises AttributeError: polars has DataFrame.gather from release 1.41.0'
+        """
+        return cls(f"This call raises AttributeError: polars has {method} from release {first}")
+
+    @classmethod
+    def absent_parameter(cls, method: str, parameter: str, first: str) -> InvalidCallShapeError:
+        """Build the message for an argument of a parameter that the installed release lacks.
+
+        A typed frame declares some parameters of polars that only a later
+        release has. Polars raises `TypeError` for an argument of such a
+        parameter.
+
+        Args:
+            method: The method, for example `merge_sorted`.
+            parameter: The parameter, for example `maintain_order`.
+            first: The first release that has the parameter.
+
+        Returns:
+            The error.
+
+        Example:
+            >>> method, parameter = "merge_sorted", "maintain_order"
+            >>> error = InvalidCallShapeError.absent_parameter(method, parameter, "1.40")
+            >>> error._message.removeprefix("This call raises TypeError: polars has the parameter ")
+            'maintain_order of merge_sorted from release 1.40'
+        """
+        message = f"polars has the parameter {parameter} of {method} from release {first}"
+        return cls(f"This call raises TypeError: {message}")
+
+    @classmethod
     def refused_at_every_frame(cls, refusal: str) -> InvalidCallShapeError:
         """Build the message for a call whose expression polars refuses at every frame.
 

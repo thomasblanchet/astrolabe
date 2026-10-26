@@ -29,6 +29,7 @@ from astrolabe._rules.dtypes import (
     TimeUnit,
 )
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -480,14 +481,16 @@ class _FixedPairs:
     A kind is a data type with its parameters taken away. The arms join the
     integers, the floats and `Boolean`, and a temporal kind with a number. A
     row does not read the parameters of its types, so `Datetime` stands for
-    every unit and time zone. The standard build of polars has 32-bit row
-    indices, and in that build `Int32` and `Int64` beside `UInt64` give
-    `Float64`.
+    every unit and time zone. From polars 2.0.0, a signed integer beside
+    `UInt64` gives `Int128`. Before that release, it gives `Float64` in the
+    standard build of polars, which has 32-bit row indices (`_beside_u64`).
 
     Example:
         >>> _FixedPairs().match(DType("Int16"), DType("Float16"))
         _Matched(dtype=Float32)
     """
+
+    SIGNED: ClassVar[frozenset[str]] = frozenset({"Int8", "Int16", "Int32", "Int64"})
 
     ROWS: ClassVar[dict[str, dict[str, str]]] = {
         "Int8": {
@@ -635,8 +638,39 @@ class _FixedPairs:
             return _Matched(right)
         if (left.name, right.name) == ("Datetime", "Date"):
             return _Matched(left)
+        names = {left.name, right.name}
+        if "UInt64" in names and names & self.SIGNED:
+            return _Matched(self._beside_u64())
         joined = self.ROWS.get(left.name, {}).get(right.name)
         return None if joined is None else _Matched(DType(joined))
+
+    @polars_releases
+    def _beside_u64(self) -> DType:
+        """Give the supertype of a signed integer of at most 64 bits beside `UInt64`: `Int128`.
+
+        Returns:
+            `Int128`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _FixedPairs().match(DType("Int8"), DType("UInt64"))
+            _Matched(dtype=Int128)
+        """
+        return DType("Int128")
+
+    @_beside_u64.before("2.0.0")
+    def _float_beside_u64(self) -> DType:
+        """Give the supertype of a signed integer beside `UInt64` in the older releases: `Float64`.
+
+        Returns:
+            `Float64`.
+
+        Example:
+            >>> _FixedPairs()._float_beside_u64()
+            Float64
+        """
+        return DType("Float64")
 
 
 class _StructArms:
@@ -775,7 +809,9 @@ class _StructArms:
 class _DecimalArms:
     """Join a `Decimal` with a `Decimal`, a float or an integer.
 
-    Two decimals take the larger precision and the larger scale. A float
+    Two decimals take the larger scale, and from polars 2.0.0 enough
+    precision for the integer digits of both, at most 38. Before that
+    release, they take the larger precision (`_joined`). A float
     gives `Float64`. An integer keeps the decimal where every value of the
     integer type fits its precision and scale (`Decimals.holds`), and gives
     the largest precision with the same scale otherwise.
@@ -808,9 +844,8 @@ class _DecimalArms:
         precision = Parameter().integer(left, 0)
         scale = Parameter().integer(left, 1)
         if right.name == "Decimal":
-            joined_precision = max(precision, Parameter().integer(right, 0))
-            joined_scale = max(scale, Parameter().integer(right, 1))
-            return _Matched(DType("Decimal", (joined_precision, joined_scale)))
+            other = (Parameter().integer(right, 0), Parameter().integer(right, 1))
+            return _Matched(self._joined((precision, scale), other))
         if Is.float(right):
             return _Matched(DType("Float64"))
         if not (Is.signed(right) or Is.unsigned(right)):
@@ -818,6 +853,46 @@ class _DecimalArms:
         if self._fits(right.name, precision, scale):
             return _Matched(left)
         return _Matched(Decimals().widest(scale))
+
+    @polars_releases
+    def _joined(self, left: tuple[int, int], right: tuple[int, int]) -> DType:
+        """Join two decimals, given by their precision and scale, at the larger scale.
+
+        The precision holds the integer digits of both, and polars caps it at 38.
+
+        Args:
+            left: The precision and the scale of the left decimal.
+            right: The precision and the scale of the right decimal.
+
+        Returns:
+            The decimal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _DecimalArms()._joined((10, 2), (3, 3))
+            Decimal(precision=11, scale=3)
+        """
+        scale = max(left[1], right[1])
+        digits = max(left[0] - left[1], right[0] - right[1])
+        return DType("Decimal", (min(digits + scale, Decimals.MAX_PRECISION), scale))
+
+    @_joined.before("2.0.0")
+    def _larger(self, left: tuple[int, int], right: tuple[int, int]) -> DType:
+        """Join two decimals as the older releases do: the larger precision and the larger scale.
+
+        Args:
+            left: The precision and the scale of the left decimal.
+            right: The precision and the scale of the right decimal.
+
+        Returns:
+            The decimal.
+
+        Example:
+            >>> _DecimalArms()._larger((10, 2), (3, 3))
+            Decimal(precision=10, scale=3)
+        """
+        return DType("Decimal", (max(left[0], right[0]), max(left[1], right[1])))
 
     def _fits(self, integer: str, precision: int, scale: int) -> bool:
         """Say whether the largest value of an integer type fits a decimal.
@@ -907,7 +982,10 @@ class _DynamicJoin:
             The answer of the arm that applies, or `None`.
 
         Example:
-            >>> _DynamicJoin(SupertypeFlag.default())._number(DType("Int8"), DType.unknown("float"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     join._number(DType("Int8"), DType.unknown("float"))
             _Matched(dtype=Float64)
         """
         what = literal.args[0]
@@ -919,8 +997,48 @@ class _DynamicJoin:
         if Is.float(dtype):
             return _Matched(dtype)
         if what == "float" and Is.integer(dtype):
-            return _Matched(DType("Float64") if Is.known(dtype) else DType.unknown("float"))
+            return _Matched(self._float_beside_integer(dtype))
         return None
+
+    @polars_releases
+    def _float_beside_integer(self, dtype: DType) -> DType:
+        """Join a float literal with an integer: `Float64` beside a known integer.
+
+        Args:
+            dtype: The integer type.
+
+        Returns:
+            `Float64` beside a known integer, and the planner type of a float
+            literal beside an integer literal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     known = join._float_beside_integer(DType("Int8"))
+            ...     literal = join._float_beside_integer(DType.dynamic_int(1))
+            >>> known, literal.args
+            (Float64, ('float', None))
+        """
+        return DType("Float64") if Is.known(dtype) else DType.unknown("float")
+
+    @_float_beside_integer.before("1.43.0")
+    def _float_literal_beside_integer(self, dtype: DType) -> DType:
+        """Join a float literal with any integer into the planner type of a float literal.
+
+        Args:
+            dtype: The integer type.
+
+        Returns:
+            The planner type of a float literal.
+
+        Example:
+            >>> join = _DynamicJoin(SupertypeFlag.default())
+            >>> join._float_literal_beside_integer(DType("Int8")).args
+            ('float', None)
+        """
+        del dtype
+        return DType.unknown("float")
 
     def _null(self, dtype: DType, literal: DType) -> _Matched | None:
         """Keep a literal beside `Null`.
