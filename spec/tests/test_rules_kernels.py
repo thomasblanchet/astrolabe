@@ -49,6 +49,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     KernelFlags,
     KernelSamples,
     NestedKinds,
@@ -67,6 +68,7 @@ from astrolabe._rules.kernels.binary import OperatorKernel
 from astrolabe._rules.kernels.comparison import CompareOp, Comparison
 from astrolabe._rules.kernels.dispatch import Data, Dispatch, KernelFacts
 from astrolabe._rules.kernels.fill import FillNull
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.kernels.floats import FloatKernels, Log
 from astrolabe._rules.kernels.layout import LayoutKernels
 from astrolabe._rules.kernels.logic import BitOp, BitOps, BitwiseKernels
@@ -329,8 +331,8 @@ class PairCheck:
 
         Example:
             >>> check = PairCheck("add", SeriesArithmetic(NumericOp.ADD))
-            >>> check._answer(pl.Date(), pl.Int8(), Case(False, False))
-            raises InvalidOperationError
+            >>> check._answer(pl.Int8(), pl.Int16(), Case(False, False))
+            Int16
         """
         one = self._samples.series(left, nulls=case.left_nulls, one_row=case.left_one_row)
         other = self._samples.series(right, nulls=case.right_nulls, one_row=case.right_one_row)
@@ -495,7 +497,7 @@ class ExpressionCheck:
 
         Example:
             >>> check = ExpressionCheck(pl.col("l").log(pl.col("r")), LogRule())
-            >>> check._pair_problems(pl.Struct({"a": pl.Int8()}), pl.Float64())
+            >>> check._pair_problems(pl.Float32(), pl.Float64())
             []
         """
         problems = []
@@ -647,7 +649,9 @@ class UncastCheck:
         other = self._samples.series(right, nulls=False, one_row=False).alias("r")
         query = pl.DataFrame([one, other]).lazy().select(self._expression)
         flags = KernelFlags().uncast()
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=flags)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=flags, engine="in-memory")["o"].dtype
+        )
 
 
 @dataclass(frozen=True)
@@ -850,7 +854,7 @@ class UnaryCheck:
             The answer.
 
         Example:
-            >>> UnaryCheck(pl.col("x").exp(), FloatKernels.EXP)._answer(pl.Date(), nulls=False)
+            >>> UnaryCheck(pl.col("x").exp(), FloatKernels.EXP)._answer(pl.Int8(), nulls=False)
             Float64
             >>> grouped = UnaryCheck(pl.col("x").sum(), NumericKernels.SUM_GROUPS, grouped=True)
             >>> grouped._answer(pl.Date(), nulls=False)
@@ -994,7 +998,7 @@ class CrashCheck:
 
         Example:
             >>> struct = pl.Struct({"a": pl.Int8()})
-            >>> CrashCheck("sqrt", FloatKernels.SQRT).cells([pl.Int8(), struct])
+            >>> CrashCheck("exp", FloatKernels.EXP).cells([pl.Int8(), struct])
             [Struct({'a': Int8})]
         """
         cells = []
@@ -1173,7 +1177,9 @@ class FillCheck:
         column: pl.Expr = pl.col("v").head(1) if one_row else pl.col("v")
         filler: pl.Expr = pl.col("f")
         query = frame.select(column.fill_null(filler).alias("o"))
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=self._flags)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=self._flags, engine="in-memory")["o"].dtype
+        )
 
 
 class OutOfProcess:
@@ -1285,9 +1291,11 @@ class Kernels:
         "bitwise_xor": (lambda column: column.bitwise_xor(), BitwiseKernels.REDUCE),
         "log": (lambda column: column.log(), LogOfBase()),
         "neg": (lambda column: column.neg(), NumericKernels.NEGATE),
-        "round": (lambda column: column.round(), NumericKernels.KEEP_NUMBER),
-        "floor": (lambda column: column.floor(), NumericKernels.KEEP_NUMBER),
-        "ceil": (lambda column: column.ceil(), NumericKernels.KEEP_NUMBER),
+        "round": (lambda column: column.round(), NumericKernels().rounding()),
+        "round 2": (lambda column: column.round(2), NumericKernels().rounding(2)),
+        "floor": (lambda column: column.floor(), NumericKernels().rounding()),
+        "ceil": (lambda column: column.ceil(), NumericKernels().rounding()),
+        "sign": (lambda column: column.sign(), NumericKernels.SIGN),
         "truncate": (lambda column: column.truncate(), NumericKernels.KEEP_NUMBER),
         "round_sig_figs": (
             lambda column: column.round_sig_figs(2),
@@ -1313,7 +1321,33 @@ class Kernels:
     GROUPED: ClassVar[dict[str, tuple[Callable[[pl.Expr], pl.Expr], Dispatch]]] = {
         "sum": (lambda column: column.sum(), NumericKernels.SUM_GROUPS),
     }
-    CRASHING: ClassVar[tuple[str, ...]] = ("sqrt", "cbrt", "exp", "log1p", "log")
+    CRASHING: ClassVar[tuple[str, ...]] = ("exp", "log1p", "log")
+    CHECKED: ClassVar[tuple[str, ...]] = ("sqrt", "cbrt")
+
+    @classmethod
+    def crashing(cls) -> tuple[str, ...]:
+        """Give the float kernels that end the process over a struct, in the installed release.
+
+        `sqrt` and `cbrt` check the type that their cast gives from polars
+        1.44.0, so a struct raises there, and the other tests of the kernels
+        run it in this process. From polars 2.0.0, the planner refuses a
+        struct in `exp`, `log1p` and `log` before their kernel runs, so no
+        cell ends the process.
+
+        Returns:
+            The names of the kernels.
+
+        Example:
+            >>> newest = PolarsRelease.installed() >= PolarsRelease.parse("2.0.0")
+            >>> ("log" in Kernels.crashing()) is not newest
+            True
+        """
+        installed = PolarsRelease.installed()
+        if installed < PolarsRelease.parse("1.44.0"):
+            return cls.CHECKED + cls.CRASHING
+        if installed < PolarsRelease.parse("2.0.0"):
+            return cls.CRASHING
+        return ()
 
     def every_dtype(self) -> list[pl.DataType]:
         """Give the types of the rules and of the nested kernels, each once.
@@ -1473,7 +1507,7 @@ class TestUnaryKernels:
         problems = check.problems(Kernels().every_dtype())
         assert not problems, "\n".join(problems)
 
-    @pytest.mark.parametrize("function", Kernels.CRASHING)
+    @pytest.mark.parametrize("function", Kernels.crashing())
     def test_float_kernel_over_a_struct_ends_the_process(self, function: str) -> None:
         """Each cell where the dispatch says that the process ends does end it, in a subprocess."""
         _, dispatch = Kernels.UNARY[function]
@@ -1498,13 +1532,18 @@ class TestKernelFacts:
 
     @pytest.mark.parametrize("fact", KernelFacts.ALL, ids=lambda fact: fact.name)
     def test_probe_of_a_fact_panics(self, fact: KernelFact) -> None:
-        """The probe of each fact panics in polars, as its reason says."""
+        """The probe of each fact panics in polars, as its reason says.
+
+        In a release older than the first one that shows the fact, the probe runs.
+        """
         namespace = {"pl": pl}
         probe = fact.probe
         answer = PolarsAnswer().answer(
             lambda: eval(probe, namespace).dtype,  # ruff: ignore[suspicious-eval-usage],
         )
-        assert answer == Stopped(Stop.PANICS)
+        first = PolarsRelease.parse(fact.since) if fact.since is not None else None
+        older = first is not None and PolarsRelease.installed() < first
+        assert (answer != Stopped(Stop.PANICS)) if older else (answer == Stopped(Stop.PANICS))
 
 
 TEXTS: tuple[str, ...] = (
@@ -1661,7 +1700,7 @@ class KernelTrees:
         True
     """
 
-    TREES: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+    TREES: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = ApiGate().kept({
         "business days of a week with no business day": (
             {"d": TreeColumns.DATES},
             pl.col("d").dt.add_business_days(1, week_mask=[False] * 7),
@@ -1871,30 +1910,46 @@ class KernelTrees:
             {},
             pl.lit("01:02 am").str.strptime(pl.Time, "%I:%M %p"),
         ),
-        "ewm_sum_by of a correlation of two literals": (
-            {},
-            TemplateCall("pl.col('x').ewm_sum_by(by='t', half_life='1d')")(
-                TemplateCall("pl.corr('x', 'y')")(pl.lit(300), pl.lit({"a": 1})),
-                pl.col("l").head(0),
-            ),
+        **ApiGate().built(
+            "ewm_sum_by",
+            lambda: {
+                "ewm_sum_by of a correlation of two literals": (
+                    {},
+                    TemplateCall("pl.col('x').ewm_sum_by(by='t', half_life='1d')")(
+                        TemplateCall("pl.corr('x', 'y')")(pl.lit(300), pl.lit({"a": 1})),
+                        pl.col("l").head(0),
+                    ),
+                ),
+            },
         ),
         "fill by one of a null literal of a narrow decimal": (
             {},
             pl.lit(None, dtype=pl.Decimal(2, 2)).fill_null(strategy="one"),  # type: ignore[invalid-call-shape]
         ),
-    }
-    UNDECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+    })
+    # A base of categories reads the ids of the categories of the process. From
+    # polars 2.0.0, the cast of the base to an integer refuses a category, so
+    # the tree raises in every process and joins the trees that the rules decide.
+    CATEGORICAL_BASE: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
         "to_integer by a categorical base": (
             {"n": TreeColumns.NUMBERS, "c": TreeColumns.CATEGORIES},
             pl.col("n").str.to_integer(base=pl.col("c")),
         ),
     }
+    NEWEST: ClassVar[bool] = PolarsRelease.installed() >= PolarsRelease.parse("2.0.0")
+    UNDECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = (
+        {} if NEWEST else CATEGORICAL_BASE
+    )
+    DECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+        **TREES,
+        **(CATEGORICAL_BASE if NEWEST else {}),
+    }
 
 
-@pytest.mark.parametrize("name", sorted(KernelTrees.TREES))
+@pytest.mark.parametrize("name", sorted(KernelTrees.DECIDED))
 def test_a_tree_reaches_a_path_of_the_kernels(name: str) -> None:
     """The four answers of the rules match polars, for a tree that reaches one path of a kernel."""
-    columns, expression = KernelTrees.TREES[name]
+    columns, expression = KernelTrees.DECIDED[name]
     frame = TreeFrame(columns)
     assert frame.rules(expression) == frame.polars(expression)
 

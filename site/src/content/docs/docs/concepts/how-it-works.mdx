@@ -17,7 +17,7 @@ When the expression reaches a frame, for example in `select` or `with_columns`, 
 
 The plugin works out each data type with the typing rules of Polars. The rules are translated from the source code of Polars, and they are tested against Polars itself: a test runs each rule and the real Polars call over many data types, and compares the answers. A few behaviors of Polars follow no rule that the checker can state, and [Polars behaviors](../../spec/polars-behaviors/) lists them.
 
-The rules match one release of Polars, 1.43.2. Another release can type some calls differently.
+Some rules change between releases of Polars. The plugin reads the release that your project installs, and applies the rules of that release. It supports each release from 1.39.3 to 2.0.
 
 ## Calls are generic
 

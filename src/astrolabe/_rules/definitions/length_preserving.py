@@ -313,7 +313,7 @@ class LengthPreserving:
         type_function=Mapper(FieldsMapper.with_same_dtype),
         options=COUNTED,
         casts=FunctionCasting(),
-        kernel=AllInputs(Shift(), group_lengths=True),
+        kernel=LiteralInputs(Shift(), group_lengths=True),
     )
     SHIFT_AND_FILL: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "ShiftAndFill"),
@@ -323,7 +323,7 @@ class LengthPreserving:
             ScalarInput.named(2, "fill_value"),
         ),
         casts=OwnRuleCasts(ShiftFillCasts()),
-        kernel=AllInputs(ShiftFilled(), group_lengths=True),
+        kernel=LiteralInputs(ShiftFilled(), group_lengths=True),
     )
     DIFF: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Diff"),
@@ -385,7 +385,7 @@ class LengthPreserving:
             NodeOption.integer("function", "EwmStd", "options", "min_periods"),
             bias=NodeOption.flag("function", "EwmStd", "options", "bias"),
         ),
-        type_function=Mapper(FieldsMapper.map_numeric_to_float_dtype, coerce_decimal=True),
+        type_function=Mapper(FieldsMapper.ewm_var_dtype, op="ewm_std"),
         options=KEEPS,
         casts=OwnRuleCasts(EwmCasts()),
         kernel=OneInput(WindowKernels.EWM_RECAST),
@@ -397,7 +397,7 @@ class LengthPreserving:
             NodeOption.integer("function", "EwmVar", "options", "min_periods"),
             bias=NodeOption.flag("function", "EwmVar", "options", "bias"),
         ),
-        type_function=Mapper(FieldsMapper.var_dtype),
+        type_function=Mapper(FieldsMapper.ewm_var_dtype, op="ewm_var"),
         options=KEEPS,
         casts=OwnRuleCasts(EwmCasts()),
         kernel=OneInput(WindowKernels.EWM_RECAST),
@@ -500,7 +500,7 @@ class LengthPreserving:
         identity=NodeIdentity("Function", "RollingExpr.Std"),
         short=WindowNulls(WindowOptions.PERIODS),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.moment_dtype),
+        type_function=Mapper(FieldsMapper.var_dtype, op="std"),
         options=KEEPS,
         casts=FunctionCasting(),
         kernel=LiteralInputs(
@@ -628,7 +628,7 @@ class LengthPreserving:
     )
     ROLLING_STD_BY: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "RollingExprBy.StdBy"),
-        type_function=Mapper(FieldsMapper.moment_dtype),
+        type_function=Mapper(FieldsMapper.var_dtype, op="std"),
         options=KEEPS,
         casts=FunctionCasting(),
         kernel=AllInputs(

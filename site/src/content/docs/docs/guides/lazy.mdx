@@ -23,6 +23,6 @@ A lazy frame plans its query before it runs it. To plan each step, Polars uses t
 
 <Example name="lazy_planned" />
 
-Here, the cumulative sum of a `Decimal(10, 2)` column produces a `Decimal(38, 2)` when the query runs, but Polars plans it as a `Decimal(10, 2)`. The later steps of the lazy query see the planned data type.
+Here, the cumulative sum of a `Decimal(10, 2)` column produces a `Decimal(38, 2)` when the query runs, but Polars 1.x plans it as a `Decimal(10, 2)`. The later steps of the lazy query see the planned data type. From Polars 2.0, the plan gives `Decimal(38, 2)` too, so the column holds one data type.
 
 To give the column a single data type, cast it: `pl.col("price").cum_sum().cast(pl.Decimal(38, 2))`.

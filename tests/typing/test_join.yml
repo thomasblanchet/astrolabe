@@ -1040,6 +1040,30 @@
     reveal_type(df.join(on="id"))  # E: Missing positional argument "other" in call to "join" of "DataFrame"  [call-arg] # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: join_non_literal_how_falls_back_to_untyped
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    how_value: str
+    reveal_type(left.join(right, on="foo", how=how_value))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "join" of "DataFrame" has incompatible type "str"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']"  [arg-type]
+
+- case: join_non_literal_how_falls_back_to_untyped_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -1062,6 +1086,29 @@
     reveal_type(left.join(right, on="foo", how=how_value))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "join" of "DataFrame" has incompatible type "str"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross', 'outer']"  [arg-type]
 
 - case: join_unrecognized_how_value_falls_back_to_untyped
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+    reveal_type(left.join(right, on="foo", how="left_semi"))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: Argument "how" to "join" of "DataFrame" has incompatible type "Literal['left_semi']"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']"  [arg-type]
+
+- case: join_unrecognized_how_value_falls_back_to_untyped_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -1253,7 +1300,39 @@
 
     narrowed: TypedDataFrame[NarrowedSchema] = left.join(right, on="foo")
 
-- case: join_how_outer_normalizes_to_full
+- case: join_how_outer_is_refused
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class LeftSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+
+    # Polars 2.0.0 removes the alias "outer" of "full": its signature
+    # refuses it, and the call raises ValueError.
+    Left = TypedDataFrame[LeftSchema]
+
+    class RightSchema(Columns):
+        foo: pl.Int64
+        baz: pl.Int64
+
+    Right = TypedDataFrame[RightSchema]
+
+    left: Left
+    right: Right
+
+    class JoinedSchema(Columns):
+        foo: pl.Int64
+        bar: pl.String
+        foo_right: pl.Int64
+        baz: pl.Int64
+
+    joined: TypedDataFrame[JoinedSchema] = left.join(right, on="foo", how="outer")  # E: Argument "how" to "join" of "DataFrame" has incompatible type "Literal['outer']"; expected "Literal['inner', 'left', 'right', 'full', 'semi', 'anti', 'cross']"  [arg-type]
+
+- case: join_how_outer_normalizes_to_full_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2032,6 +2111,33 @@
     reveal_type(left.join_where(right, pl.col("x") > pl.col("x_right")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Int64, 'a': polars.datatypes.classes.String, 'x': polars.datatypes.classes.Int64, 'b': polars.datatypes.classes.Int64, 'x_right': polars.datatypes.classes.Int64}, closed=True), None]"
 
 - case: a_planned_join_key_must_agree_at_both_types
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedLazyFrame
+
+    class Rows(Columns):
+        dec: Decimal[Literal[10], Literal[2]]
+
+    class Narrow(Columns):
+        d: Decimal[Literal[10], Literal[2]]
+
+    class Wide(Columns):
+        d: Decimal[Literal[38], Literal[2]]
+
+    lf: TypedLazyFrame[Rows]
+    narrow: TypedLazyFrame[Narrow]
+    wide: TypedLazyFrame[Wide]
+    planned = lf.with_columns(d=pl.col("dec").cum_sum())
+    planned.join(narrow, on="d")  # E: Join key "d" is Decimal on the left and Decimal on the right  [join-key-dtype]
+    planned.join(wide, on="d")
+    planned.join_asof(narrow, on="d")  # E: Join key "d" is Decimal on the left and Decimal on the right  [join-key-dtype]
+    reveal_type(planned.join(planned, on="d"))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]], 'dec_right': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+- case: a_planned_join_key_must_agree_at_both_types_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
 

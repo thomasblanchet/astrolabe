@@ -197,6 +197,7 @@
     reveal_type(df.unnest("bar", separator=sep))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: unnest_auto_detects_the_only_struct_column_when_omitted
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -215,6 +216,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = df.unnest()
 
 - case: unnest_auto_detects_with_explicit_none_columns
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -233,6 +235,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(columns=None)
 
 - case: unnest_auto_detects_every_struct_column_in_frame_order
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -255,6 +258,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = df.unnest()
 
 - case: unnest_auto_detect_field_collision_between_two_structs_errors
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -284,6 +288,7 @@
     narrowed: Frame = df.unnest(columns=[])
 
 - case: unnest_none_columns_with_more_columns_uses_only_more_columns
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -306,7 +311,25 @@
 
     narrowed: TypedDataFrame[NarrowedSchema] = df.unnest(None, "meta")
 
+- case: unnest_needs_its_columns_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        bar: Struct[Column[Literal["baz"], pl.String]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Before polars 1.40.0, `unnest` has no default for its columns, and refuses `None`.
+    df.unnest()  # E: Missing positional argument "columns" in call to "unnest" of "DataFrame"  [call-arg]
+    df.unnest(columns=None)  # E: Argument "columns" to "unnest" of "DataFrame" has incompatible type "None"; expected "str | Selector | Collection[str | Selector]"  [arg-type]
+    df.unnest(None, "bar")  # E: Argument 1 to "unnest" of "DataFrame" has incompatible type "None"; expected "str | Selector | Collection[str | Selector]"  [arg-type]
+
 - case: unnest_auto_detect_with_no_struct_columns_is_a_noop
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame

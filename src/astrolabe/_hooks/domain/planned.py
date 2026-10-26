@@ -107,6 +107,7 @@ class PlannedMap:
         self,
         typ: MypyType,
         rule: Callable[[MypyType], MypyType | None],
+        planner: Callable[[MypyType], MypyType | None] | None = None,
     ) -> MypyType | None:
         """Map each of the two data types of a column, and hold both where they still differ.
 
@@ -114,6 +115,7 @@ class PlannedMap:
             typ: The data type of the column.
             rule: The map of one data type, which gives `None` where it has
                 no answer.
+            planner: The map of the planner type, where it differs from `rule`.
 
         Returns:
             The mapped type: `Planned[run, planner]` where the two maps
@@ -125,7 +127,7 @@ class PlannedMap:
             >>> PlannedMap(new_plugin(fixture)).mapped(int_dtype(fixture), lambda typ: None)
         """
         run = rule(self._planned.run(typ))
-        stored = rule(self._planned.stored(typ))
+        stored = (planner or rule)(self._planned.stored(typ))
         if run is None or stored is None:
             return None
         if is_same_type(run, stored):
