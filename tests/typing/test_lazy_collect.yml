@@ -131,7 +131,7 @@
 
     lf: LzFrame
     flag: bool
-    lf.collect(background=flag)  # E: No overload variant of "collect" of "LazyFrame" matches argument type "bool"  [call-overload] # N: Possible overload variants: # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[True], optimizations: QueryOptFlags = ...) -> InProcessQuery # N:     def collect(self, *, type_coercion: bool = ..., predicate_pushdown: bool = ..., projection_pushdown: bool = ..., simplify_expression: bool = ..., slice_pushdown: bool = ..., comm_subplan_elim: bool = ..., comm_subexpr_elim: bool = ..., cluster_with_columns: bool = ..., collapse_joins: bool = ..., no_optimization: bool = ..., engine: Literal['auto', 'in-memory', 'streaming', 'gpu'] | GPUEngine = ..., background: Literal[False] = ..., optimizations: QueryOptFlags = ...) -> DataFrame
+    lf.collect(background=flag)  # E: No overload variant of "collect" of "LazyFrame" matches argument type "bool"  [call-overload] # N: Possible overload variants: # NR:     def collect\(self, \*, .*, background: Literal\[True\], .*\) -> InProcessQuery$ # NR:     def collect\(self, \*, .*, background: Literal\[False\] = \.\.\., .*\) -> DataFrame$
 
 - case: collect_narrows_to_typed_dataframe_on_open_receiver
   main: |
@@ -176,6 +176,28 @@
     reveal_type(lf.collect())  # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: a_lazy_frame_plans_a_later_step_at_the_stored_type
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        i8: pl.Int8
+        dec: Decimal[Literal[10], Literal[2]]
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    planned = lf.with_columns(d=pl.col("i8") * pl.col("dec"))
+    reveal_type(planned)  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(planned.collect())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    reveal_type(planned.with_columns(o=pl.col("i8").fill_null(pl.col("d"))).collect())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]], 'o': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+    eager = df.with_columns(d=pl.col("i8") * pl.col("dec"))
+    reveal_type(eager.with_columns(o=pl.col("i8").fill_null(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8, 'dec': astrolabe.frame.Decimal[Literal[10], Literal[2]], 'd': astrolabe.frame.Decimal[Literal[38], Literal[2]], 'o': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+- case: a_lazy_frame_plans_a_later_step_at_the_stored_type_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
 
@@ -214,6 +236,42 @@
         reveal_type(lf.select(cs.numeric().abs()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict(main.Rows, {'d': astrolabe.frame.Planned[polars.datatypes.classes.Float64, polars.datatypes.classes.Float32]}, closed=True), None]"
 
 - case: a_declared_planned_column_plans_a_later_step_at_its_stored_type
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, Planned, TypedLazyFrame, column
+
+    Wide = Decimal[Literal[38], Literal[2]]
+    Narrow = Decimal[Literal[10], Literal[2]]
+
+    class Rows(Columns):
+        i8: pl.Int8
+        dec: Narrow
+
+    class Stored(Columns):
+        i8: pl.Int8
+        dec: Narrow
+        d: Planned[Wide, Narrow]
+
+    lf: TypedLazyFrame[Rows]
+
+    # From polars 2.0.0, the planner gives `pl.col("i8") * pl.col("dec")`
+    # the type of the run, so the column comes from a declaration.
+    def stepped(stored: TypedLazyFrame[Stored]) -> None:
+        reveal_type(stored.select(o=pl.col("i8").fill_null(pl.col("d"))))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'o': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+    # A declared column that reads such a column takes its stored type too.
+    Total = column("d", Wide)
+
+    def filled(frame: TypedLazyFrame[Stored], d: Total) -> None:
+        reveal_type(frame.select(o=pl.col("i8").fill_null(d)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'o': astrolabe.frame.Decimal[Literal[10], Literal[2]]}, closed=True), None]"
+
+    wide: TypedLazyFrame[Rows] = lf.with_columns(dec=pl.col("dec").cum_sum())  # E: Incompatible types in assignment (expression has type "TypedLazyFrame[TypedDict({'i8': Int8, 'dec': Decimal[Literal[38], Literal[2]]}), None]", variable has type "TypedLazyFrame[Rows, None]")  [assignment]
+
+- case: a_declared_planned_column_plans_a_later_step_at_its_stored_type_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
 

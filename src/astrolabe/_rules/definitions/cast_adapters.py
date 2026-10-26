@@ -11,16 +11,22 @@ code that evaluates a node makes (`CastRule`).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from astrolabe._rules.cast_pass import (
     BinaryCasts,
+    CastNodeVisit,
     CastOption,
     FunctionCasts,
     Namespace,
     Step,
+    StepOperand,
     Visit,
+    VisitTurn,
 )
+from astrolabe._rules.options import CastingRules
+from astrolabe._rules.releases import polars_releases
+from astrolabe._rules.supertype import Supertype
 from astrolabe._rules.definitions.node_options import (
     NodeOptions,
     OptionValue,
@@ -39,13 +45,19 @@ if TYPE_CHECKING:
 class CastRule(Protocol):
     """Give the changes of one visit of the cast pass of polars to a node."""
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give the steps of each input, or raise `PolarsRefusal` where the pass refuses.
 
         Args:
             inputs: The inputs as the node reads them at that visit.
             options: The options of the node.
-            again: Whether the pass visits the node a second time.
+            turn: The visit of the cast pass.
         """
 
     def at(self, node: NodeOptions) -> CastRule:
@@ -63,27 +75,33 @@ class NoCasts:
     Example:
         >>> from astrolabe._rules.options import FunctionOptions
         >>> from astrolabe._rules.type_functions import Operand
-        >>> NoCasts().visit([Operand.of_value(1)], FunctionOptions(), again=False)
+        >>> NoCasts().visit([Operand.of_value(1)], FunctionOptions(), turn=VisitTurn.FIRST)
         Visit(steps=((),), root=None)
     """
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give a visit that changes nothing.
 
         Args:
             inputs: The inputs.
             options: The options of the node.
-            again: Whether the pass visits the node a second time.
+            turn: The visit of the cast pass.
 
         Returns:
             The visit.
 
         Example:
             >>> from astrolabe._rules.options import FunctionOptions
-            >>> NoCasts().visit([], FunctionOptions(), again=True).steps
+            >>> NoCasts().visit([], FunctionOptions(), turn=VisitTurn.SECOND).steps
             ()
         """
-        del options, again
+        del options, turn
         return Visit.unchanged(len(inputs))
 
     def at(self, node: NodeOptions) -> NoCasts:
@@ -113,19 +131,25 @@ class OperatorCasts:
         >>> from astrolabe._rules.options import FunctionOptions
         >>> from astrolabe._rules.type_functions import Operand
         >>> inputs = [Operand.column(DType("Int8")), Operand.column(DType("Int16"))]
-        >>> OperatorCasts(Operator.PLUS).visit(inputs, FunctionOptions(), again=False)
+        >>> OperatorCasts(Operator.PLUS).visit(inputs, FunctionOptions(), turn=VisitTurn.FIRST)
         Visit(steps=((cast(Int16, non_strict),), ()), root=None)
     """
 
     operator: Operator
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give the casts of the visit (`BinaryCasts`).
 
         Args:
             inputs: The left input and the right input.
             options: The options of the node, which a binary operator does not have.
-            again: Whether the pass visits the node a second time.
+            turn: The visit of the cast pass.
 
         Returns:
             The visit.
@@ -136,10 +160,11 @@ class OperatorCasts:
             >>> from astrolabe._rules.options import FunctionOptions
             >>> from astrolabe._rules.type_functions import Operand
             >>> same = [Operand.column(DType("Int8"))] * 2
-            >>> OperatorCasts(Operator.PLUS).visit(same, FunctionOptions(), again=True).steps
+            >>> turn = VisitTurn.SECOND
+            >>> OperatorCasts(Operator.PLUS).visit(same, FunctionOptions(), turn=turn).steps
             ((), ())
         """
-        del options, again
+        del options, turn
         return BinaryCasts().visit(self.operator, inputs[0], inputs[1])
 
     def at(self, node: NodeOptions) -> OperatorCasts:
@@ -178,21 +203,27 @@ class FunctionCasting:
         >>> from astrolabe._rules.type_functions import Operand
         >>> fill = FunctionOptions.elementwise().with_supertyping(SupertypeFlag.default())
         >>> inputs = [Operand.column(DType("Int8")), Operand.of_value(300)]
-        >>> FunctionCasting().visit(inputs, fill, again=False)
+        >>> FunctionCasting().visit(inputs, fill, turn=VisitTurn.FIRST)
         Visit(steps=((cast(Int16, strict),), (literal(Int16),)), root=None)
-        >>> FunctionCasting().visit(inputs, fill, again=True).steps
+        >>> FunctionCasting().visit(inputs, fill, turn=VisitTurn.SECOND).steps
         ((), ())
     """
 
     namespace: Namespace = Namespace.NONE
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give the casts of the visit.
 
         Args:
             inputs: The inputs of the function.
             options: The options of the function.
-            again: Whether the pass visits the function a second time.
+            turn: The visit of the cast pass.
 
         Returns:
             The visit.
@@ -202,11 +233,12 @@ class FunctionCasting:
             >>> from astrolabe._rules.dtypes import DType
             >>> from astrolabe._rules.type_functions import Operand
             >>> inputs = [Operand.column(DType("Int8"))]
-            >>> FunctionCasting().visit(inputs, FunctionOptions.elementwise(), again=False).steps
+            >>> turn = VisitTurn.FIRST
+            >>> FunctionCasting().visit(inputs, FunctionOptions.elementwise(), turn=turn).steps
             ((),)
         """
         rules = options.cast_options
-        if rules is None or again:
+        if rules is None or turn is VisitTurn.SECOND:
             return Visit.unchanged(len(inputs))
         return FunctionCasts(rules, self.namespace).visit(inputs)
 
@@ -222,6 +254,145 @@ class FunctionCasting:
         Example:
             >>> FunctionCasting().at(NodeOptions({"Function": {}}))
             FunctionCasting(namespace=<Namespace.NONE: 'none'>)
+        """
+        del node
+        return self
+
+
+@dataclass(frozen=True)
+class SupertypeConversion:
+    """Give the casts of a function whose inputs the conversion casts to their supertype.
+
+    `append` is such a function. When polars converts the expression, it puts
+    a cast to the supertype of the two inputs above each input of another
+    type, and the node keeps the casting rule of a supertype. The cast pass
+    then visits those casts as it visits any cast node (`CastNodeVisit`).
+    Where the supertype is a known type, both inputs reach the node with that
+    type, so its casting rule changes nothing. Where the supertype is the
+    planner type `Unknown(Any)`, the cast pass of some releases takes those
+    casts away. The root reads its inputs after the visits of the casts
+    (`VisitTurn.ROOT`). Where the casts went, it reads the types of its inputs
+    again, and its casting rule refuses them. Any other node reads the casts
+    at its first visit, and the pass takes its casting rule away there.
+    Before polars 1.40.0, the conversion puts no cast, and the node has no
+    casting rule: the kernel casts the data (`Appended`).
+
+    Example:
+        >>> from astrolabe._rules.dtypes import DType
+        >>> from astrolabe._rules.options import FunctionOptions
+        >>> from astrolabe._rules.type_functions import Operand
+        >>> inputs = [Operand.column(DType("Int8")), Operand.of_value(300)]
+        >>> SupertypeConversion().visit(inputs, FunctionOptions(), turn=VisitTurn.ROOT).steps
+        ((), ())
+    """
+
+    RULE: ClassVar[CastingRules] = CastingRules.cast_to_supertypes()
+
+    @polars_releases
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
+        """Give the casts of the visit: none, or the refusal of the root.
+
+        Args:
+            inputs: The inputs of the function, before the casts of the conversion.
+            options: The options of the function.
+            turn: The visit of the cast pass.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> from astrolabe._rules.dtypes import DType
+            >>> from astrolabe._rules.options import FunctionOptions
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> inputs = [Operand.column(DType("Binary")), Operand.of_value(1)]
+            >>> turn = VisitTurn.FIRST
+            >>> SupertypeConversion().visit(inputs, FunctionOptions(), turn=turn).steps
+            ((), ())
+            >>> with PolarsRelease.pretend("1.44.1"):
+            ...     SupertypeConversion().visit(inputs, FunctionOptions(), turn=VisitTurn.ROOT)
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+        """
+        del options
+        if turn is VisitTurn.ROOT:
+            supertype = Supertype().require(inputs[0].dtype, inputs[1].dtype)
+            read = [self._read(operand, supertype) for operand in inputs]
+            FunctionCasts(self.RULE).visit(read)
+        return Visit.unchanged(len(inputs))
+
+    @visit.before("1.40.0")
+    def _no_rule(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
+        """Give the casts of the visit in the older releases: none, as the node has no casting rule.
+
+        Args:
+            inputs: The inputs of the function.
+            options: The options of the function.
+            turn: The visit of the cast pass.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> from astrolabe._rules.dtypes import DType
+            >>> from astrolabe._rules.options import FunctionOptions
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> inputs = [Operand.column(DType("Binary")), Operand.of_value(1)]
+            >>> turn = VisitTurn.ROOT
+            >>> SupertypeConversion()._no_rule(inputs, FunctionOptions(), turn=turn).steps
+            ((), ())
+        """
+        del options, turn
+        return Visit.unchanged(len(inputs))
+
+    def _read(self, operand: Operand, supertype: DType) -> Operand:
+        """Give an input as the root reads it, after the visit of its cast to the supertype.
+
+        Args:
+            operand: The input.
+            supertype: The supertype of the inputs.
+
+        Returns:
+            The input after its cast, or the input itself where it has no cast
+            or the visit took the cast away.
+
+        Example:
+            >>> from astrolabe._rules.dtypes import DType
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> SupertypeConversion()._read(Operand.column(DType("Int8")), DType("Int16"))
+            Operand(dtype=Int16, literal=False, value=None)
+        """
+        if operand.dtype.same(supertype):
+            return operand
+        step = CastNodeVisit().visit(operand, supertype, CastOption.NON_STRICT)
+        return operand if step is None else StepOperand().after(operand, (step,))
+
+    def at(self, node: NodeOptions) -> SupertypeConversion:
+        """Give the rule, which reads no option of the node.
+
+        Args:
+            node: The serialized root of the node.
+
+        Returns:
+            The same rule.
+
+        Example:
+            >>> SupertypeConversion().at(NodeOptions({"Function": {}}))
+            SupertypeConversion()
         """
         del node
         return self
@@ -244,20 +415,26 @@ class CastNode:
         >>> from astrolabe._rules.options import FunctionOptions
         >>> from astrolabe._rules.type_functions import Operand
         >>> cast = CastNode(DType("Int16"), CastOption.STRICT)
-        >>> cast.visit([Operand.column(DType("Int8"))], FunctionOptions(), again=False)
+        >>> cast.visit([Operand.column(DType("Int8"))], FunctionOptions(), turn=VisitTurn.FIRST)
         Visit(steps=((cast(Int16, strict),),), root=None)
     """
 
     target: DType | OptionValue[DType]
     option: CastOption | OptionValue[CastOption]
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give the step of the cast.
 
         Args:
             inputs: The input of the cast.
             options: The options of the node, which a cast does not have.
-            again: Whether the pass visits the node a second time.
+            turn: The visit of the cast pass.
 
         Returns:
             The visit.
@@ -267,11 +444,12 @@ class CastNode:
             >>> from astrolabe._rules.options import FunctionOptions
             >>> from astrolabe._rules.type_functions import Operand
             >>> cast = CastNode(DType("Int16"), CastOption.STRICT)
-            >>> cast.visit([Operand.column(DType("Int8"))], FunctionOptions(), again=True).steps
+            >>> turn = VisitTurn.SECOND
+            >>> cast.visit([Operand.column(DType("Int8"))], FunctionOptions(), turn=turn).steps
             ((),)
         """
         del options
-        if again:
+        if turn is VisitTurn.SECOND:
             return Visit.unchanged(len(inputs))
         values = OptionValues()
         target = values.known(self.target, "the target of the cast")
@@ -327,19 +505,26 @@ class OwnRuleCasts:
         >>> from astrolabe._rules.options import FunctionOptions
         >>> from astrolabe._rules.type_functions import Operand
         >>> inputs = [Operand.column(DType("String")), Operand.column(DType("Int8"))]
-        >>> OwnRuleCasts(PadLengthCasts()).visit(inputs, FunctionOptions(), again=False).steps
+        >>> turn = VisitTurn.FIRST
+        >>> OwnRuleCasts(PadLengthCasts()).visit(inputs, FunctionOptions(), turn=turn).steps
         ((), (cast(UInt64, strict),))
     """
 
     rule: FunctionRule | OptionValue[FunctionRule]
 
-    def visit(self, inputs: Sequence[Operand], options: FunctionOptions, *, again: bool) -> Visit:
+    def visit(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
         """Give the casts of the visit.
 
         Args:
             inputs: The inputs of the function.
             options: The options of the function, which the rule does not read.
-            again: Whether the pass visits the function a second time, which the rule does not read.
+            turn: The visit of the cast pass, which the rule does not read.
 
         Returns:
             The visit.
@@ -350,10 +535,11 @@ class OwnRuleCasts:
             >>> from astrolabe._rules.options import FunctionOptions
             >>> from astrolabe._rules.type_functions import Operand
             >>> inputs = [Operand.column(DType("String")), Operand.column(DType("UInt64"))]
-            >>> OwnRuleCasts(PadLengthCasts()).visit(inputs, FunctionOptions(), again=True).steps
+            >>> turn = VisitTurn.SECOND
+            >>> OwnRuleCasts(PadLengthCasts()).visit(inputs, FunctionOptions(), turn=turn).steps
             ((), ())
         """
-        del options, again
+        del options, turn
         return OptionValues().known(self.rule, "the rule of the cast pass").visit(inputs)
 
     def at(self, node: NodeOptions) -> OwnRuleCasts:

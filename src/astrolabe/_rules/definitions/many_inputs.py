@@ -18,7 +18,7 @@ from typing import ClassVar
 from astrolabe._rules.cast_pass import IsBetweenCasts, IsInCasts, ReplaceCasts
 from astrolabe._rules.definitions.binary_operators import OperatorNode
 from astrolabe._rules.definitions.cast_adapters import FunctionCasting, OwnRuleCasts
-from astrolabe._rules.definitions.definition import Definition
+from astrolabe._rules.definitions.definition import Definition, ShapeSince
 from astrolabe._rules.definitions.kernel_adapters import AllInputs, LiteralInputs
 from astrolabe._rules.definitions.node_options import FromOptions, NodeIdentity, NodeOption
 from astrolabe._rules.definitions.overrides import NullsGiveFirstInput
@@ -54,12 +54,13 @@ class ManyInputs:
     NO_TEXT: ClassVar[SupertypeFlag] = (
         SupertypeFlag.default() & ~SupertypeFlag.ALLOW_PRIMITIVE_TO_STRING
     )
-    JOINED: ClassVar[Shape] = Shape.function(
-        FunctionOptions
-        .elementwise()
-        .flag(FunctionFlag.INPUT_WILDCARD_EXPANSION)
-        .with_supertyping(SupertypeFlag.default()),
+    EXPANDED: ClassVar[FunctionOptions] = FunctionOptions.elementwise().flag(
+        FunctionFlag.INPUT_WILDCARD_EXPANSION,
     )
+    EXTREMES: ClassVar[FunctionOptions] = FunctionOptions.elementwise().flag(
+        FunctionFlag.INPUT_WILDCARD_EXPANSION | FunctionFlag.ALLOW_RENAME,
+    )
+    JOINED: ClassVar[Shape] = Shape.function(EXPANDED.with_supertyping(SupertypeFlag.default()))
     BOOLEAN: ClassVar[DType] = DType("Boolean")
 
     COALESCE: ClassVar[Definition] = Definition(
@@ -72,11 +73,10 @@ class ManyInputs:
     MAX_HORIZONTAL: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "MaxHorizontal"),
         type_function=Mapper(FieldsMapper.map_to_supertype),
-        options=Shape.function(
-            FunctionOptions
-            .elementwise()
-            .flag(FunctionFlag.INPUT_WILDCARD_EXPANSION | FunctionFlag.ALLOW_RENAME)
-            .with_supertyping(NO_TEXT),
+        options=ShapeSince(
+            Shape.function(EXTREMES.with_supertyping(NO_TEXT)),
+            "1.40.0",
+            Shape.function(EXTREMES),
         ),
         casts=FunctionCasting(),
         kernel=AllInputs(HorizontalExtreme(CompareOp.GT), own_lengths=False),
@@ -84,11 +84,10 @@ class ManyInputs:
     MIN_HORIZONTAL: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "MinHorizontal"),
         type_function=Mapper(FieldsMapper.map_to_supertype),
-        options=Shape.function(
-            FunctionOptions
-            .elementwise()
-            .flag(FunctionFlag.INPUT_WILDCARD_EXPANSION | FunctionFlag.ALLOW_RENAME)
-            .with_supertyping(NO_TEXT),
+        options=ShapeSince(
+            Shape.function(EXTREMES.with_supertyping(NO_TEXT)),
+            "1.40.0",
+            Shape.function(EXTREMES),
         ),
         casts=FunctionCasting(),
         kernel=AllInputs(HorizontalExtreme(CompareOp.LT), own_lengths=False),
@@ -99,7 +98,7 @@ class ManyInputs:
             FieldsMapper.map_to_supertype_with,
             func=FunctionClosures().sum_horizontal,
         ),
-        options=JOINED,
+        options=ShapeSince(JOINED, "1.40.0", Shape.function(EXPANDED)),
         casts=FunctionCasting(),
         kernel=NullsGiveFirstInput(
             AllInputs(

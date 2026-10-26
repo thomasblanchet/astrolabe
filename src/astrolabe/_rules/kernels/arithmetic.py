@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import Decimals, DType, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.dispatch import Data, RunCast
 from astrolabe._rules.kernels.nested import ArrayArithmetic, ListArithmetic, StructArithmetic
 from astrolabe._rules.kernels.temporal import DateOps, DatetimeOps, DurationOps, TimeOps
@@ -251,7 +252,8 @@ class _DecimalOps:
     """Give the type of an operation with a `Decimal` on the left.
 
     The right side must be a decimal too. The output has the largest precision
-    and the larger scale. A decimal has no remainder.
+    and the larger scale. Before polars 2.0.0, a decimal has no remainder
+    (`_check_remainder`).
 
     Example:
         >>> ten = DType("Decimal", (10, 2))
@@ -282,29 +284,50 @@ class _DecimalOps:
             The decimal type of the output.
 
         Raises:
-            PolarsRefusal: The operation is a remainder, or the right side is not a decimal.
+            PolarsRefusal: The right side is not a decimal.
 
         Example:
             >>> ten = DType("Decimal", (10, 2))
-            >>> _DecimalOps(NumericOp.REM).output(Data(ten), Data(ten))  # doctest: +ELLIPSIS
-            Traceback (most recent call last):
-            ...
-            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
             >>> _DecimalOps(NumericOp.ADD).output(Data(ten), Data(DType("Int8")))
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: Int8 is not a decimal
         """
-        if self._op is NumericOp.REM:
-            message = "a decimal has no remainder"
-            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._check_remainder()
         if right.dtype.name != "Decimal":  # pragma: no cover -- the caller coerces the inputs
             message = f"{right.dtype!r} is not a decimal"
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
         parameter = Parameter()
         scale = max(parameter.integer(left.dtype, 1), parameter.integer(right.dtype, 1))
         return Decimals().widest(scale)
+
+    @polars_releases
+    def _check_remainder(self) -> None:
+        """Accept every operation: from polars 2.0.0, a decimal has a remainder.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _DecimalOps(NumericOp.REM)._check_remainder()
+        """
+
+    @_check_remainder.before("2.0.0")
+    def _no_remainder(self) -> None:
+        """Refuse a remainder, as the older releases do.
+
+        Raises:
+            PolarsRefusal: The operation is a remainder.
+
+        Example:
+            >>> _DecimalOps(NumericOp.REM)._no_remainder()  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+        """
+        if self._op is NumericOp.REM:
+            message = "a decimal has no remainder"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
 
 
 class _NullOps:
@@ -449,10 +472,10 @@ class SeriesArithmetic:
     temporal left side, or a quotient with a `Duration` left side, goes to the
     left type at once. A product with a duration on the right swaps the sides,
     and a product or a quotient with another temporal side raises. A list or an
-    array runs leaf by leaf. A sum or a difference of a temporal series and a
-    series that is not temporal raises. Every other pair is coerced
-    (`Coercion`), and the left type runs its arithmetic (`NumOps`). `/` is the
-    division of Rust: two integers give an integer.
+    array runs leaf by leaf. From polars 1.43.0, a sum or a difference of a
+    temporal series and a series that is not temporal raises. Every other
+    pair is coerced (`Coercion`), and the left type runs its arithmetic
+    (`NumOps`). `/` is the division of Rust: two integers give an integer.
 
     Example:
         >>> SeriesArithmetic(NumericOp.ADD).output(Data(DType("Int8")), Data(DType("Float32")))
@@ -500,16 +523,18 @@ class SeriesArithmetic:
             left: The left input.
             right: The right input.
 
+        It raises `PolarsRefusal` where the sum or the difference has a
+        temporal series beside a series that is not temporal
+        (`_check_temporal`), or where the coercion refuses the pair.
+
         Returns:
             The type of the output.
 
-        Raises:
-            PolarsRefusal: The sum or the difference of a temporal series and a series that is not
-                temporal.
-
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> small, day = Data(DType("Int8")), Data(DType("Date"))
-            >>> SeriesArithmetic(NumericOp.SUB).output(small, day)  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     SeriesArithmetic(NumericOp.SUB).output(small, day)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
@@ -524,12 +549,45 @@ class SeriesArithmetic:
             return ListArithmetic(self._op).output(left, right)
         if "Array" in names:
             return ArrayArithmetic(self._op).output(left, right)
+        self._check_temporal(left, right)
+        coerced = self._coercion.of(left, right)
+        return self._numbers.output(coerced.left, coerced.right)
+
+    @polars_releases
+    def _check_temporal(self, left: Data, right: Data) -> None:
+        """Refuse a sum or a difference of a temporal series and a series that is not temporal.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Raises:
+            PolarsRefusal: The operation is a sum or a difference, and one side only is temporal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> small, wide = Data(DType("Int8")), Data(DType("Int16"))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     SeriesArithmetic(NumericOp.ADD)._check_temporal(small, wide)
+        """
         mixed = Is.temporal(left.dtype) != Is.temporal(right.dtype)
         if self._op in {NumericOp.ADD, NumericOp.SUB} and mixed:
             message = f"{self._op.value} of {left.dtype!r} and {right.dtype!r}"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
-        coerced = self._coercion.of(left, right)
-        return self._numbers.output(coerced.left, coerced.right)
+
+    @_check_temporal.before("1.43.0")
+    def _coerce_temporal(self, left: Data, right: Data) -> None:
+        """Pass every pair to the coercion, as the older releases do.
+
+        Args:
+            left: The left input.
+            right: The right input.
+
+        Example:
+            >>> small, day = Data(DType("Int8")), Data(DType("Date"))
+            >>> SeriesArithmetic(NumericOp.SUB)._coerce_temporal(small, day)
+        """
+        del left, right
 
     def right_named(self, left: Data, right: Data) -> bool:
         """Say whether the output series takes the name of the right input.
@@ -790,10 +848,11 @@ class FloorDivide:
     """Give the type of the floor division `//` of two series.
 
     Two structs run field by field, and a list or an array runs leaf by leaf.
-    Otherwise the left side must be a number. The kernel then reads the right
-    side as an array of the physical type of the left, with no check before, so
-    a right side whose physical type differs panics. The output keeps the left
-    type.
+    From polars 2.0.0, a `Decimal` beside a decimal or an integer gives a
+    decimal (`_decimals`). Otherwise the left side must be a number. The kernel
+    then reads the right side as an array of the physical type of the left,
+    with no check before, so a right side whose physical type differs panics.
+    The output keeps the left type.
 
     Example:
         >>> FloorDivide().output(Data(DType("Int32")), Data(DType("Date")))
@@ -823,6 +882,11 @@ class FloorDivide:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = Data(DType("Decimal", (10, 2)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide().output(Data(DType("Int8")), decimal)
+            Decimal(precision=38, scale=2)
         """
         names = {left.dtype.name, right.dtype.name}
         if names == {"Struct"}:
@@ -831,6 +895,9 @@ class FloorDivide:
             return ListArithmetic(NumericOp.FLOOR_DIV).output(left, right)
         if "Array" in names:
             return ArrayArithmetic(NumericOp.FLOOR_DIV).output(left, right)
+        decimal = self._decimals(left, right)
+        if decimal is not None:
+            return decimal
         if not Is.primitive_numeric(left.dtype):
             message = f"floor_div is not defined for {left.dtype!r}"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
@@ -838,6 +905,67 @@ class FloorDivide:
             message = f"cannot read {right.dtype!r} as {left.dtype!r}"
             raise PolarsRefusal(Stop.PANICS, message)
         return left.dtype
+
+    @polars_releases
+    def _decimals(self, left: Data, right: Data) -> DType | None:
+        """Give the decimal of a floor division with a `Decimal` side.
+
+        An integer beside a decimal becomes a `Decimal(38, 0)`. Any other
+        pair first joins its supertype (`Coercion`), and it raises
+        `PolarsRefusal` where the pair has none. Where both sides are then
+        decimals, the output is a decimal of precision 38, with the larger
+        scale. Otherwise the kernel goes on with the types before the join.
+
+        Args:
+            left: The dividend.
+            right: The divisor.
+
+        Returns:
+            The type, or `None` where the sides are not decimals.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> ten = Data(DType("Decimal", (10, 2)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Int8")), ten)
+            Decimal(precision=38, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Float32")), ten)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Null")), ten)
+            Decimal(precision=38, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Int8")), Data(DType("Int8"))) is None
+            True
+        """
+        sides = (left.dtype, right.dtype)
+        if not any(side.name == "Decimal" for side in sides):
+            return None
+        if not all(side.name == "Decimal" or Is.integer(side) for side in sides):
+            coerced = Coercion().of(left, right)
+            sides = (coerced.left.dtype, coerced.right.dtype)
+            if not all(side.name == "Decimal" for side in sides):
+                return None
+        parameter = Parameter()
+        scale = max(parameter.integer(side, 1) if side.name == "Decimal" else 0 for side in sides)
+        return Decimals().widest(scale)
+
+    @_decimals.before("2.0.0")
+    def _no_decimals(self, left: Data, right: Data) -> DType | None:
+        """Give no decimal: the older releases have no floor division of a decimal.
+
+        Args:
+            left: The dividend.
+            right: The divisor.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> FloorDivide()._no_decimals(Data(DType("Int8")), Data(DType("Int8")))
+        """
+        del left, right
+        return None
 
     def right_named(self, left: Data, right: Data) -> bool:
         """Say whether the output series takes the name of the right input.

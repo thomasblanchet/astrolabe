@@ -27,6 +27,8 @@ from astrolabe._rules.kernels.dispatch import (
     Refuse,
     Same,
 )
+from astrolabe._rules.releases import polars_releases
+from astrolabe._rules.supertype import Supertype
 from astrolabe._rules.type_functions import FunctionClosures, LengthClosures
 
 if TYPE_CHECKING:
@@ -442,6 +444,10 @@ class Appended:
     the inner types of lists, arrays and structs by the same rule, or be a
     `Decimal` beside a `Decimal`. Every other pair raises a `SchemaError`.
 
+    Before polars 1.40.0, the conversion puts no cast. The kernel casts the
+    data of both inputs to the supertype of their types in the run, with a
+    cast that is not strict, and then appends them (`_run_supertype`).
+
     Example:
         >>> Appended().output([Data(DType("Int32")), Data(DType("UInt32"))], DType("Int64"))
         Int64
@@ -449,6 +455,7 @@ class Appended:
 
     NESTED: ClassVar[frozenset[str]] = frozenset({"List", "Array"})
 
+    @polars_releases
     def output(
         self,
         inputs: Sequence[Data],
@@ -457,7 +464,8 @@ class Appended:
     ) -> DType:
         """Give the type of the output.
 
-        It raises `PolarsRefusal` where a cast has no kernel.
+        It raises `PolarsRefusal` where a cast has no kernel, or where a later
+        input does not append to the first input.
 
         Args:
             inputs: The data of the two inputs.
@@ -467,28 +475,76 @@ class Appended:
         Returns:
             The type of the first input after its cast.
 
-        Raises:
-            PolarsRefusal: A later input does not append to the first input.
-
         Example:
-            >>> Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
             Int16
             >>> unknown = DType("Unknown", ("any",))
-            >>> Appended().output([Data(DType("Time")), Data(DType("Int32"))], unknown)
-            ... # doctest: +ELLIPSIS
+            >>> times = [Data(DType("Time")), Data(DType("Int32"))]
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(times, unknown)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...
             >>> from astrolabe._rules.type_functions import Operand
             >>> big, one = Operand.of_value(2**40), Operand.of_value(1)
             >>> inputs = [Data(DType("Int64")), Data(DType("Int32"))]
-            >>> Appended().output(inputs, DType.dynamic_int(2**40), [big, one])
-            ... # doctest: +ELLIPSIS
+            >>> wide = DType.dynamic_int(2**40)
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(inputs, wide, [big, one])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...
         """
         types = [self._cast(data, planned, computed, place) for place, data in enumerate(inputs)]
+        return self._appended(types)
+
+    @output.before("1.40.0")
+    def _run_supertype(
+        self,
+        inputs: Sequence[Data],
+        planned: DType,
+        computed: Sequence[Operand] = (),
+    ) -> DType:
+        """Give the type of the output in the older releases, from the supertype of the run types.
+
+        It raises `PolarsRefusal` where the types have no supertype, or where
+        a cast has no kernel.
+
+        Args:
+            inputs: The data of the two inputs.
+            planned: The supertype at the planner types, which the kernel does not read.
+            computed: Each input as the run computes it, which the kernel does not read.
+
+        Returns:
+            The supertype, the type of the first input after its cast.
+
+        Example:
+            >>> inputs = [Data(DType("Date")), Data(DType("Int32"))]
+            >>> Appended()._run_supertype(inputs, DType("Int32"))
+            Int32
+        """
+        del planned, computed
+        supertype = Supertype().require(inputs[0].dtype, inputs[1].dtype)
+        return self._appended([RunCast().of(data, supertype).dtype for data in inputs])
+
+    def _appended(self, types: Sequence[DType]) -> DType:
+        """Append each later input to the first input.
+
+        Args:
+            types: The type of each input after its cast.
+
+        Returns:
+            The type of the first input.
+
+        Raises:
+            PolarsRefusal: A later input does not append to the first input.
+
+        Example:
+            >>> Appended()._appended([DType("Int8"), DType("Null")])
+            Int8
+        """
         first = types[0]
         for other in types[1:]:
             if not self._appends(first, other):
@@ -733,7 +789,8 @@ class Extended:
     input takes the value as it is. Otherwise polars reads the value as one
     value with its own type, and panics for a category that is not null,
     unless the input is one value equal to it. The value then casts to the
-    type of the input, and a cast that polars does not have raises.
+    type of the input, and a cast that polars does not have raises. Before
+    polars 1.41.0, polars reads the value in another way (`_compared`).
 
     Example:
         >>> inputs = [Data(DType("Date")), Data(DType("Date")), Data(DType("Int8"))]
@@ -743,6 +800,14 @@ class Extended:
 
     COUNT: ClassVar[Counted] = Counted((), Mapped(LengthClosures().same))
     CATEGORIES: ClassVar[frozenset[str]] = frozenset({"Categorical", "Enum"})
+    READS_TYPE: ClassVar[frozenset[str]] = frozenset({
+        "Boolean",
+        "Date",
+        "Time",
+        "Datetime",
+        "Duration",
+        "Decimal",
+    })
     UNBUILT: ClassVar[str] = "unexpected value while building Series of type {!r}"
 
     def output(
@@ -789,9 +854,85 @@ class Extended:
         if lengths and lengths[0] == 0:
             self._built(inputs, computed)
             return inputs[0].dtype
+        self._read(inputs, lengths, computed)
+        return inputs[0].dtype
+
+    @polars_releases
+    def _read(
+        self,
+        inputs: Sequence[Data],
+        lengths: Sequence[int],
+        computed: Sequence[Operand],
+    ) -> None:
+        """Read the value: a category panics, and the value casts to the type of the input.
+
+        It raises `PolarsRefusal` where the value is a category that panics
+        (`_category`), or where the cast fails (`RunCast`).
+
+        Args:
+            inputs: The data of the input, of the value and of the count.
+            lengths: The rows of each input, or none where they are not known.
+            computed: Each input as the run computes it, or none.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> date = Data(DType("Date"))
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Extended()._read([date, Data(DType("Int32")), date], (3, 1, 1), ())
+        """
         self._category(inputs, lengths, computed)
         RunCast().of(inputs[1], inputs[0].dtype)
-        return inputs[0].dtype
+
+    @_read.before("1.41.0")
+    def _compared(
+        self,
+        inputs: Sequence[Data],
+        lengths: Sequence[int],
+        computed: Sequence[Operand],
+    ) -> None:
+        """Read the value as the older releases do: with no cast, after a comparison over one row.
+
+        Over an input of one row, polars compares the value of the input with
+        the value, and the comparison panics where the two kinds have no
+        equality (`ValueEquality`). Polars then builds the value into the type
+        of the input with no cast, as a null where it does not fit. The
+        builders of `Boolean`, of the temporal types and of `Decimal` read the
+        type of the value, and a category panics there.
+
+        Args:
+            inputs: The data of the input, of the value and of the count.
+            lengths: The rows of each input, or none where they are not known.
+            computed: Each input as the run computes it, or none.
+
+        Raises:
+            PolarsRefusal: The input holds one value, and its kind has no
+                equality with the kind of the value.
+
+        Example:
+            >>> floats, integers = Data(DType("Float32"), one_row=True), Data(DType("Int32"))
+            >>> Extended()._compared([floats, integers, integers], (1, 1, 1), ())
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: scalar eq_missing for mixed dtypes ...
+            >>> Extended()._compared([Data(DType("Float32")), integers, integers], (3, 1, 1), ())
+            >>> null = Data(DType("Null"), nulls=True)
+            >>> Extended()._compared([floats, null, integers], (1, 1, 1), ())
+            >>> enum = Data(DType("Enum", (("a",),)))
+            >>> Extended()._compared([Data(DType("Date")), enum, integers], (3, 1, 1), ())
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: can not get dtype of Enum AnyValue
+        """
+        del computed
+        source, value = inputs[0], inputs[1]
+        if value.nulls:
+            return
+        one_row = source.one_row or (bool(lengths) and lengths[0] == 1)
+        if one_row and not source.nulls and not ValueEquality().compares(source.dtype, value.dtype):
+            pair = f"{source.dtype!r} and {value.dtype!r}"
+            raise PolarsRefusal(Stop.PANICS, f"scalar eq_missing for mixed dtypes {pair}")
+        if value.dtype.name in self.CATEGORIES and source.dtype.name in self.READS_TYPE:
+            raise PolarsRefusal(Stop.PANICS, f"can not get dtype of {value.dtype.name} AnyValue")
 
     def _built(self, inputs: Sequence[Data], computed: Sequence[Operand]) -> None:
         """Refuse a value that polars keeps in an empty input of another type, and cannot read.
@@ -860,6 +1001,74 @@ class Extended:
         if one_value and inputs[0].dtype.same(value.dtype) and not differ:
             return
         raise PolarsRefusal(Stop.PANICS, f"can not get dtype of {value.dtype.name} AnyValue")
+
+
+class ValueEquality:
+    """Say whether polars before 1.41.0 compares a value of one type with a value of another.
+
+    The equality of two values has an arm for each pair of kinds that it
+    compares: two integers of any width, two floats, two values of one kind,
+    and two `Enum` values of the same categories. A `UInt128` compares only
+    with a `UInt128`, and a null compares with any value. Before polars
+    1.41.0, a pair with no arm panics. From that release, its values are not
+    equal. The class reads the kinds at the top only. A nested value compares
+    its parts, where a null part stops the comparison, so the data decides
+    whether the parts panic.
+
+    Example:
+        >>> ValueEquality().compares(DType("Int8"), DType("Int64"))
+        True
+        >>> ValueEquality().compares(DType("Float32"), DType("Int32"))
+        False
+    """
+
+    SAME_KIND: ClassVar[frozenset[str]] = frozenset({
+        "Boolean",
+        "String",
+        "Binary",
+        "Date",
+        "Time",
+        "Datetime",
+        "Duration",
+        "Decimal",
+        "List",
+        "Array",
+        "Struct",
+        "Categorical",
+        "Object",
+        "UInt128",
+    })
+
+    def compares(self, left: DType, right: DType) -> bool:
+        """Say whether the equality of the two kinds has an arm.
+
+        Args:
+            left: The type of one value.
+            right: The type of the other value.
+
+        Returns:
+            Whether the two values compare.
+
+        Example:
+            >>> ValueEquality().compares(DType("UInt128"), DType("Int8"))
+            False
+            >>> ValueEquality().compares(DType("Null"), DType("Date"))
+            True
+            >>> ValueEquality().compares(DType("Enum", (("a",),)), DType("Enum", (("b",),)))
+            False
+            >>> ValueEquality().compares(DType("Float16"), DType("Float64"))
+            True
+        """
+        names = {left.name, right.name}
+        if "Null" in names:
+            return True
+        if Is.integer(left) and Is.integer(right) and "UInt128" not in names:
+            return True
+        if Is.float(left) and Is.float(right):
+            return True
+        if names == {"Enum"}:
+            return left.args == right.args
+        return len(names) == 1 and left.name in self.SAME_KIND
 
 
 class ValueBuild:

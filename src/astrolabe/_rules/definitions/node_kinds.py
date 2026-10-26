@@ -45,8 +45,9 @@ class SliceShape:
     """Give the shape of a slice from its offset and its length, where both are integer literals.
 
     The run of a slice with a literal offset and length knows the rows that it
-    keeps (`KernelLength.slice`). Any other offset or length leaves the rows
-    to the values.
+    keeps (`KernelLength.slice`). A null length slices to the end: polars
+    reads it as the largest count of rows (`TO_THE_END`). Any other offset
+    or length leaves the rows to the values.
 
     Example:
         >>> start, count = {"Literal": {"Dyn": {"Int": 0}}}, {"Literal": {"Dyn": {"Int": 2}}}
@@ -54,6 +55,10 @@ class SliceShape:
         >>> shape.length
         KernelLength(rule='slice', count=2, offset=0)
     """
+
+    # The tree of a null literal, and the count that polars reads for a null length.
+    NULL: ClassVar[dict[str, object]] = {"Literal": {"Scalar": {"Null": "Null"}}}
+    TO_THE_END: ClassVar[int] = 2**64 - 1
 
     @classmethod
     def of(cls, offset: object, length: object) -> Shape:
@@ -69,8 +74,12 @@ class SliceShape:
         Example:
             >>> SliceShape.of({"Column": "o"}, {"Literal": {"Dyn": {"Int": 2}}}).length is None
             True
+            >>> end = {"Literal": {"Scalar": {"Null": "Null"}}}
+            >>> SliceShape.of({"Literal": {"Dyn": {"Int": 1}}}, end).length.length([5])
+            4
         """
-        start, count = cls._integer(offset), cls._integer(length)
+        start = cls._integer(offset)
+        count = cls.TO_THE_END if length == cls.NULL else cls._integer(length)
         if start is None or count is None:
             return Shape.of(NodeKind.SLICE)
         return Shape(NodeKind.SLICE, length=KernelLength.slice(start, count))
