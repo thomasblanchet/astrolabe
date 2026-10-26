@@ -479,7 +479,7 @@ class Plans:
         heights: list[int] = []
         for sample, frame in enumerate(Samples().frames()):
             query = frame.lazy().select(self.expression(node, forms, sample))
-            outcome = PolarsAnswer().result(query.collect)
+            outcome = self._collected(query)
             if isinstance(outcome, Stopped):
                 return outcome
             heights.append(outcome.height)
@@ -488,6 +488,21 @@ class Plans:
         if all(height == 5 for height in heights):
             return RowForm.PER_ROW
         return RowForm.ONE_ROW if set(heights) == {1} else RowForm.OTHER_LENGTH
+
+    def _collected(self, query: pl.LazyFrame) -> pl.DataFrame | Stopped:
+        """Run a query on the in-memory engine, which the rules follow.
+
+        Args:
+            query: The query.
+
+        Returns:
+            The frame, or how polars stops.
+
+        Example:
+            >>> Plans()._collected(pl.LazyFrame({"a": [1]})).height
+            1
+        """
+        return PolarsAnswer().result(lambda: query.collect(engine="in-memory"))
 
 
 @pytest.mark.parametrize("case", Cases().all(), ids=Cases().ident)
@@ -580,10 +595,17 @@ class Lengths:
 def test_a_declared_node_has_the_kind_of_its_node_in_the_plan(node: Node) -> None:
     """Check the kind of each declared node against the root of its plan in polars.
 
+    Polars 1.42 and older cannot show the plan of some nodes, such as
+    `explode`, so the check does not run there for those nodes.
+
     Args:
         node: The node.
     """
-    assert Plans().kind(node) == node.plan_name()
+    try:
+        kind = Plans().kind(node)
+    except NotImplementedError:
+        pytest.skip(f"this release of polars cannot show the plan of {node.name}")
+    assert kind == node.plan_name()
 
 
 class Windows:
@@ -616,7 +638,7 @@ class Windows:
         """
         frame = Samples().frames()[0].lazy()
         query = frame.group_by("g").agg(pl.col("x").over(key).alias("o"))
-        outcome = PolarsAnswer().result(lambda: query.collect().height)
+        outcome = PolarsAnswer().result(lambda: query.collect(engine="in-memory").height)
         if not isinstance(outcome, Stopped):
             return True
         if outcome != Stopped(Stop.RAISES, "InvalidOperationError"):

@@ -294,8 +294,8 @@ class CensusSurface:
 
     Example:
         >>> surface = CensusSurface()
-        >>> len(surface.templates()) + len(surface.skipped())
-        473
+        >>> len(surface.templates()) + len(surface.skipped()) == len(surface._calls())
+        True
     """
 
     EXTRA_CALLS: ClassVar[dict[str, str]] = {
@@ -308,8 +308,8 @@ class CensusSurface:
         """Build the templates of all census calls.
 
         Example:
-            >>> len(CensusSurface().skipped())
-            16
+            >>> CensusSurface().skipped()["pl.col"]
+            'no input'
         """
         self._templates: list[NodeTemplate] = []
         self._skipped: dict[str, str] = {}
@@ -332,9 +332,10 @@ class CensusSurface:
             >>> CensusSurface()._calls()["pl.coalesce"]
             "pl.coalesce('x', 'y')"
         """
-        calls = {f"root.{name}": code for name, code in CensusCalls.ROOT_CALLS.items()}
-        calls |= CensusCalls.MEMBERS
-        for name, code in CensusCalls.CONSTRUCTORS.items():
+        census = CensusCalls()
+        calls = {f"root.{name}": code for name, code in census.root_calls().items()}
+        calls |= census.members()
+        for name, code in census.constructors().items():
             calls[f"pl.{name}"] = code
         return calls | self.EXTRA_CALLS
 

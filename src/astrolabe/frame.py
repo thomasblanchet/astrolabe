@@ -1342,11 +1342,14 @@ class TypedDataFrame[Schema, Rest](_TypedFrameBase, pl.DataFrame):
             other: The other sorted frame.
             key: The column or columns that both frames are sorted by.
             maintain_order: Whether rows with equal keys keep their order.
+                Polars has this parameter from release 1.40.0, so the
+                method passes it only where it is `True`.
 
         Returns:
             The result of `pl.DataFrame.merge_sorted`.
         """
-        return super().merge_sorted(other, key, maintain_order=maintain_order)  # type: ignore[return-value]
+        options = {"maintain_order": True} if maintain_order else {}
+        return super().merge_sorted(other, key, **options)  # type: ignore[return-value]
 
     def clear(self, *args: Any, **kwargs: Any) -> Self:
         """Give a frame with the same columns and no rows, or `n` rows of nulls.
@@ -1911,11 +1914,14 @@ class TypedLazyFrame[Schema, Rest](_TypedFrameBase, pl.LazyFrame):
             other: The other sorted frame.
             key: The column or columns that both frames are sorted by.
             maintain_order: Whether rows with equal keys keep their order.
+                Polars has this parameter from release 1.40.0, so the
+                method passes it only where it is `True`.
 
         Returns:
             The result of `pl.LazyFrame.merge_sorted`.
         """
-        return super().merge_sorted(other, key, maintain_order=maintain_order)  # type: ignore[return-value]
+        options = {"maintain_order": True} if maintain_order else {}
+        return super().merge_sorted(other, key, **options)  # type: ignore[return-value]
 
     def clear(self, *args: Any, **kwargs: Any) -> Self:
         """Give a frame with the same columns and no rows, or `n` rows of nulls.

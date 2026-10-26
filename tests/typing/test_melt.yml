@@ -6,7 +6,32 @@
 # for the full behavior matrix (shared UnpivotHook/_UnpivotPlan
 # machinery, only the parameter names differ).
 
-- case: melt_narrows_the_same_way_the_equivalent_unpivot_call_does
+- case: melt_is_removed
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        id: pl.Int64
+        x: pl.Int64
+        y: pl.String
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    # Polars 2.0.0 removes `melt`.
+
+    class NarrowedSchema(Columns):
+        id: pl.Int64
+        variable: pl.String
+        value: pl.Int64
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.melt(id_vars="id", value_vars="x")  # E: "TypedDataFrame[FrameSchema, None]" has no attribute "melt"  [attr-defined]
+
+- case: melt_narrows_the_same_way_the_equivalent_unpivot_call_does_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -28,6 +53,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = df.melt(id_vars="id", value_vars="x")
 
 - case: melt_variable_and_value_names_still_use_their_own_parameter_names
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -48,6 +74,7 @@
     narrowed: TypedDataFrame[NarrowedSchema] = df.melt(id_vars="id", value_vars="x", variable_name="kind", value_name="amount")
 
 - case: melt_unknown_column_errors
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -62,6 +89,7 @@
     df.melt(id_vars="missing", value_vars="x")  # E: Unknown column "missing"  [unknown-column]
 
 - case: melt_narrows_precisely_lazy
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedLazyFrame
@@ -82,6 +110,7 @@
     narrowed: TypedLazyFrame[NarrowedSchema] = lf.melt(id_vars="id", value_vars="x")
 
 - case: melt_on_plain_dataframe_is_unaffected
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
 
