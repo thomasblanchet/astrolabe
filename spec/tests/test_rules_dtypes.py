@@ -19,6 +19,7 @@ import pytest
 
 from spec.tests.rule_probes import PolarsAnswer, Stopped, TreeFrame
 from astrolabe._rules.dtypes import Decimals, DType, DynamicInt, IntegerRange, TimeUnit
+from astrolabe._rules.releases import PolarsRelease
 
 
 class Values:
@@ -133,10 +134,15 @@ class TestDecimals:
         assert not problems, "\n".join(problems)
 
     def test_a_sum_of_decimals_takes_the_widest_decimal(self) -> None:
-        """The sum of a `Decimal` has the largest precision and the scale of its input."""
+        """The sum of a `Decimal` has the largest precision and the scale of its input.
+
+        Before polars 1.41.0, the sum keeps the type of its input.
+        """
         frame = pl.DataFrame({"x": pl.Series([1], dtype=pl.Decimal(10, 2))})
         summed = frame.select(pl.col("x").sum()).dtypes[0]
-        assert DType.of(summed) == Decimals().widest(2)
+        recent = PolarsRelease.installed() >= PolarsRelease.parse("1.41.0")
+        expected = Decimals().widest(2) if recent else DType("Decimal", (10, 2))
+        assert DType.of(summed) == expected
 
 
 class TestTimeUnit:

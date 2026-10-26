@@ -148,7 +148,10 @@ class TextNodes:
     makes one replacement of each row, and the count of rows must match the
     count of patterns. `str.to_integer` leaves out a `Categorical` base
     (`CATEGORICAL`): the ids of its categories decide the base, so the rules
-    give `Unchecked` there.
+    give `Unchecked` there. `cat.to` into a `Categorical` leaves out the
+    literal 300 (`UNKNOWN_ID`): from polars 2.0.0, the kernel reads an integer
+    as the id of a category of the process, and the categories that the
+    process holds decide whether the id exists.
 
     Example:
         >>> sorted(TextNodes.ONE_INPUT)[:2]
@@ -172,6 +175,7 @@ class TextNodes:
             if entry.label.startswith(("Datetime(", "Duration(", "Time/"))
         ),
     )
+    UNKNOWN_ID: ClassVar[tuple[str, ...]] = ("lit int 300/direct",)
     FAR: ClassVar[tuple[str, ...]] = (
         "lit int 300/direct",
         "lit int 300/derived",
@@ -239,7 +243,11 @@ class TextNodes:
             "pl.col('x').bin.reinterpret(dtype=pl.Int16, endianness='big')",
         ),
         "cat.to Enum": TextCall(Categories.TO, "pl.col('x').cat.to(pl.Enum(['a', 'b']))"),
-        "cat.to Categorical": TextCall(Categories.TO, "pl.col('x').cat.to(pl.Categorical())"),
+        "cat.to Categorical": TextCall(
+            Categories.TO,
+            "pl.col('x').cat.to(pl.Categorical())",
+            left_out=UNKNOWN_ID,
+        ),
         "pl.format two parts": TextCall(Strings.FORMAT, "pl.format('<{}>', pl.col('x'))"),
         "str.join with nulls": TextCall(
             Strings.CONCAT_VERTICAL,
@@ -494,8 +502,10 @@ class TextNodes:
             The name of the node and the cell, for each cell.
 
         Example:
-            >>> cells = TextNodes.one_input_cells()
-            >>> len(cells) == 236 * len(TextNodes.ONE_INPUT) + 63 * len(TextNodes.ONE_INPUT_OPTIONS)
+            >>> cells, options = TextNodes.one_input_cells(), len(TextNodes.ONE_INPUT_OPTIONS)
+            >>> categorical = "cat.to Categorical" in TextNodes.ONE_INPUT_OPTIONS
+            >>> left_out = len(TextNodes.UNKNOWN_ID) if categorical else 0
+            >>> len(cells) == 236 * len(TextNodes.ONE_INPUT) + 63 * options - left_out
             True
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []

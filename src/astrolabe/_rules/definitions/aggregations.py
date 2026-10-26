@@ -20,7 +20,7 @@ from typing import ClassVar
 from astrolabe._rules.cast_pass import CastOption, FirstInputCast
 from astrolabe._rules.definitions.cast_adapters import FunctionCasting, NoCasts, OwnRuleCasts
 from astrolabe._rules.definitions.value_adapters import KeptValue
-from astrolabe._rules.definitions.definition import DdofNulls, Definition, NullRule
+from astrolabe._rules.definitions.definition import DdofNulls, Definition, NullRule, ShapeSince
 from astrolabe._rules.definitions.kernel_adapters import (
     AllInputs,
     ItemReduction,
@@ -32,7 +32,12 @@ from astrolabe._rules.definitions.kernel_adapters import (
 )
 from astrolabe._rules.definitions.node_options import FromOptions, NodeIdentity, NodeOption
 from astrolabe._rules.definitions.overrides import CountOfNullLiteral
-from astrolabe._rules.definitions.type_function_adapters import AggField, ExprField, Mapper
+from astrolabe._rules.definitions.type_function_adapters import (
+    AggField,
+    ExprField,
+    Mapper,
+    MapperCheck,
+)
 from astrolabe._rules.dtypes import DType
 from astrolabe._rules.execution import PhysicalExpr
 from astrolabe._rules.kernels.numeric import NumericKernels
@@ -70,6 +75,9 @@ class Aggregations:
     SCALAR: ClassVar[Shape] = Shape.function(FunctionOptions.aggregation())
     UNORDERED: ClassVar[Shape] = Shape.function(
         FunctionOptions.aggregation().flag(FunctionFlag.NON_ORDER_OBSERVING),
+    )
+    INDEXED: ClassVar[Shape] = Shape.function(
+        FunctionOptions.aggregation().with_casting_rules(CastingRules.first_arg_lossless()),
     )
     SUM: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Agg", "Sum"),
@@ -310,7 +318,10 @@ class Aggregations:
     )
     ENTROPY: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Entropy"),
-        type_function=Mapper(FieldsMapper.map_to_float_dtype),
+        type_function=Mapper(
+            FieldsMapper.map_to_float_dtype,
+            checks=[MapperCheck(FieldsMapper.ensure_number_or_boolean, op="entropy")],
+        ),
         options=UNORDERED,
         casts=FunctionCasting(),
         kernel=OneInput(ReductionKernels.ENTROPY),
@@ -373,9 +384,11 @@ class Aggregations:
     INDEX_OF: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "IndexOf"),
         type_function=Mapper(FieldsMapper.with_dtype, dtype=DType.idx()),
-        options=Shape.function(
-            FunctionOptions.aggregation().with_casting_rules(CastingRules.first_arg_lossless()),
-        ).with_scalar_inputs(ScalarInput.passed(1, "value", "index_of")),
+        options=ShapeSince(
+            INDEXED.with_scalar_inputs(ScalarInput.passed(1, "value", "index_of")),
+            "1.40.0",
+            INDEXED,
+        ),
         casts=FunctionCasting(),
         kernel=AllInputs(IndexOf()),
     )
@@ -393,7 +406,7 @@ class Aggregations:
     QUANTILE: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Quantile"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.moment_dtype),
+        type_function=Mapper(FieldsMapper.quantile_dtype),
         options=UNORDERED,
         casts=FunctionCasting(),
         kernel=LiteralReduction(Quantile(), GroupQuantile()),

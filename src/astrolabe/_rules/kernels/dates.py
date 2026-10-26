@@ -555,7 +555,7 @@ class DateKernels:
             The dispatch.
 
         Example:
-            >>> DateKernels().timestamp("ns").output(Data(DType("String")))
+            >>> DateKernels().timestamp("ns").output(Data(DType("Date")))
             Int64
         """
         arms = (Arm(Kinds("Time", "Duration"), Refuse()),)

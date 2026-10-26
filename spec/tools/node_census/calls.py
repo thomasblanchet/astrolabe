@@ -47,6 +47,7 @@ class CensusCalls:
         "any": "pl.col('x').any()",
         "append": "pl.col('x').append(pl.col('x'))",
         "approx_n_unique": "pl.col('x').approx_n_unique()",
+        "approx_quantile": "pl.col('x').approx_quantile(0.5)",
         "arccos": "pl.col('x').arccos()",
         "arccosh": "pl.col('x').arccosh()",
         "arcsin": "pl.col('x').arcsin()",
@@ -59,6 +60,9 @@ class CensusCalls:
         "arg_true": "pl.col('x').arg_true()",
         "arg_unique": "pl.col('x').arg_unique()",
         "backward_fill": "pl.col('x').backward_fill()",
+        "bin_intervals": "pl.col('x').bin_intervals([0, 2], labels=False)",
+        "bin_quantiles": "pl.col('x').bin_quantiles([0.5], labels=False)",
+        "bin_ranks": "pl.col('x').bin_ranks([0.5], labels=False)",
         "bitwise_and": "pl.col('x').bitwise_and()",
         "bitwise_count_ones": "pl.col('x').bitwise_count_ones()",
         "bitwise_count_zeros": "pl.col('x').bitwise_count_zeros()",
@@ -91,6 +95,8 @@ class CensusCalls:
         "drop_nans": "pl.col('x').drop_nans()",
         "drop_nulls": "pl.col('x').drop_nulls()",
         "entropy": "pl.col('x').entropy()",
+        "erf": "pl.col('x').erf()",
+        "erfc": "pl.col('x').erfc()",
         "eq": "pl.col('x').eq(pl.col('x'))",
         "eq_missing": "pl.col('x').eq_missing(pl.col('x'))",
         "ewm_mean": "pl.col('x').ewm_mean(alpha=0.5)",
@@ -387,7 +393,8 @@ class CensusCalls:
         "list.sum": "pl.col('x').list.sum()",
         "list.tail": "pl.col('x').list.tail()",
         "list.to_array": "pl.col('x').list.to_array(1)",
-        "list.to_struct": "pl.col('x').list.to_struct(upper_bound=1)",
+        "list.to_map": "pl.col('x').list.to_map()",
+        "list.to_struct": "pl.col('x').list.to_struct(fields=['field_0'])",
         "list.unique": "pl.col('x').list.unique()",
         "list.var": "pl.col('x').list.var()",
         "str.concat": "pl.col('x').str.concat()",
@@ -440,6 +447,13 @@ class CensusCalls:
         "str.to_uppercase": "pl.col('x').str.to_uppercase()",
         "str.zfill": "pl.col('x').str.zfill(3)",
         "struct.drop": "pl.col('x').struct.drop(['a'])",
+        "map.contains_key": "pl.col('x').map.contains_key('a')",
+        "map.entries": "pl.col('x').map.entries()",
+        "map.get": "pl.col('x').map.get('a')",
+        "map.keys": "pl.col('x').map.keys()",
+        "map.len": "pl.col('x').map.len()",
+        "map.values": "pl.col('x').map.values()",
+        "struct.eval": "pl.col('x').struct.eval(pl.field('a'))",
         "struct.field": "pl.col('x').struct.field('a')",
         "struct.json_encode": "pl.col('x').struct.json_encode()",
         "struct.rename_fields": "pl.col('x').struct.rename_fields(['b'])",
@@ -533,6 +547,7 @@ class CensusCalls:
         "root.pipe",
         "root.register_plugin",
         "root.rolling_map",
+        "root.pipe_with_dtype",
     )
 
     # The functions that work only inside the scope of another expression.
@@ -547,6 +562,7 @@ class CensusCalls:
     OPAQUE_CONSTRUCTORS: ClassVar[tuple[str, ...]] = (
         "map_batches",
         "map_groups",
+        "pipe_with_dtype",
     )
 
     # The functions of `pl` that build a data type and not an expression.
@@ -560,6 +576,7 @@ class CensusCalls:
     # key is a name as the other tables of the class hold it, or the name of a
     # function of `pl` that builds a frame.
     SINCE: ClassVar[dict[str, str]] = {
+        "is_empty": "1.41.0",
         "is_sorted": "1.42.0",
         "ewm_sum": "1.43.0",
         "ewm_sum_by": "1.43.0",
@@ -569,6 +586,42 @@ class CensusCalls:
         "scan_arrow_c_stream": "1.43.0",
         "arr.dot": "1.44.0",
         "struct.drop": "1.44.0",
+        "approx_quantile": "2.0.0",
+        "bin_intervals": "2.0.0",
+        "bin_quantiles": "2.0.0",
+        "bin_ranks": "2.0.0",
+        "erf": "2.0.0",
+        "erfc": "2.0.0",
+        "root.pipe_with_dtype": "2.0.0",
+        "list.to_map": "2.0.0",
+        "map.contains_key": "2.0.0",
+        "map.entries": "2.0.0",
+        "map.get": "2.0.0",
+        "map.keys": "2.0.0",
+        "map.len": "2.0.0",
+        "map.values": "2.0.0",
+        "struct.eval": "2.0.0",
+        "pipe_with_dtype": "2.0.0",
+        "scan_external_reader": "2.0.0",
+        "scan_lance": "2.0.0",
+    }
+
+    # The functions that a release of polars removes, each with that release.
+    UNTIL: ClassVar[dict[str, str]] = {
+        "agg_groups": "2.0.0",
+        "cat.get_categories": "2.0.0",
+        "dt.datetime": "2.0.0",
+        "dt.with_time_unit": "2.0.0",
+        "flatten": "2.0.0",
+        "groups": "2.0.0",
+        "rechunk": "2.0.0",
+        "root.from_json": "2.0.0",
+        "root.register_plugin": "2.0.0",
+        "shrink_dtype": "2.0.0",
+        "str.concat": "2.0.0",
+        "str.explode": "2.0.0",
+        "where": "2.0.0",
+        "arctan2d": "2.0.0",
     }
 
     def installed(self, name: str) -> bool:
@@ -578,15 +631,17 @@ class CensusCalls:
             name: The name of the function, as the tables of the class hold it.
 
         Returns:
-            Whether the function is in no entry of `SINCE`, or its release is
-            the installed one or an older one.
+            Whether the installed release is not older than the release of the
+            function in `SINCE`, and older than its release in `UNTIL`.
 
         Example:
             >>> CensusCalls().installed("abs")
             True
         """
-        first = self.SINCE.get(name)
-        return first is None or PolarsRelease.installed() >= PolarsRelease.parse(first)
+        installed = PolarsRelease.installed()
+        first, last = self.SINCE.get(name), self.UNTIL.get(name)
+        added = first is None or installed >= PolarsRelease.parse(first)
+        return added and (last is None or installed < PolarsRelease.parse(last))
 
     def root_calls(self) -> dict[str, str]:
         """Give the call of each method of `pl.Expr` that the installed release has.
@@ -635,4 +690,40 @@ class CensusCalls:
             True
         """
         measured = {f"root.{name}" for name in self.root_calls()}
-        return measured | set(self.OPAQUE)
+        return measured | set(self.opaque())
+
+    def opaque(self) -> tuple[str, ...]:
+        """Give the methods of `OPAQUE` that the installed release has.
+
+        Returns:
+            Each method as `root.<name>`.
+
+        Example:
+            >>> "root.pipe" in CensusCalls().opaque()
+            True
+        """
+        return tuple(key for key in self.OPAQUE if self.installed(key))
+
+    def constructors(self) -> dict[str, str]:
+        """Give the call of each function of `CONSTRUCTORS` that the installed release has.
+
+        Returns:
+            The calls, by the name of the function.
+
+        Example:
+            >>> CensusCalls().constructors()["coalesce"]
+            "pl.coalesce('x', 'y')"
+        """
+        return {name: call for name, call in self.CONSTRUCTORS.items() if self.installed(name)}
+
+    def opaque_constructors(self) -> tuple[str, ...]:
+        """Give the functions of `OPAQUE_CONSTRUCTORS` that the installed release has.
+
+        Returns:
+            The names of the functions.
+
+        Example:
+            >>> "map_batches" in CensusCalls().opaque_constructors()
+            True
+        """
+        return tuple(name for name in self.OPAQUE_CONSTRUCTORS if self.installed(name))

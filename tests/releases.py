@@ -1,8 +1,9 @@
-"""Say whether the installed release of polars is older than a version, for a `.yml` case.
+"""Say whether the installed release of polars is older than a version, for a test of some releases.
 
-The answer of some `.yml` cases depends on the release of polars, because
-the checker follows the rules of the installed release. Such a case holds
-for a range of releases, and its `skip:` key leaves it out of the others:
+The answer of some tests depends on the release of polars, because the
+checker follows the rules of the installed release and polars adds methods.
+Such a test holds for a range of releases. A `.yml` case leaves out the
+other releases with its `skip:` key:
 
     skip: __import__("tests.releases").releases.polars_before("1.43.0")
 
