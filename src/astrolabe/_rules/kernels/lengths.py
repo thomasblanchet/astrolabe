@@ -860,6 +860,8 @@ class Extended:
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: scalar eq_missing for mixed dtypes ...
             >>> Extended()._compared([Data(DType("Float32")), integers, integers], (3, 1, 1), ())
+            >>> null = Data(DType("Null"), nulls=True)
+            >>> Extended()._compared([floats, null, integers], (1, 1, 1), ())
             >>> enum = Data(DType("Enum", (("a",),)))
             >>> Extended()._compared([Data(DType("Date")), enum, integers], (3, 1, 1), ())
             Traceback (most recent call last):
