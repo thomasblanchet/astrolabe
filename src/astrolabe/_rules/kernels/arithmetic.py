@@ -252,7 +252,8 @@ class _DecimalOps:
     """Give the type of an operation with a `Decimal` on the left.
 
     The right side must be a decimal too. The output has the largest precision
-    and the larger scale. A decimal has no remainder.
+    and the larger scale. Before polars 2.0.0, a decimal has no remainder
+    (`_check_remainder`).
 
     Example:
         >>> ten = DType("Decimal", (10, 2))
@@ -283,29 +284,50 @@ class _DecimalOps:
             The decimal type of the output.
 
         Raises:
-            PolarsRefusal: The operation is a remainder, or the right side is not a decimal.
+            PolarsRefusal: The right side is not a decimal.
 
         Example:
             >>> ten = DType("Decimal", (10, 2))
-            >>> _DecimalOps(NumericOp.REM).output(Data(ten), Data(ten))  # doctest: +ELLIPSIS
-            Traceback (most recent call last):
-            ...
-            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
             >>> _DecimalOps(NumericOp.ADD).output(Data(ten), Data(DType("Int8")))
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: Int8 is not a decimal
         """
-        if self._op is NumericOp.REM:
-            message = "a decimal has no remainder"
-            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._check_remainder()
         if right.dtype.name != "Decimal":  # pragma: no cover -- the caller coerces the inputs
             message = f"{right.dtype!r} is not a decimal"
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
         parameter = Parameter()
         scale = max(parameter.integer(left.dtype, 1), parameter.integer(right.dtype, 1))
         return Decimals().widest(scale)
+
+    @polars_releases
+    def _check_remainder(self) -> None:
+        """Accept every operation: from polars 2.0.0, a decimal has a remainder.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _DecimalOps(NumericOp.REM)._check_remainder()
+        """
+
+    @_check_remainder.before("2.0.0")
+    def _no_remainder(self) -> None:
+        """Refuse a remainder, as the older releases do.
+
+        Raises:
+            PolarsRefusal: The operation is a remainder.
+
+        Example:
+            >>> _DecimalOps(NumericOp.REM)._no_remainder()  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+        """
+        if self._op is NumericOp.REM:
+            message = "a decimal has no remainder"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
 
 
 class _NullOps:
@@ -826,10 +848,11 @@ class FloorDivide:
     """Give the type of the floor division `//` of two series.
 
     Two structs run field by field, and a list or an array runs leaf by leaf.
-    Otherwise the left side must be a number. The kernel then reads the right
-    side as an array of the physical type of the left, with no check before, so
-    a right side whose physical type differs panics. The output keeps the left
-    type.
+    From polars 2.0.0, a `Decimal` beside a decimal or an integer gives a
+    decimal (`_decimals`). Otherwise the left side must be a number. The kernel
+    then reads the right side as an array of the physical type of the left,
+    with no check before, so a right side whose physical type differs panics.
+    The output keeps the left type.
 
     Example:
         >>> FloorDivide().output(Data(DType("Int32")), Data(DType("Date")))
@@ -859,6 +882,11 @@ class FloorDivide:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = Data(DType("Decimal", (10, 2)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide().output(Data(DType("Int8")), decimal)
+            Decimal(precision=38, scale=2)
         """
         names = {left.dtype.name, right.dtype.name}
         if names == {"Struct"}:
@@ -867,6 +895,9 @@ class FloorDivide:
             return ListArithmetic(NumericOp.FLOOR_DIV).output(left, right)
         if "Array" in names:
             return ArrayArithmetic(NumericOp.FLOOR_DIV).output(left, right)
+        decimal = self._decimals(left, right)
+        if decimal is not None:
+            return decimal
         if not Is.primitive_numeric(left.dtype):
             message = f"floor_div is not defined for {left.dtype!r}"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
@@ -874,6 +905,67 @@ class FloorDivide:
             message = f"cannot read {right.dtype!r} as {left.dtype!r}"
             raise PolarsRefusal(Stop.PANICS, message)
         return left.dtype
+
+    @polars_releases
+    def _decimals(self, left: Data, right: Data) -> DType | None:
+        """Give the decimal of a floor division with a `Decimal` side.
+
+        An integer beside a decimal becomes a `Decimal(38, 0)`. Any other
+        pair first joins its supertype (`Coercion`), and it raises
+        `PolarsRefusal` where the pair has none. Where both sides are then
+        decimals, the output is a decimal of precision 38, with the larger
+        scale. Otherwise the kernel goes on with the types before the join.
+
+        Args:
+            left: The dividend.
+            right: The divisor.
+
+        Returns:
+            The type, or `None` where the sides are not decimals.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> ten = Data(DType("Decimal", (10, 2)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Int8")), ten)
+            Decimal(precision=38, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Float32")), ten)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Null")), ten)
+            Decimal(precision=38, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FloorDivide()._decimals(Data(DType("Int8")), Data(DType("Int8"))) is None
+            True
+        """
+        sides = (left.dtype, right.dtype)
+        if not any(side.name == "Decimal" for side in sides):
+            return None
+        if not all(side.name == "Decimal" or Is.integer(side) for side in sides):
+            coerced = Coercion().of(left, right)
+            sides = (coerced.left.dtype, coerced.right.dtype)
+            if not all(side.name == "Decimal" for side in sides):
+                return None
+        parameter = Parameter()
+        scale = max(parameter.integer(side, 1) if side.name == "Decimal" else 0 for side in sides)
+        return Decimals().widest(scale)
+
+    @_decimals.before("2.0.0")
+    def _no_decimals(self, left: Data, right: Data) -> DType | None:
+        """Give no decimal: the older releases have no floor division of a decimal.
+
+        Args:
+            left: The dividend.
+            right: The divisor.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> FloorDivide()._no_decimals(Data(DType("Int8")), Data(DType("Int8")))
+        """
+        del left, right
+        return None
 
     def right_named(self, left: Data, right: Data) -> bool:
         """Say whether the output series takes the name of the right input.

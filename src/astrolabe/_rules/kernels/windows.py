@@ -329,13 +329,17 @@ class SortedCheck:
 
     Polars reads whether the key is sorted before it runs the kernel. A key
     with one value, or with only nulls, is sorted. A struct compares its
-    encoded rows, and a number, a text, a `Boolean` or a logical type with a
+    encoded rows, and so do a list and an array from polars 2.0.0
+    (`_encoded`). A number, a text, a `Boolean` or a logical type with a
     physical type of numbers compares its values. Any other type compares
-    each value with the next with `<=` (`Comparison`), which refuses a list.
+    each value with the next with `<=` (`Comparison`), which refuses a list
+    in the older releases.
 
     Example:
         >>> SortedCheck().check(Data(DType("Date")))
-        >>> SortedCheck().check(Data(DType("List", (DType("Int8"),))))  # doctest: +ELLIPSIS
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     SortedCheck().check(Data(DType("List", (DType("Int8"),))))  # doctest: +ELLIPSIS
         Traceback (most recent call last):
         ...
         astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
@@ -353,11 +357,39 @@ class SortedCheck:
             >>> SortedCheck().check(Data(DType("List", (DType("Int8"),)), one_row=True))
         """
         dtype = key.dtype
-        if key.nulls or key.one_row or dtype.name in self.ORDERED:
+        if key.nulls or key.one_row or dtype.name in self.ORDERED | self._encoded():
             return
         if Is.primitive_numeric(dtype.physical()) or dtype.name == "Categorical":
             return
         Comparison(CompareOp.LT_EQ).output(key, key)
+
+    @polars_releases
+    def _encoded(self) -> frozenset[str]:
+        """Give the nested types besides a struct whose rows polars encodes: a list and an array.
+
+        Returns:
+            The names of the types.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     sorted(SortedCheck()._encoded())
+            ['Array', 'List']
+        """
+        return Is.LISTS
+
+    @_encoded.before("2.0.0")
+    def _compared(self) -> frozenset[str]:
+        """Give no such type, as the older releases compare a list and an array.
+
+        Returns:
+            No name.
+
+        Example:
+            >>> SortedCheck()._compared()
+            frozenset()
+        """
+        return frozenset()
 
 
 class DynamicWindow:
@@ -713,7 +745,9 @@ class QuantileCut:
     stays a struct, so the kernel finds no floats and raises a `SchemaError`.
     The cast turns a value that does not fit into null, so the value of a
     literal input decides whether any float is left. An input of only nulls
-    gives nulls, with no more checks (`_only_nulls`). Otherwise the kernel
+    gives nulls, with no more checks (`_only_nulls`). Before polars 1.42.0,
+    the kernel counts the nulls before the cast, so an input that only the
+    cast makes null panics (`_finds_only_nulls`). Otherwise the kernel
     refuses a quantile outside of 0 to 1, then breaks that are not unique
     unless the call allows them, then labels that do not number one more than
     the quantiles. One row gives the same break for each quantile. The options
@@ -793,10 +827,68 @@ class QuantileCut:
         if data.dtype.name != "Float64":
             message = f"invalid series dtype: expected `Float64`, got `{data.dtype!r}`"
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
-        if data.nulls:
+        if self._finds_only_nulls(inputs[0], data):
             return self._only_nulls()
         self._check(data)
         return self._with_values(inputs[0])
+
+    @polars_releases
+    def _finds_only_nulls(self, source: Data, floats: Data) -> bool:
+        """Say whether the kernel finds only nulls, which it counts after the cast.
+
+        Args:
+            source: The data of the input, before the cast.
+            floats: The data after the cast.
+
+        Returns:
+            Whether the floats hold only nulls.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=False)
+            >>> text, empty = Data(DType("String")), Data(DType("Float64"), nulls=True)
+            >>> with PolarsRelease.pretend("1.42.0"):
+            ...     qcut._finds_only_nulls(text, empty)
+            True
+        """
+        del source
+        return floats.nulls
+
+    @_finds_only_nulls.before("1.42.0")
+    def _counts_before_the_cast(self, source: Data, floats: Data) -> bool:
+        """Say whether the kernel finds only nulls, which the older releases count before the cast.
+
+        Where only the cast makes every value null, the kernel checks the
+        range of the quantiles. Then it finds no break, and it panics.
+
+        Args:
+            source: The data of the input, before the cast.
+            floats: The data after the cast.
+
+        Returns:
+            Whether the input holds only nulls.
+
+        Raises:
+            PolarsRefusal: The input holds a value, and the cast makes every value null.
+
+        Example:
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=False)
+            >>> text, empty = Data(DType("String")), Data(DType("Float64"), nulls=True)
+            >>> qcut._counts_before_the_cast(Data(DType("Null"), nulls=True), empty)
+            True
+            >>> qcut._counts_before_the_cast(text, Data(DType("Float64")))
+            False
+            >>> qcut._counts_before_the_cast(text, empty)
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: qcut finds no value after the cast
+        """
+        if source.nulls:
+            return True
+        if floats.nulls:
+            self._check_range()
+            raise PolarsRefusal(Stop.PANICS, "qcut finds no value after the cast")
+        return False
 
     @polars_releases
     def _only_nulls(self) -> DType:
@@ -841,6 +933,27 @@ class QuantileCut:
             >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
             >>> with PolarsRelease.pretend("1.43.0"):
             ...     qcut._with_values(Data(DType("String"))).name
+            'Struct'
+        """
+        del source
+        return self._dtype
+
+    @_with_values.before("1.42.0")
+    def _struct_or_panic(self, source: Data) -> DType:
+        """Give the type over an input that can hold values, as the releases before 1.42.0 give it.
+
+        Where the cast leaves no value, the kernel panics, so a run that ends
+        gives the type of the options (`_counts_before_the_cast`).
+
+        Args:
+            source: The data of the input, before the cast.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
+            >>> qcut._struct_or_panic(Data(DType("String"))).name
             'Struct'
         """
         del source
@@ -916,15 +1029,29 @@ class QuantileCut:
             ...
             astrolabe._rules.failures.PolarsRefusal: DuplicateError: quantiles are not unique ...
         """
-        if any(not 0.0 <= prob <= 1.0 for prob in self._probs):
-            message = "quantile should be between 0.0 and 1.0"
-            raise PolarsRefusal(ErrorClass.COMPUTE, message)
+        self._check_range()
         repeated = len(set(self._probs)) < len(self._probs)
         if not self._allow_duplicates and (repeated or (data.one_row and len(self._probs) > 1)):
             message = "quantiles are not unique while allow_duplicates=False"
             raise PolarsRefusal(ErrorClass.DUPLICATE, message)
         if self._labels is not None and len(self._labels) != len(self._probs) + 1:
             raise PolarsRefusal(ErrorClass.SHAPE, "provide len(quantiles) + 1 labels")
+
+    def _check_range(self) -> None:
+        """Refuse a quantile outside of 0 to 1.
+
+        Raises:
+            PolarsRefusal: A quantile is outside of 0 to 1.
+
+        Example:
+            >>> QuantileCut((1.5,), None, include_breaks=False)._check_range()
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: quantile should be between ...
+        """
+        if any(not 0.0 <= prob <= 1.0 for prob in self._probs):
+            message = "quantile should be between 0.0 and 1.0"
+            raise PolarsRefusal(ErrorClass.COMPUTE, message)
 
 
 class EwmFallback:
@@ -987,6 +1114,123 @@ class EwmFallback:
         return Recast(DType("Float64")).give(data, kernel)
 
 
+class EncodedNested:
+    """Accept a `List` and an `Array` in the kernel of `is_unique`, as polars does from 1.40.0.
+
+    From that release, `is_unique` and `is_duplicated` encode each row of a
+    list or an array, and hash the encoded rows. Older releases raise on
+    these kinds.
+
+    Example:
+        >>> EncodedNested()._refused(DType("List", (DType("Int8"),)))
+        False
+    """
+
+    @polars_releases
+    def __call__(self, dtype: DType) -> bool:
+        """Say whether the kernel accepts the type: a `List` or an `Array`.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether the type is a `List` or an `Array`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     EncodedNested()(DType("List", (DType("Int8"),)))
+            True
+        """
+        return dtype.name in {"List", "Array"}
+
+    @__call__.before("1.40.0")
+    def _refused(self, dtype: DType) -> bool:
+        """Say that the kernel of the older releases accepts no type here.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> EncodedNested()._refused(DType("Array", (DType("Int8"), 2)))
+            False
+        """
+        del dtype
+        return False
+
+
+class CumExtreme:
+    """Give the type of `cum_min` and `cum_max`: the type of the input.
+
+    A `Boolean` and a `Decimal` keep their type, and so do text and binary
+    data from polars 2.0.0 (`_texts`). A type whose physical type is a number
+    runs on its physical values, which the kernel then casts back to the type
+    (`RunCast`). From polars 2.0.0, that cast refuses a category with a
+    `ComputeError`. Every other type raises.
+
+    Example:
+        >>> cum_max = Dispatch("cum_max", (), CumExtreme())
+        >>> CumExtreme().give(Data(DType("Date")), cum_max)
+        Date
+    """
+
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type, or refuse it.
+
+        Args:
+            data: The data.
+            kernel: The dispatch.
+
+        Returns:
+            The type of the input.
+
+        Example:
+            >>> cum_max = Dispatch("cum_max", (), CumExtreme())
+            >>> CumExtreme().give(Data(DType("List", (DType("Int8"),))), cum_max)
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cum_max ...
+        """
+        dtype = data.dtype
+        if dtype.name in {"Boolean", "Decimal"} | self._texts():
+            return dtype
+        if Is.primitive_numeric(dtype.physical()):
+            return RunCast().of(data.with_dtype(dtype.physical()), dtype).dtype
+        return Refuse().give(data, kernel)
+
+    @polars_releases
+    def _texts(self) -> frozenset[str]:
+        """Give the kinds of text that the kernel takes: text and binary data.
+
+        Returns:
+            The names of the types.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     sorted(CumExtreme()._texts())
+            ['Binary', 'String']
+        """
+        return frozenset({"String", "Binary"})
+
+    @_texts.before("2.0.0")
+    def _no_texts(self) -> frozenset[str]:
+        """Give no kind of text, as the older releases take none.
+
+        Returns:
+            No name.
+
+        Example:
+            >>> CumExtreme()._no_texts()
+            frozenset()
+        """
+        return frozenset()
+
+
 class WindowKernels:
     """Hold the dispatch of each kernel of one input whose value at a row reads other rows.
 
@@ -994,9 +1238,7 @@ class WindowKernels:
     `rle_id` count or order the rows, and polars can compare a value with a
     value of its own type for every kind.
 
-    `CUM_EXTREME` keeps a `Boolean`, a `Decimal` and every type whose
-    physical type is a number, as `cum_min` and `cum_max` do. Every other
-    type raises.
+    `CUM_EXTREME` is `cum_min` and `cum_max` (`CumExtreme`).
 
     `CUM_PROD` gives `Int64` for a `Boolean` and for an integer of 32 bits
     or fewer, keeps a wider integer and a float, and raises on every other
@@ -1013,7 +1255,8 @@ class WindowKernels:
 
     `UNIQUE` gives `Boolean` for each kind that `is_unique` and
     `is_duplicated` hash: a number by its physical type, text, binary data,
-    `Boolean`, `Null` and the nested kinds.
+    `Boolean`, `Null`, a struct, and from polars 1.40.0 a list and an array
+    (`EncodedNested`).
 
     `FIRST_DISTINCT` gives `Boolean` for a series of one row, and otherwise
     refuses `Null`, an `Array` and a list of nested values (`FirstRow`).
@@ -1040,14 +1283,7 @@ class WindowKernels:
     BOOLEAN: ClassVar[DType] = DType("Boolean")
     FLOAT64: ClassVar[DType] = DType("Float64")
     INDICES: ClassVar[Dispatch] = Dispatch("arg_sort", (), Fixed(DType.idx()))
-    CUM_EXTREME: ClassVar[Dispatch] = Dispatch(
-        "cum_max",
-        (
-            Arm(Kinds("Boolean", "Decimal"), Same()),
-            Arm(Physical(Is.primitive_numeric), Same()),
-        ),
-        Refuse(),
-    )
+    CUM_EXTREME: ClassVar[Dispatch] = Dispatch("cum_max", (), CumExtreme())
     CUM_PROD: ClassVar[Dispatch] = Dispatch(
         "cum_prod",
         (
@@ -1076,10 +1312,8 @@ class WindowKernels:
     UNIQUE: ClassVar[Dispatch] = Dispatch(
         "is_unique",
         (
-            Arm(
-                Physical(Kinds("Boolean", "String", "Binary", "Null", "List", "Array", "Struct")),
-                Fixed(BOOLEAN),
-            ),
+            Arm(Physical(Kinds("Boolean", "String", "Binary", "Null", "Struct")), Fixed(BOOLEAN)),
+            Arm(EncodedNested(), Fixed(BOOLEAN)),
             Arm(Physical(Is.primitive_numeric), Fixed(BOOLEAN)),
         ),
         Refuse(),
@@ -1959,33 +2193,116 @@ class CountedKernel:
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
 
 
+class NullCount:
+    """Refuse a count of `shift` that is null after its cast to `Int64`, as polars does from 2.0.0.
+
+    The cast of the count is not strict, so a null, and a text that does not
+    parse as an integer, give a null count. From polars 2.0.0, `shift` raises
+    a `ComputeError` there. Before that release, it gives a column of nulls
+    (`_null_shift`). The values of a count that is not a literal decide
+    whether it is null.
+
+    Example:
+        >>> NullCount()._null_shift(Data(DType("Null")), ())
+    """
+
+    @polars_releases
+    def check(self, count: Data, computed: Sequence[Operand]) -> None:
+        """Refuse a count that is null, or a literal count that the cast makes null.
+
+        Args:
+            count: The data of the count.
+            computed: The values and the count as the run computes them, or
+                none where they are not known.
+
+        Raises:
+            PolarsRefusal: The count is null.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> text = (Operand.column(DType("Int8")), Operand.of_value("a"))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     NullCount().check(Data(DType("String")), text)
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: shift value 'n' must not be null.
+            >>> cat = DType("Categorical", ())
+            >>> category = (Operand.column(DType("Int8")), Operand.typed_literal("a", cat))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     NullCount().check(Data(DType("Int64")), ())
+            ...     NullCount().check(Data(cat), category)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: cannot cast categorical types ...
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     NullCount().check(Data(DType("Null")), ())
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: shift value 'n' must not be null.
+        """
+        message = "shift value 'n' must not be null."
+        if count.nulls or count.dtype.name == "Null":
+            raise PolarsRefusal(ErrorClass.COMPUTE, message)
+        literal = computed[1] if len(computed) > 1 else None
+        if literal is None or not literal.literal:
+            return
+        try:
+            SeriesCast(count.dtype, DType("Int64"), strict=True).output([literal.value])
+        except PolarsRefusal as refusal:
+            if refusal.error is not ErrorClass.INVALID_OPERATION:
+                raise
+            raise PolarsRefusal(ErrorClass.COMPUTE, message) from refusal
+
+    @check.before("2.0.0")
+    def _null_shift(self, count: Data, computed: Sequence[Operand]) -> None:
+        """Accept a null count, as the older releases do: it gives a column of nulls.
+
+        Args:
+            count: The data of the count.
+            computed: The values and the count as the run computes them.
+
+        Example:
+            >>> NullCount()._null_shift(Data(DType("Int8"), nulls=True), ())
+        """
+        del count, computed
+
+
 class Shift:
     """Give the type of `shift`: the type of the values, after the check of the count.
 
     Polars moves each value by the count, with nulls at the edge. A count
-    that is null gives a column of nulls of the type of the values.
+    that is null gives a column of nulls of the type of the values before
+    polars 2.0.0, and raises from that release (`NullCount`).
 
     Example:
-        >>> Shift().output([Data(DType("Date")), Data(DType("Int32"))], (5, 1))
+        >>> Shift().output([Data(DType("Date")), Data(DType("Int32"))], (5, 1), ())
         Date
     """
 
-    def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
+    def output(
+        self,
+        inputs: Sequence[Data],
+        lengths: Sequence[int],
+        computed: Sequence[Operand],
+    ) -> DType:
         """Give the type of the output.
 
         Args:
             inputs: The data of the values and of the count.
             lengths: The rows of the values and of the count.
+            computed: The values and the count as the run computes them, or
+                none where they are not known.
 
         Returns:
             The type of the values.
 
         Example:
             >>> struct = DType("Struct", ((("a", DType("Int8")),),))
-            >>> Shift().output([Data(struct), Data(DType("Null"))], ())
+            >>> Shift().output([Data(struct), Data(DType("Int8"))], (), ())
             Struct({'a': Int8})
         """
         CountedKernel().check(inputs[1], lengths)
+        NullCount().check(inputs[1], computed)
         return inputs[0].dtype
 
 
@@ -1994,7 +2311,8 @@ class ShiftFilled:
     """Give the type of `shift` with a fill value: the type of the values, after the checks.
 
     The kernel casts the count to `Int64`, as `shift` does (`CountedKernel`),
-    and a count that is null gives a column of nulls. It then reads the fill
+    and a count that is null gives a column of nulls before polars 2.0.0, and
+    raises from that release (`NullCount`). It then reads the fill
     by the type of the values. `Boolean`, text and a list need a fill of the
     same kind, or a null, and raise otherwise. A struct, a category and an
     object zip the fill in, which needs the type of the values
@@ -2004,7 +2322,7 @@ class ShiftFilled:
 
     Example:
         >>> inputs = [Data(DType("Date")), Data(DType("Int32")), Data(DType("Date"))]
-        >>> ShiftFilled().output(inputs, (5, 1, 1))
+        >>> ShiftFilled().output(inputs, (5, 1, 1), ())
         Date
     """
 
@@ -2012,14 +2330,22 @@ class ShiftFilled:
     ZIPPED: ClassVar[frozenset[str]] = frozenset({"Struct", "Categorical", "Enum", "Object"})
     LOGICAL: ClassVar[frozenset[str]] = frozenset({*Is.TEMPORAL, "Decimal"})
 
-    def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
+    def output(
+        self,
+        inputs: Sequence[Data],
+        lengths: Sequence[int],
+        computed: Sequence[Operand],
+    ) -> DType:
         """Give the type of the output.
 
-        It raises `PolarsRefusal` where the count does not cast (`CountedKernel`).
+        It raises `PolarsRefusal` where the count does not cast (`CountedKernel`),
+        or is null (`NullCount`).
 
         Args:
             inputs: The data of the values, of the count and of the fill.
             lengths: The rows of each input, which the conversion checks.
+            computed: The inputs as the run computes them, or none where they
+                are not known.
 
         Returns:
             The type of the values.
@@ -2030,13 +2356,13 @@ class ShiftFilled:
 
         Example:
             >>> texts = Data(DType("String"))
-            >>> ShiftFilled().output([texts, Data(DType("Int8")), Data(DType("Int8"))], ())
+            >>> ShiftFilled().output([texts, Data(DType("Int8")), Data(DType("Int8"))], (), ())
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: fill value ...
             >>> binary = Data(DType("Binary"))
-            >>> ShiftFilled().output([binary, Data(DType("Int8")), binary], ())
+            >>> ShiftFilled().output([binary, Data(DType("Int8")), binary], (), ())
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
@@ -2045,6 +2371,7 @@ class ShiftFilled:
         del lengths
         values, count, fill = inputs[0], inputs[1], inputs[2]
         CountedKernel().check(count, ())
+        NullCount().check(count, computed)
         if count.nulls:
             return values.dtype
         kind = values.dtype.name

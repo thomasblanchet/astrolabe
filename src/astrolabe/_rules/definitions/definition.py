@@ -22,7 +22,7 @@ from astrolabe._rules.definitions.node_options import (
 )
 from astrolabe._rules.definitions.simplify_adapters import NoSimplify, SimplifyRule
 from astrolabe._rules.kernels.dispatch import Data
-from astrolabe._rules.releases import polars_releases
+from astrolabe._rules.releases import PolarsRelease, polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -443,6 +443,54 @@ class WeightedNulls:
         """
         samples = OptionValues().at(self.samples, node)
         return WeightedNulls(samples, bias=OptionValues().at(self.bias, node))
+
+
+@dataclass(frozen=True)
+class ShapeSince:
+    """Give the shape of a node from a release of polars on, and its shape in the older releases.
+
+    Polars sets the options of some functions anew in a release, as the cast
+    pass of `sum_horizontal` from polars 1.40.0. A definition holds both
+    shapes, and the installed release picks one (`PolarsRelease.current`).
+
+    Example:
+        >>> from astrolabe._rules.options import FunctionOptions, Shape
+        >>> later = Shape.function(FunctionOptions.elementwise())
+        >>> since = ShapeSince(later, "1.40.0", Shape.function(FunctionOptions.length_preserving()))
+        >>> since.first
+        '1.40.0'
+    """
+
+    shape: Shape
+    first: str
+    before: Shape
+
+    def read(self, node: NodeOptions) -> Shape:
+        """Give the shape of the installed release.
+
+        Args:
+            node: The serialized root of the node, which the shape does not read.
+
+        Returns:
+            `shape` from the release `first` on, and `before` in an older release.
+
+        Example:
+            >>> from astrolabe._rules.options import FunctionOptions, Shape
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> older = Shape.function(FunctionOptions.length_preserving())
+            >>> since = ShapeSince(Shape.function(FunctionOptions.elementwise()), "1.40.0", older)
+            >>> node = NodeOptions({"Function": {}})
+            >>> with PolarsRelease.pretend("1.39.3"):
+            ...     since.read(node) == older
+            True
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     since.read(node) == older
+            False
+        """
+        del node
+        if PolarsRelease.current() < PolarsRelease.parse(self.first):
+            return self.before
+        return self.shape
 
 
 @dataclass(frozen=True)

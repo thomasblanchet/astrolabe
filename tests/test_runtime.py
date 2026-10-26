@@ -55,6 +55,7 @@ from astrolabe import (
     wrap,
 )
 from astrolabe.frame import _TypedFrameBase
+from tests.releases import polars_before
 
 
 PriceColumn = column("price", pl.Float64)
@@ -364,7 +365,6 @@ def test_typed_dataframe_passthrough_methods_delegate_to_the_real_dataframe() ->
     assert df.slice(0, 1).columns == ["foo", "bar"]
     assert df.shift(1).columns == ["foo", "bar"]
     assert df.drop_nans().columns == ["foo", "bar"]
-    assert df.gather([0]).columns == ["foo", "bar"]
     assert df.remove(pl.col("bar") == 0).columns == ["foo", "bar"]
     assert df.top_k(1, by="bar").columns == ["foo", "bar"]
     assert df.bottom_k(1, by="bar").columns == ["foo", "bar"]
@@ -433,6 +433,28 @@ def test_typed_lazyframe_methods_delegate_to_the_real_lazyframe() -> None:
     ]
 
 
+@pytest.mark.skipif(polars_before("1.41.0"), reason="polars 1.41.0 adds gather to the frames")
+def test_typed_frames_pass_gather_on_to_polars() -> None:
+    df = pl.DataFrame({"foo": ["x", "y"], "bar": [1, 2]})
+    df.__class__ = Frame
+    assert df.gather([0]).columns == ["foo", "bar"]
+    lf = df.lazy()
+    lf.__class__ = LazyFrame
+    assert lf.gather([0]).collect().columns == ["foo", "bar"]
+
+
+@pytest.mark.skipif(not polars_before("1.41.0"), reason="polars 1.41.0 adds gather to the frames")
+def test_typed_frames_have_no_gather_before_polars_1_41() -> None:
+    df = pl.DataFrame({"foo": ["x", "y"], "bar": [1, 2]})
+    df.__class__ = Frame
+    with pytest.raises(AttributeError):
+        df.gather([0])
+    lf = df.lazy()
+    lf.__class__ = LazyFrame
+    with pytest.raises(AttributeError):
+        lf.gather([0])
+
+
 def test_typed_lazyframe_passthrough_methods_delegate_to_the_real_lazyframe() -> None:
     lf = pl.DataFrame({"foo": ["x", "y"], "bar": [1, 2]}).lazy()
     lf.__class__ = LazyFrame
@@ -449,7 +471,6 @@ def test_typed_lazyframe_passthrough_methods_delegate_to_the_real_lazyframe() ->
     assert lf.slice(0, 1).collect().columns == ["foo", "bar"]
     assert lf.shift(1).collect().columns == ["foo", "bar"]
     assert lf.drop_nans().collect().columns == ["foo", "bar"]
-    assert lf.gather([0]).collect().columns == ["foo", "bar"]
     assert lf.remove(pl.col("bar") == 0).collect().columns == ["foo", "bar"]
     assert lf.top_k(1, by="bar").collect().columns == ["foo", "bar"]
     assert lf.bottom_k(1, by="bar").collect().columns == ["foo", "bar"]

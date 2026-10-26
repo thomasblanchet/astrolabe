@@ -30,7 +30,8 @@ from astrolabe._rules.kernels.dispatch import (
     RunCast,
     Same,
 )
-from astrolabe._rules.type_functions import CutBins
+from astrolabe._rules.releases import polars_releases
+from astrolabe._rules.type_functions import CutBins, FieldsMapper
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,8 +52,10 @@ class Cut:
     the type of the labels (`CutBins.dtype`).
 
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> bins = CutBins((2.0, 0.0), None, left_closed=False, include_breaks=False)
-        >>> Cut(bins).give(Data(DType("Int8")), Dispatch("cut", (), Cut(bins)))
+        >>> with PolarsRelease.pretend("1.40.0"):
+        ...     Cut(bins).give(Data(DType("Int8")), Dispatch("cut", (), Cut(bins)))
         Enum(categories=['(-inf, 0]', '(0, 2]', '(2, inf]'])
     """
 
@@ -189,6 +192,136 @@ class Cut:
         return any(low == high for low, high in itertools.pairwise(breaks))
 
 
+class DecimalSum:
+    """Give the type of the sum of a `Decimal`: precision 38, with the scale of the input.
+
+    Before polars 1.41.0, the sum of a series and the sum of each group keep
+    the type of the input.
+
+    Example:
+        >>> sum_kernel = Dispatch("sum", (), Refuse())
+        >>> DecimalSum()._kept(Data(DType("Decimal", (10, 2))), sum_kernel)
+        Decimal(precision=10, scale=2)
+    """
+
+    @polars_releases
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type: a `Decimal` of precision 38 (`MaxPrecision`).
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The `Decimal` type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> sum_kernel = Dispatch("sum", (), Refuse())
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     DecimalSum().give(Data(DType("Decimal", (10, 2))), sum_kernel)
+            Decimal(precision=38, scale=2)
+        """
+        return MaxPrecision().give(data, kernel)
+
+    @give.before("1.41.0")
+    def _kept(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of the input, as the older releases do.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type of the data.
+
+        Example:
+            >>> sum_kernel = Dispatch("sum", (), Refuse())
+            >>> DecimalSum()._kept(Data(DType("Decimal", (5, 0))), sum_kernel)
+            Decimal(precision=5, scale=0)
+        """
+        return Same().give(data, kernel)
+
+
+class Carry:
+    """Give the type of a rounding of a `Decimal`, which can carry into one more integer digit.
+
+    The kernel gives the type of the type function (`FieldsMapper.carry_dtype`).
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> kernel = Dispatch("round", (), Refuse())
+        >>> with PolarsRelease.pretend("2.0.0"):
+        ...     Carry(None, "HalfToEven").give(Data(DType("Decimal", (5, 2))), kernel)
+        Decimal(precision=6, scale=2)
+    """
+
+    def __init__(self, decimals: int | None, mode: str) -> None:
+        """Keep the options of the rounding.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps, or
+                `None` where it can carry at every scale.
+            mode: The mode of the rounding, as polars writes it.
+
+        Example:
+            >>> Carry(1, "ToZero")._mode
+            'ToZero'
+        """
+        self._decimals = decimals
+        self._mode = mode
+
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of the rounding.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> kernel = Dispatch("round", (), Refuse())
+            >>> Carry(0, "HalfToEven").give(Data(DType("Decimal", (5, 0))), kernel)
+            Decimal(precision=5, scale=0)
+        """
+        del kernel
+        return FieldsMapper(data.dtype).carry_dtype(self._decimals, self._mode)
+
+
+class SignDigit:
+    """Give the type of `sign` for a `Decimal`, which needs one integer digit for the result 1.
+
+    The kernel gives the type of the type function (`FieldsMapper.sign_dtype`).
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> kernel = Dispatch("sign", (), Refuse())
+        >>> with PolarsRelease.pretend("2.0.0"):
+        ...     SignDigit().give(Data(DType("Decimal", (3, 3))), kernel)
+        Decimal(precision=4, scale=3)
+    """
+
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of `sign`.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> kernel = Dispatch("sign", (), Refuse())
+            >>> SignDigit().give(Data(DType("Decimal", (5, 0))), kernel)
+            Decimal(precision=5, scale=0)
+        """
+        del kernel
+        return FieldsMapper(data.dtype).sign_dtype()
+
+
 class NumericKernels:
     """Hold the dispatch of each shared numeric kernel.
 
@@ -215,9 +348,9 @@ class NumericKernels:
     panics on it.
 
     `SUM` is the sum of a series. It gives `UInt32` for a `Boolean`, `Int64`
-    for an integer of 8 or 16 bits, and a `Decimal` of precision 38. It keeps
-    the input type for a wider integer, a float, a `Duration` and `Null`. Every
-    other type raises.
+    for an integer of 8 or 16 bits, and a `Decimal` of precision 38
+    (`DecimalSum`). It keeps the input type for a wider integer, a float, a
+    `Duration` and `Null`. Every other type raises.
 
     `SUM_GROUPS` is the sum of each group, which `agg` runs. It has the arms of
     `SUM`. A type that the sum of the groups does not support gives one null
@@ -276,6 +409,15 @@ class NumericKernels:
         ),
         Refuse(),
     )
+    SIGN: ClassVar[Dispatch] = Dispatch(
+        "sign",
+        (
+            Arm(Is.float, Same()),
+            Arm(Kinds("Decimal"), SignDigit()),
+            Arm(Is.integer, Same()),
+        ),
+        Refuse(),
+    )
     CUM_SUM: ClassVar[Dispatch] = Dispatch(
         "cum_sum",
         (
@@ -307,7 +449,7 @@ class NumericKernels:
             Arm(Kinds("Boolean"), Fixed(DType("UInt32"))),
             Arm(SMALL, Fixed(DType("Int64"))),
             Arm(Is.primitive_numeric, Same()),
-            Arm(Kinds("Decimal"), MaxPrecision()),
+            Arm(Kinds("Decimal"), DecimalSum()),
             Arm(Kinds("Duration"), Same()),
             Arm(Kinds("Null"), Same()),
         ),
@@ -355,7 +497,35 @@ class NumericKernels:
         """
         if digits < 1:
             return Dispatch("round_sig_figs", (), Refuse())
-        return self.KEEP_NUMBER
+        return self.rounding(None)
+
+    def rounding(self, decimals: int | None = 0, mode: str = "HalfToEven") -> Dispatch:
+        """Give the kernel of a rounding: `round`, `floor`, `ceil` or `round_sig_figs`.
+
+        It keeps a float and an integer, and gives a `Decimal` the type of
+        `Carry`. Every other type raises.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps, or
+                `None` where it can carry at every scale.
+            mode: The mode of the rounding, as polars writes it.
+
+        Returns:
+            The dispatch.
+
+        Example:
+            >>> NumericKernels().rounding(2).output(Data(DType("Int8")))
+            Int8
+        """
+        return Dispatch(
+            "round",
+            (
+                Arm(Is.float, Same()),
+                Arm(Kinds("Decimal"), Carry(decimals, mode)),
+                Arm(Is.integer, Same()),
+            ),
+            Refuse(),
+        )
 
     def cut(
         self,
@@ -377,9 +547,11 @@ class NumericKernels:
             The dispatch.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> labels = ["low", "high"]
             >>> cut = NumericKernels().cut([0.0], labels, left_closed=False, include_breaks=False)
-            >>> cut.output(Data(DType("String")))
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     cut.output(Data(DType("String")))
             Enum(categories=['low', 'high'])
         """
         names = None if labels is None else tuple(labels)

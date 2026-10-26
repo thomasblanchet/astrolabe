@@ -36,6 +36,7 @@ from astrolabe._rules.failures import (
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import FunctionOptions, Height, KernelLength, NodeKind, Shape
 from astrolabe._rules.type_functions import Operand
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -297,7 +298,8 @@ class QueryFlags:
     The optimizer can put an input or a literal in place of a node
     (`simplify`), and a `collect()` of a lazy frame moves a slice down the
     tree (`slice_pushdown`). An eager `select` or `with_columns` simplifies
-    and moves no slice. An eager `group_by().agg()` runs no pass at all. A
+    and moves no slice. An eager `group_by().agg()` simplifies from polars
+    2.0.0, and runs no pass at all before that release (`EagerAgg`). A
     lazy frame runs both passes, in a `select` and in `agg`. The default is
     the eager `select` in both contexts. Where an expression stands alone in
     a lazy `select` (`lone`), the projection pushdown can put a count of the
@@ -310,7 +312,7 @@ class QueryFlags:
         lone: Whether the expression is the only expression of a lazy `select`.
 
     Example:
-        >>> QueryFlags.eager().simplify_agg, QueryFlags.lazy().slice_pushdown
+        >>> QueryFlags.eager().slice_pushdown, QueryFlags.lazy().slice_pushdown
         (False, True)
     """
 
@@ -321,7 +323,7 @@ class QueryFlags:
 
     @classmethod
     def eager(cls) -> QueryFlags:
-        """Give the passes of an eager frame: a `select` simplifies, and `agg` runs none.
+        """Give the passes of an eager frame: a `select` simplifies, and `agg` as `EagerAgg` says.
 
         Returns:
             The flags.
@@ -330,7 +332,7 @@ class QueryFlags:
             >>> QueryFlags.eager().simplify_select
             True
         """
-        return cls(simplify_agg=False)
+        return cls(simplify_agg=EagerAgg().simplifies())
 
     @classmethod
     def lazy(cls, *, lone: bool = False) -> QueryFlags:
@@ -347,6 +349,47 @@ class QueryFlags:
             (True, True)
         """
         return cls(slice_pushdown=True, lone=lone)
+
+
+class EagerAgg:
+    """Say whether the eager `group_by().agg()` simplifies its expressions.
+
+    From polars 2.0.0, the eager `agg` collects its lazy query with the
+    passes of an eager frame, and these simplify the expressions. Before
+    that release, it collects the query with no pass at all.
+
+    Example:
+        >>> EagerAgg()._runs_no_pass()
+        False
+    """
+
+    @polars_releases
+    def simplifies(self) -> bool:
+        """Say that the eager `agg` simplifies its expressions.
+
+        Returns:
+            `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     EagerAgg().simplifies()
+            True
+        """
+        return True
+
+    @simplifies.before("2.0.0")
+    def _runs_no_pass(self) -> bool:
+        """Say that the eager `agg` of the older releases does not simplify its expressions.
+
+        Returns:
+            `False`.
+
+        Example:
+            >>> EagerAgg()._runs_no_pass()
+            False
+        """
+        return False
 
 
 @dataclass(frozen=True)
@@ -1665,12 +1708,16 @@ class AggregationRun:
 class ImplodeRun:
     """Run `implode()`, which gives the list of the values of each group.
 
-    In `agg`, the list of each group is one value, and each value gets a group
-    of its own. Over a literal, `implode` stays a literal of one list.
+    In `agg`, the list of each group is one value, and from polars 1.40.0 each
+    value gets a group of its own. Before that release, the values keep the
+    groups of the `group_by`, as the other aggregations do. Over a literal,
+    `implode` stays a literal of one list.
 
     Example:
         >>> frame = GroupBy((3, 2))
-        >>> ImplodeRun(Shape.of(NodeKind.AGG), Kernel()).agg([frame.column()], frame).groups
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     ImplodeRun(Shape.of(NodeKind.AGG), Kernel()).agg([frame.column()], frame).groups
         (1, 1)
     """
 
@@ -1703,14 +1750,57 @@ class ImplodeRun:
             >>> ImplodeRun(Shape.of(NodeKind.AGG), Kernel()).agg([frame.literal()], frame).state
             <AggState.LITERAL_SCALAR: 'literal scalar'>
         """
-        del frame
         value = inputs[0]
         if value.state is AggState.LITERAL_SCALAR:
             return replace(value, height=Height.SCALAR, dtype=self._kernel.data)
+        return self._lists(value, frame)
+
+    @polars_releases
+    def _lists(self, value: InGroups, frame: GroupBy) -> InGroups:
+        """Give the list of each group as one value, in a group of its own.
+
+        Args:
+            value: The input, which is not a literal.
+            frame: The groups of the `group_by`.
+
+        Returns:
+            The output.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> frame = GroupBy((3, 2))
+            >>> run = ImplodeRun(Shape.of(NodeKind.AGG), Kernel())
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     run._lists(frame.column(), frame).original
+            False
+        """
+        del frame
         units = (1,) * len(value.groups)
         state = AggState.AGGREGATED_SCALAR
         out = InGroups(state, units, Height.SCALAR, len(units), dtype=self._kernel.data)
         return replace(out, original=False)
+
+    @_lists.before("1.40.0")
+    def _in_groups(self, value: InGroups, frame: GroupBy) -> InGroups:
+        """Give the list of each group as one value, in the groups of the `group_by`.
+
+        Args:
+            value: The input, which is not a literal.
+            frame: The groups of the `group_by`.
+
+        Returns:
+            The output.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = ImplodeRun(Shape.of(NodeKind.AGG), Kernel())
+            >>> run._in_groups(frame.column(), frame).groups
+            (3, 2)
+        """
+        del value
+        state = AggState.AGGREGATED_SCALAR
+        rows = len(frame.sizes)
+        return InGroups(state, frame.sizes, Height.SCALAR, rows, dtype=self._kernel.data)
 
 
 class GroupsFunctionRun:
@@ -2917,7 +3007,8 @@ class SortByRun:
     Where every key is a literal, the run gives the value as it is. A literal
     value beside a key that is not a literal sorts over the rows of the keys:
     a key of more than one row in a group does not match the one row of the
-    literal, and a key of one row gives its own state to the output.
+    literal, and a key of one row gives its own state to the output. Before
+    polars 1.40.0, a literal value gives itself as it is (`_literal_value`).
     Otherwise the value and each key must have the same rows in each group,
     and the output keeps the rows of the value, in another order.
 
@@ -2952,9 +3043,6 @@ class SortByRun:
         Returns:
             The output.
 
-        Raises:
-            PolarsRefusal: A key has other rows than the value in a group.
-
         Example:
             >>> frame = GroupBy((3, 2))
             >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
@@ -2967,14 +3055,109 @@ class SortByRun:
         if all(key.state is literal for key in keys):
             return replace(value, dtype=self._kernel.data or value.dtype)
         if value.state is literal:
-            return self._literal_value(keys)
+            return self._literal_value(value, keys)
         if value.rebuilt and len(keys) == 1:
             return self._rebuilt(value, keys[0])
-        for key in keys:
-            if not self._matched(value, key.aggregated() if key.state is literal else key):
+        return self._checked(value, keys)
+
+    def _checked(self, value: InGroups, keys: Sequence[InGroups]) -> InGroups:
+        """Give the output where each key passes the check of the group lengths beside the value.
+
+        Args:
+            value: The value.
+            keys: The keys.
+
+        Returns:
+            The output: the value, in another order.
+
+        Raises:
+            PolarsRefusal: A key has other rows than the value in a group.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> run._checked(frame.column(), [frame.column()]).original
+            False
+        """
+        literal = AggState.LITERAL_SCALAR
+        listed = [key.aggregated() if key.state is literal else key for key in keys]
+        for key in listed:
+            if not self._matched(value, key):
                 message = "expressions in 'sort_by' must have matching group lengths"
                 raise PolarsRefusal(ErrorClass.SHAPE, message)
+        self._check_lists([value, *listed])
         return replace(value, original=False, dtype=self._kernel.data)
+
+    @polars_releases
+    def _check_lists(self, inputs: Sequence[InGroups]) -> None:
+        """Refuse an input of one value for each group that is not a list, beside an input of lists.
+
+        Inputs that each hold one value for each group share their groups,
+        and so do inputs that each hold a list for each group. Beside each
+        other, they do not, and polars reads each input as a list for each
+        group. An input of one value for each group then gives no list, unless
+        its values are lists, and polars panics.
+
+        Args:
+            inputs: The value, then each key, a literal key as a list for each group.
+
+        Raises:
+            PolarsRefusal: An input of one value for each group gives no list.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     run._check_lists([first, frame.column()])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: ...
+            >>> lists = replace(first, dtype=DType("List", (DType("Int8"),)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     single = run._check_lists([first, first])
+            ...     listed = run._check_lists([lists, frame.column()])
+            >>> single, listed
+            (None, None)
+        """
+        single = [value.state is AggState.AGGREGATED_SCALAR for value in inputs]
+        if all(single) or not any(single):
+            return
+        for value, one in zip(inputs, single, strict=True):
+            if one and not self._lists(value):
+                message = "sort_by reads an input of one value for each group as a list"
+                raise PolarsRefusal(Stop.PANICS, message)
+
+    def _lists(self, value: InGroups) -> bool:
+        """Say whether the values of an input are lists, so that one value for each group is a list.
+
+        Args:
+            value: The input.
+
+        Returns:
+            Whether its data type is known and is a `List`.
+
+        Example:
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> run._lists(GroupBy((3, 2)).column(DType("List", (DType("Int8"),))))
+            True
+        """
+        return value.dtype is not None and value.dtype.name == "List"
+
+    @_check_lists.before("2.0.0")
+    def _shared_groups(self, inputs: Sequence[InGroups]) -> None:
+        """Accept the inputs, as the older releases do: they sort each group by the rows of the key.
+
+        Args:
+            inputs: The value, then each key.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> run._shared_groups([frame.column(), frame.column()])
+        """
+        del inputs
 
     def _matched(self, value: InGroups, key: InGroups) -> bool:
         """Say whether a key passes the check of the group lengths beside the value.
@@ -3001,13 +3184,41 @@ class SortByRun:
             return True
         return RowRuns().sizes(key) == RowRuns().sizes(value)
 
+    @polars_releases
     def _rebuilt(self, value: InGroups, key: InGroups) -> InGroups:
         """Give the output over a value whose groups a node rebuilt, beside one key.
 
+        The key passes the check of the group lengths, as beside any other value.
+
+        Args:
+            value: The value, whose lists a node built group by group.
+            key: The key.
+
+        Returns:
+            The output: the value, in another order.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> rebuilt = replace(frame.column().aggregated(), rebuilt=True)
+            >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     run._rebuilt(rebuilt, first)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: expressions in 'sort_by' must ...
+        """
+        return self._checked(value, (key,))
+
+    @_rebuilt.before("2.0.0")
+    def _sorted_by_lists(self, value: InGroups, key: InGroups) -> InGroups:
+        """Give the output over a rebuilt value beside one key, as the older releases do.
+
         Polars then sorts the list of each group by the list of the key in
         that group. A key of one value for each group gives no list there,
-        and polars panics. A key of other rows in a group raises a
-        `ComputeError`.
+        unless its values are lists, and polars panics. A key of other rows
+        in a group raises a `ComputeError`.
 
         Args:
             value: The value, whose lists a node built group by group.
@@ -3017,32 +3228,63 @@ class SortByRun:
             The output: the value, in another order.
 
         Raises:
-            PolarsRefusal: The key holds one value for each group, or other
-                rows than the value in a group where the values decide neither.
+            PolarsRefusal: The key holds other rows than the value in a group
+                where the values decide neither.
 
         Example:
             >>> frame = GroupBy((3, 2))
             >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
             >>> rebuilt = replace(frame.column().aggregated(), rebuilt=True)
             >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
-            >>> run._rebuilt(rebuilt, first)  # doctest: +ELLIPSIS
+            >>> run._sorted_by_lists(rebuilt, first)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: panics: ...
         """
         if key.state is AggState.AGGREGATED_SCALAR:
-            message = "sort_by reads the key of one value for each group as a list"
-            raise PolarsRefusal(Stop.PANICS, message)
+            return self._by_one_list(value, key)
         listed = key.aggregated() if key.state is AggState.LITERAL_SCALAR else key
         if not self._matched(value, listed):
             message = "series lengths don't match in 'sort_by' expression"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
         return replace(value, dtype=self._kernel.data)
 
-    def _literal_value(self, keys: Sequence[InGroups]) -> InGroups:
+    def _by_one_list(self, value: InGroups, key: InGroups) -> InGroups:
+        """Give the output over a rebuilt value beside a key of one value for each group.
+
+        Polars reads the one value of the key in each group as the list to
+        sort by. The data decides the length of that list.
+
+        Args:
+            value: The value, whose lists a node built group by group.
+            key: The key.
+
+        Returns:
+            The output: the value, in another order.
+
+        Raises:
+            PolarsRefusal: The values of the key are not lists, and polars panics.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel())
+            >>> rebuilt = replace(frame.column().aggregated(), rebuilt=True)
+            >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
+            >>> lists = replace(first, dtype=DType("List", (DType("Int8"),)))
+            >>> run._by_one_list(rebuilt, lists).groups
+            (3, 2)
+        """
+        if not self._lists(key):
+            message = "sort_by reads the key of one value for each group as a list"
+            raise PolarsRefusal(Stop.PANICS, message)
+        return replace(value, dtype=self._kernel.data)
+
+    @polars_releases
+    def _literal_value(self, value: InGroups, keys: Sequence[InGroups]) -> InGroups:
         """Give the output of a literal value beside keys that are not all literals.
 
         Args:
+            value: The value, which the output does not read.
             keys: The keys.
 
         Returns:
@@ -3052,17 +3294,43 @@ class SortByRun:
             PolarsRefusal: A key has more than one row in a group.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> frame = GroupBy((3, 2))
             >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
             >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel(data=DType("Int32")))
-            >>> run._literal_value([first]).state
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     run._literal_value(frame.literal(), [first]).state
             <AggState.AGGREGATED_SCALAR: 'aggregated scalar'>
         """
+        del value
         columns = [key for key in keys if key.state is not AggState.LITERAL_SCALAR]
         if any(size != 1 for key in columns for size in RowRuns().sizes(key)):
             message = "`sort_by` produced another length than the Series to sort"
             raise PolarsRefusal(ErrorClass.SHAPE, message)
         return replace(columns[0], original=False, dtype=self._kernel.data)
+
+    @_literal_value.before("1.40.0")
+    def _literal_kept(self, value: InGroups, keys: Sequence[InGroups]) -> InGroups:
+        """Give the literal value as it is, as the older releases do.
+
+        Before polars 1.40.0, `agg` puts no node above the root, so the run of
+        `sort_by` over the groups gives a literal value with no sort.
+
+        Args:
+            value: The value.
+            keys: The keys, which the output does not read.
+
+        Returns:
+            The value, with the type of the kernel.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel(data=DType("Int32")))
+            >>> run._literal_kept(frame.literal(), [frame.column()]).state
+            <AggState.LITERAL_SCALAR: 'literal scalar'>
+        """
+        del keys
+        return replace(value, dtype=self._kernel.data or value.dtype)
 
 
 class GatherRun:
@@ -3298,9 +3566,10 @@ class MinMaxByRun:
     value for each group keep the groups of the `group_by`, and a group of one
     value that a node rebuilt has groups of size 1. So the two do not meet,
     though each holds one value in each group. A literal key is a column of one
-    value. So the search for its least or its greatest value gives one index,
-    and not one index for each group. The output then has one row, and the
-    group by raises where the frame has two groups or more.
+    value. From polars 2.0.0, the search for its least or its greatest value
+    gives the first row of each group. Before that release, it gives one index,
+    and not one index for each group (`_one_index`). The output then has one
+    row, and the group by raises where the frame has two groups or more.
 
     Beside any other key, the run reads each input at the places of the
     groups of the `group_by`, with no check of bounds. An input of one value
@@ -3349,18 +3618,50 @@ class MinMaxByRun:
         Example:
             >>> frame = GroupBy((3, 2))
             >>> min_by = MinMaxByRun(Shape.function(FunctionOptions.aggregation()), Kernel())
-            >>> min_by.agg([frame.column(), frame.literal()], frame).rows
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     min_by.agg([frame.column(), frame.literal()], frame).rows
             1
         """
         value, key = inputs
         GroupLengths().check([value, key])
-        literal = key.state is AggState.LITERAL_SCALAR
-        if not literal and any(self._past_end(entry) for entry in inputs):
+        one_index = key.state is AggState.LITERAL_SCALAR and self._one_index()
+        if not one_index and any(self._past_end(entry) for entry in inputs):
             message = "min_by reads past the end of an input"
             raise PolarsRefusal(Stop.CRASHES, message)
-        rows = 1 if literal else len(frame.sizes)
+        rows = 1 if one_index else len(frame.sizes)
         state = AggState.AGGREGATED_SCALAR
         return InGroups(state, frame.sizes, Height.SCALAR, rows, dtype=self._kernel.data)
+
+    @polars_releases
+    def _one_index(self) -> bool:
+        """Say whether a literal key gives one index for all the groups: never.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> min_by = MinMaxByRun(Shape.function(FunctionOptions.aggregation()), Kernel())
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     min_by._one_index()
+            False
+        """
+        return False
+
+    @_one_index.before("2.0.0")
+    def _one_index_older(self) -> bool:
+        """Say that a literal key gives one index for all the groups, as the older releases do.
+
+        Returns:
+            Always `True`.
+
+        Example:
+            >>> min_by = MinMaxByRun(Shape.function(FunctionOptions.aggregation()), Kernel())
+            >>> min_by._one_index_older()
+            True
+        """
+        return True
 
     def _past_end(self, value: InGroups) -> bool:
         """Say whether an input holds one value for each group, at groups larger than one value.
@@ -3655,15 +3956,21 @@ class RowCount:
     over an input with the height of the frame, gives the number of rows of the
     frame. The input never runs, so a run that it refuses does not fail. The
     planner and the cast pass still read the whole tree, so a refusal of either
-    stands. `count`, which leaves out the nulls, keeps its input.
+    stands. `count`, which leaves out the nulls, keeps its input. Before
+    polars 1.41.0, the pushdown counts the rows only in place of `pl.len()`,
+    which has no input, so every `len` of an input keeps its input.
 
     Example:
-        >>> RowCount().counts(QueryFlags.lazy(lone=True), nulls=True, height=Height.COLUMN)
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> lone = QueryFlags.lazy(lone=True)
+        >>> with PolarsRelease.pretend("1.41.0"):
+        ...     RowCount().counts(lone, nulls=True, height=Height.COLUMN)
         True
         >>> RowCount().counts(QueryFlags.lazy(), nulls=True, height=Height.COLUMN)
         False
     """
 
+    @polars_releases
     def counts(self, flags: QueryFlags, *, nulls: bool, height: Height) -> bool:
         """Say whether the pushdown counts the rows in place of a `len`.
 
@@ -3680,6 +3987,26 @@ class RowCount:
             False
         """
         return flags.lone and nulls and height is Height.COLUMN
+
+    @counts.before("1.41.0")
+    def _keeps_inputs(self, flags: QueryFlags, *, nulls: bool, height: Height) -> bool:
+        """Say that the pushdown of the older releases counts the rows in place of a `len`: never.
+
+        Args:
+            flags: The passes of the frame.
+            nulls: Whether the `len` counts the nulls of its input.
+            height: The projection height of the input, after the slice pushdown.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> lone = QueryFlags.lazy(lone=True)
+            >>> RowCount()._keeps_inputs(lone, nulls=True, height=Height.COLUMN)
+            False
+        """
+        del flags, nulls, height
+        return False
 
 
 class SlicePushdown:
@@ -3701,12 +4028,18 @@ class SlicePushdown:
     wraps the slice in a list for each group before the pushdown runs, so the
     column then holds the values of the value in a list for each group.
 
+    Before polars 1.40.0, the pushdown only moves a slice below a value that
+    is elementwise, and an offset or a length is no place (`_below_only`).
+
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> column = SliceInput(Height.COLUMN)
-        >>> SlicePushdown().outcome(column, column, column)
+        >>> with PolarsRelease.pretend("1.40.0"):
+        ...     SlicePushdown().outcome(column, column, column)
         <Pushdown.DELETED: 'deleted'>
     """
 
+    @polars_releases
     def outcome(self, value: SliceInput, offset: SliceInput, length: SliceInput) -> Pushdown:
         """Give what the pushdown does to a slice of `value`.
 
@@ -3722,12 +4055,16 @@ class SlicePushdown:
             PolarsRefusal: A place below the value reads the cycle, so the query never returns.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> literal = SliceInput(Height.SCALAR, literal=True)
             >>> plus_one = SliceInput(Height.COLUMN, passes=True)
-            >>> SlicePushdown().outcome(plus_one, literal, literal)
-            <Pushdown.MOVED: 'moved'>
             >>> column = SliceInput(Height.COLUMN)
-            >>> SlicePushdown().outcome(plus_one, column, column)  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SlicePushdown().outcome(plus_one, literal, literal)
+            <Pushdown.MOVED: 'moved'>
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SlicePushdown().outcome(plus_one, column, column)
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: hangs: ...
@@ -3747,6 +4084,35 @@ class SlicePushdown:
             (False, True): Pushdown.DELETED,
         }
         return outcomes[below, arguments]
+
+    @outcome.before("1.40.0")
+    def _below_only(self, value: SliceInput, offset: SliceInput, length: SliceInput) -> Pushdown:
+        """Give what the pushdown of the older releases does: it moves a slice below its value.
+
+        These releases push a slice into the inputs of an elementwise value,
+        and read the offset and the length as they are, so the run of a slice
+        by a column checks them.
+
+        Args:
+            value: The value that the slice cuts.
+            offset: The offset, which is no place.
+            length: The length, which is no place.
+
+        Returns:
+            What the pushdown does.
+
+        Example:
+            >>> column = SliceInput(Height.COLUMN)
+            >>> plus_one = SliceInput(Height.COLUMN, passes=True)
+            >>> pushdown = SlicePushdown()
+            >>> pushdown._below_only(plus_one, column, column)
+            <Pushdown.MOVED: 'moved'>
+            >>> pushdown._below_only(column, column, column)
+            <Pushdown.KEPT: 'kept'>
+        """
+        del offset, length
+        below = value.height is not Height.SCALAR and value.passes
+        return Pushdown.MOVED if below else Pushdown.KEPT
 
     def _aligned(self, rows: Sequence[SliceInput]) -> bool:
         """Say whether the inputs that are not one value keep their places.

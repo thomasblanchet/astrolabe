@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import ClassVar
 
 import inspect
 
@@ -50,6 +51,24 @@ class PolarsApi:
 
     GENERIC_FRAME_FUNCTIONS = frozenset({"align_frames", "concat"})
 
+    # The frame methods that a recent release of polars adds, each with that release.
+    FRAME_METHODS_SINCE: ClassVar[dict[str, str]] = {
+        "execute": "1.41.0",
+        "gather": "1.41.0",
+        "is_sorted": "1.42.0",
+        "from_lazyframe_resolver": "2.0.0",
+    }
+
+    # The frame methods that a release of polars removes, each with that release.
+    FRAME_METHODS_UNTIL: ClassVar[dict[str, str]] = {
+        "approx_n_unique": "2.0.0",
+        "fetch": "2.0.0",
+        "melt": "2.0.0",
+        "profile": "2.0.0",
+        "with_context": "2.0.0",
+        "with_row_count": "2.0.0",
+    }
+
     HELPERS = frozenset({
         "expand_selector",
         "is_column",
@@ -74,6 +93,33 @@ class PolarsApi:
             True
         """
         return self._public(pl.DataFrame) | self._public(pl.LazyFrame)
+
+    def counted_frame_methods(self) -> set[str]:
+        """Give every frame method that the catalog counts: those of the newest release of polars.
+
+        Returns:
+            The frame methods of the installed release, with those that a later
+            release adds (`FRAME_METHODS_SINCE`), and without those that a
+            later release removes (`FRAME_METHODS_UNTIL`).
+
+        Example:
+            >>> "is_sorted" in PolarsApi().counted_frame_methods()
+            True
+            >>> "melt" in PolarsApi().counted_frame_methods()
+            False
+        """
+        installed = PolarsRelease.installed()
+        added = {
+            name
+            for name, first in self.FRAME_METHODS_SINCE.items()
+            if installed < PolarsRelease.parse(first)
+        }
+        removed = {
+            name
+            for name, last in self.FRAME_METHODS_UNTIL.items()
+            if installed < PolarsRelease.parse(last)
+        }
+        return (self.frame_methods() | added) - removed
 
     def _public(self, cls: type) -> set[str]:
         """Give one class's public callable attributes.
@@ -146,8 +192,9 @@ class PolarsApi:
     def selectors(self) -> set[str]:
         """Give every selector constructor `polars.selectors` offers.
 
-        A selector constructor is a public callable that is neither a
-        type nor one of the module's helpers.
+        A selector constructor is a public callable of polars that is
+        neither a type nor one of the module's helpers. Some releases also
+        import a name of `typing` into the module, which is not polars.
 
         Returns:
             Each name that builds a selector, without the helpers.
@@ -163,10 +210,12 @@ class PolarsApi:
             if name.startswith("_") or name in self.HELPERS:
                 continue
             value = getattr(cs, name)
-            if callable(value) and not isinstance(value, type):
+            ours = str(getattr(value, "__module__", "")).startswith("polars")
+            if ours and callable(value) and not isinstance(value, type):
                 found.add(name)
         return found
 
+    # The namespaces of `pl.Expr`. Polars 2.0.0 adds `map`.
     NAMESPACES = (
         "arr",
         "bin",
@@ -174,6 +223,7 @@ class PolarsApi:
         "dt",
         "ext",
         "list",
+        "map",
         "meta",
         "name",
         "str",
@@ -207,8 +257,8 @@ class PolarsApi:
         """
         found = set()
         for namespace in self.NAMESPACES:
-            holder = getattr(pl.col("x"), namespace)
-            for member in dir(holder):
+            holder = getattr(pl.col("x"), namespace, None)
+            for member in dir(holder) if holder is not None else ():
                 if not member.startswith("_"):
                     found.add(f"{namespace}.{member}")
         return found
@@ -378,8 +428,8 @@ class TestSelfCounts:
 
     def test_the_catalogue_states_the_real_frame_method_count(self) -> None:
         """The census says how large the API is, and the API says so too."""
-        assert "152 methods" in CATALOGUE.text
-        assert len(PolarsApi().frame_methods()) == 152
+        assert "147 methods" in CATALOGUE.text
+        assert len(PolarsApi().counted_frame_methods()) == 147
 
     def test_the_catalogue_covers_every_frame_method(self) -> None:
         """Every public frame method appears somewhere in the census.
@@ -399,18 +449,18 @@ class TestSelfCounts:
         release adding a method puts it in neither part and fails here.
         """
         part_one, part_two = self.parts()
-        methods = PolarsApi().frame_methods()
+        methods = PolarsApi().counted_frame_methods()
         neither = methods - part_one - part_two
         assert not neither, f"in neither part: {sorted(neither)}"
-        assert len(methods & part_one) == 75
-        assert len(methods & part_two) == 80
+        assert len(methods & part_one) == 73
+        assert len(methods & part_two) == 77
         assert sorted(methods & part_one & part_two) == [
             "clear",
             "n_unique",
             "sql",
         ]
-        assert "| 75 | Part I |" in CATALOGUE.text
-        assert "| 80 | Part II |" in CATALOGUE.text
+        assert "| 73 | Part I |" in CATALOGUE.text
+        assert "| 77 | Part II |" in CATALOGUE.text
 
     def test_the_catalogue_names_every_frame_function(self) -> None:
         """Every `pl.*` function that returns a frame appears in the catalog."""
@@ -536,9 +586,10 @@ class TestExpressionCensus:
         Returns:
             The names of the functions.
         """
-        found = set(CensusCalls.CONSTRUCTORS)
-        found |= set(CensusCalls().context_bound())
-        found |= set(CensusCalls.OPAQUE_CONSTRUCTORS)
+        calls = CensusCalls()
+        found = set(calls.constructors())
+        found |= set(calls.context_bound())
+        found |= set(calls.opaque_constructors())
         return found | set(CensusCalls.TYPE_LEVEL)
 
     def swept_namespace_members(self) -> set[str]:
@@ -559,20 +610,20 @@ class TestExpressionCensus:
         The table of section 17.3 has one row for each release of polars, and
         the row of the installed release gives its counts.
         """
-        api = PolarsApi()
+        api, calls = PolarsApi(), CensusCalls()
         release = str(PolarsRelease.installed())
         rows = [row for row in CATALOGUE.table_rows if row[0] == release]
         assert rows, f"section 17.3 has no row for polars {release}"
-        methods, called, members, total, constructors = (int(cell) for cell in rows[0][1:6])
+        cells = [int(cell) for cell in rows[0][1:8]]
+        methods, called, opaque, members, total, constructors, constructed = cells
         assert len(api.expression_methods()) == methods
-        assert len(CensusCalls().root_calls()) == called
-        assert methods == called + len(CensusCalls.OPAQUE)
+        assert len(calls.root_calls()) == called
+        assert len(calls.opaque()) == opaque
+        assert methods == called + opaque
         assert len(api.namespace_members()) == members
         assert methods + members == total
         assert len(api.expression_constructors()) == constructors
-        assert len(CensusCalls.CONSTRUCTORS) == 73
-        for quoted in ("7 whose output type comes from code outside the call", "calls 73 of them"):
-            assert quoted in CATALOGUE.text, quoted
+        assert len(calls.constructors()) == constructed
 
     @pytest.mark.parametrize("document", ALL, ids=lambda d: d.name)
     def test_the_provisional_prefixes_are_retired(self, document: Document) -> None:

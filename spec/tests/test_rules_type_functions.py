@@ -26,6 +26,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     PolarsAnswer,
     RuleAnswer,
     RuleKinds,
@@ -56,6 +57,7 @@ from astrolabe._rules.type_functions import (
     StructClosures,
     TemporalClosures,
 )
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -306,6 +308,8 @@ class PlannedPair:
     def max_horizontal(self, first: Operand, second: Operand) -> DType:
         """Give the rule of `max_horizontal`: the cast pass joins with no cast of a number to text.
 
+        Before polars 1.40.0, no cast pass casts the inputs.
+
         Args:
             first: The first input.
             second: The second input.
@@ -315,17 +319,20 @@ class PlannedPair:
 
         Example:
             >>> int8, text = Operand.column(DType("Int8")), Operand.column(DType("String"))
-            >>> PlannedPair().max_horizontal(int8, text)  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     PlannedPair().max_horizontal(int8, text)
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
         """
-        return self._supertyped(CastingRules.supertype(SupertypeFlag(0)), [first, second])
+        rules = CastingRules.supertype(SupertypeFlag(0)) if self._joins() else None
+        return self._supertyped(rules, [first, second])
 
     def sum_horizontal(self, first: Operand, second: Operand) -> DType:
         """Give the rule of `sum_horizontal`: the supertype, with `UInt32` for `Boolean`.
 
-        The cast pass casts the inputs to the supertype.
+        The cast pass casts the inputs to the supertype, from polars 1.40.0 on.
 
         Args:
             first: The first input.
@@ -339,14 +346,31 @@ class PlannedPair:
             >>> PlannedPair().sum_horizontal(boolean, boolean)
             UInt32
         """
-        joined = self._supertyped(CastingRules.cast_to_supertypes(), [first, second])
+        rules = CastingRules.cast_to_supertypes() if self._joins() else None
+        joined = self._supertyped(rules, [first, second])
         return FunctionClosures().sum_horizontal(joined)
 
-    def _supertyped(self, rules: CastingRules, operands: list[Operand]) -> DType:
+    def _joins(self) -> bool:
+        """Say whether the cast pass of the horizontal functions casts the inputs to one type.
+
+        Polars 1.40.0 adds that cast pass.
+
+        Returns:
+            Whether the release of the rules is 1.40.0 or a later one
+            (`PolarsRelease.current`).
+
+        Example:
+            >>> isinstance(PlannedPair()._joins(), bool)
+            True
+        """
+        return PolarsRelease.current() >= PolarsRelease.parse("1.40.0")
+
+    def _supertyped(self, rules: CastingRules | None, operands: list[Operand]) -> DType:
         """Give `map_to_supertype`, then run the cast pass of the function.
 
         Args:
-            rules: The casting rule of the function, with the flags of its join.
+            rules: The casting rule of the function, with the flags of its join,
+                or `None` where no cast pass casts the inputs.
             operands: The inputs.
 
         Returns:
@@ -358,8 +382,9 @@ class PlannedPair:
             Int8
         """
         dtype = FieldsMapper(*(operand.dtype for operand in operands)).map_to_supertype()
-        visit = FunctionCasts(rules).visit(operands)
-        SettledCasts().of(visit, operands)
+        if rules is not None:
+            visit = FunctionCasts(rules).visit(operands)
+            SettledCasts().of(visit, operands)
         return dtype
 
 
@@ -462,7 +487,11 @@ class Nodes:
             lambda d: FieldsMapper(d).map_numeric_to_float_dtype(coerce_decimal=False),
         ),
         UnaryNode("sin", lambda x: x.sin(), lambda d: FieldsMapper(d).map_to_float_dtype()),
-        UnaryNode("exp", lambda x: x.exp(), lambda d: FieldsMapper(d).map_to_float_dtype()),
+        UnaryNode(
+            "exp",
+            lambda x: x.exp(),
+            lambda d: FieldsMapper(d).ensure_number_or_boolean("exp").map_to_float_dtype(),
+        ),
         UnaryNode(
             "to_physical",
             lambda x: x.to_physical(),
@@ -489,7 +518,7 @@ class Nodes:
         UnaryNode(
             "ewm_var",
             lambda x: x.ewm_var(alpha=0.5),
-            EwmPlanned(lambda d: FieldsMapper(d).var_dtype()),
+            EwmPlanned(lambda d: FieldsMapper(d).ewm_var_dtype("ewm_var")),
         ),
         UnaryNode(
             "ewm_mean",
@@ -500,9 +529,7 @@ class Nodes:
             "sign",
             lambda x: x.sign(),
             lambda d: (
-                FieldsMapper(d)
-                .ensure_satisfies(lambda _, t: Is.numeric(t), "sign")
-                .with_same_dtype()
+                FieldsMapper(d).ensure_satisfies(lambda _, t: Is.numeric(t), "sign").sign_dtype()
             ),
         ),
         UnaryNode(
@@ -685,7 +712,7 @@ class Nodes:
         PairNode(
             "log",
             lambda a, b: a.log(b),
-            lambda a, b: FieldsMapper(a.dtype, b.dtype).log_dtype(),
+            lambda a, b: FieldsMapper(a.dtype, b.dtype).ensure_number_or_boolean("log").log_dtype(),
         ),
         PairNode(
             "rolling_cov",
@@ -749,7 +776,11 @@ class Nodes:
 class TestTypeFunctions:
     """Replay the type functions against the planner of polars, node by node."""
 
-    @pytest.mark.parametrize("node", Nodes.UNARY, ids=lambda node: node.name)
+    @pytest.mark.parametrize(
+        "node",
+        [node for node in Nodes.UNARY if ApiGate().has(node.name)],
+        ids=lambda node: node.name,
+    )
     def test_node_of_one_column_matches_the_planner(self, node: UnaryNode) -> None:
         """The node over a column of each type has the type of its rule, in `select` and `agg`."""
         problems = []

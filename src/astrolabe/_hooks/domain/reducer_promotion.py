@@ -16,6 +16,7 @@ from mypy.types import Instance, LiteralType, NoneType, get_proper_type
 
 from astrolabe._hooks.dispatch.generic import Target
 from astrolabe._hooks.domain.unchecked import UncheckedCompatibility
+from astrolabe._rules.releases import polars_releases
 from astrolabe.frame import Datetime as _DatetimeMarker
 from astrolabe.frame import Unchecked as _UncheckedMarker
 
@@ -140,6 +141,72 @@ class ReducerPromotion:
         return source_fullname == self._UNCHECKED_TARGET.fullname
 
 
+class SumWidening:
+    """Say whether the `sum` of a `Decimal` column gives the widest precision, 38.
+
+    From polars 1.41.0, the run and the planner both widen the precision.
+    Polars 1.40 widens it in the planner only, and the run keeps the type
+    of the input. Before polars 1.40.0, both keep the type of the input.
+
+    Example:
+        >>> SumWidening()._never(planner=True)
+        False
+    """
+
+    @polars_releases
+    def widens(self, *, planner: bool) -> bool:
+        """Say whether the sum widens the precision: it does.
+
+        Args:
+            planner: Whether the type is the planner type of a lazy frame.
+
+        Returns:
+            `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     SumWidening().widens(planner=False)
+            True
+        """
+        del planner
+        return True
+
+    @widens.before("1.41.0")
+    def _planner_only(self, *, planner: bool) -> bool:
+        """Say whether the sum widens the precision in polars 1.40: in the planner only.
+
+        Args:
+            planner: Whether the type is the planner type of a lazy frame.
+
+        Returns:
+            `planner`.
+
+        Example:
+            >>> widening = SumWidening()
+            >>> widening._planner_only(planner=True), widening._planner_only(planner=False)
+            (True, False)
+        """
+        return planner
+
+    @widens.before("1.40.0")
+    def _never(self, *, planner: bool) -> bool:
+        """Say whether the sum widens the precision before polars 1.40.0: it does not.
+
+        Args:
+            planner: Whether the type is the planner type of a lazy frame.
+
+        Returns:
+            `False`.
+
+        Example:
+            >>> SumWidening()._never(planner=False)
+            False
+        """
+        del planner
+        return False
+
+
 class ReducerDtype:
     """Give the data type that one reducer produces from one input column.
 
@@ -149,7 +216,8 @@ class ReducerDtype:
 
     - `min`, `max`, `first` and `last` keep the input data type.
     - `sum` gives `UInt32` for `Boolean`, `Int64` for an integer narrower than 32 bits, and a
-      `Decimal` with precision 38 for a `Decimal`. It keeps any other accepted data type.
+      `Decimal` with precision 38 for a `Decimal` where the installed release widens it
+      (`SumWidening`). It keeps any other accepted data type.
     - `mean`, `median`, `std`, `var` and `quantile` give `Float64` for a number, `Boolean`,
       `Decimal` or `Int128`. They keep `Float32`, `Unchecked` and every other data type. Two
       cases differ: `quantile` keeps `Boolean`, and `mean`, `median` and `quantile` turn a
@@ -271,7 +339,13 @@ class ReducerDtype:
             return True
         return any(target.is_base_of(proper) for target in self._SUM_ACCEPTED_TARGETS)
 
-    def resolve(self, reducer: str, source_dtype: MypyType | None) -> Instance | None:
+    def resolve(
+        self,
+        reducer: str,
+        source_dtype: MypyType | None,
+        *,
+        planner: bool = False,
+    ) -> Instance | None:
         """Give the data type that a reducer produces from an input column.
 
         Call this only after `source_family_matches` accepts the input.
@@ -279,6 +353,8 @@ class ReducerDtype:
         Args:
             reducer: The name of the reducer, one of `ALL_REDUCERS`, or `"len"`.
             source_dtype: The data type of the input column, or None for `"len"`.
+            planner: Whether the type is the planner type of a lazy frame, and
+                not the type of the data.
 
         Returns:
             The data type of the result. None if the input is not an instance, or if the
@@ -296,25 +372,28 @@ class ReducerDtype:
         if not isinstance(proper_source, Instance):
             return None
         if reducer == self.SUM_REDUCER:
-            return self._sum_dtype(proper_source)
+            return self._sum_dtype(proper_source, planner=planner)
         return self._coerced_dtype(reducer, proper_source)
 
-    def _sum_dtype(self, proper_source: Instance) -> Instance | None:
+    def _sum_dtype(self, proper_source: Instance, *, planner: bool) -> Instance | None:
         """Give the data type of the `sum()` of a column.
 
         Args:
             proper_source: The data type of the input column.
+            planner: Whether the type is the planner type of a lazy frame.
 
         Returns:
             `UInt32` for `Boolean`. `Int64` for an integer narrower than 32 bits. A `Decimal`
-            with precision 38 for a `Decimal`. The input data type for any other input.
+            with precision 38 for a `Decimal` where the release widens it
+            (`SumWidening`). The input data type for any other input.
         """
         fullname = proper_source.type.fullname
         if self._promotion.is_boolean(fullname):
             return self._fresh(self._UINT32_TARGET.fullname)
         if self._promotion.is_narrow_int(fullname):
             return self._fresh(self._INT64_TARGET.fullname)
-        widened = self._families.widened_decimal(proper_source)
+        widens = SumWidening().widens(planner=planner)
+        widened = self._families.widened_decimal(proper_source) if widens else None
         return widened if widened is not None else proper_source
 
     def _coerced_dtype(self, reducer: str, proper_source: Instance) -> Instance | None:

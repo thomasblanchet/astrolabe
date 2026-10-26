@@ -619,24 +619,249 @@ class FieldsMapper:  # ruff: ignore[too-many-public-methods] -- one method per m
             )
         return self
 
-    def var_dtype(self) -> DType:
-        """Give the type of a variance.
+    @polars_releases
+    def var_dtype(self, op: str = "var") -> DType:
+        """Give the type of a variance or a standard deviation.
 
-        A `Duration`, or a list or an array of them, refuses with
-        `PolarsRefusal`. Every other input takes the type of `moment_dtype`. The
-        test reads the leaf, the type under every list, but the refusal reads
-        one level.
+        A `Duration`, at the top or under any number of lists or arrays,
+        refuses with `PolarsRefusal`. Every other input takes the type of
+        `moment_dtype`.
+
+        Args:
+            op: The name of the function, `var` or `std`, for the message.
+
+        Returns:
+            The type.
+
+        Raises:
+            PolarsRefusal: The leaf of the input is a `Duration`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> nested = FieldsMapper(DType("List", (DType("Duration", ("us",)),)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Int8")).var_dtype("std")
+            Float64
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     nested.var_dtype("std")  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: operation `std` ...
+        """
+        leaf = self._dtypes[0].leaf()
+        if leaf.name == "Duration":
+            message = f"operation `{op}` is not supported for `{leaf!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        return self.moment_dtype()
+
+    @var_dtype.before("2.0.0")
+    def _var_one_level(self, op: str = "var") -> DType:
+        """Give the type of a variance or a standard deviation in the older releases.
+
+        A standard deviation takes the type of `moment_dtype`. A variance of a
+        `Duration`, or of a list or an array of them, refuses with
+        `PolarsRefusal`. The test reads the leaf, the type under every list,
+        but the refusal reads one level.
+
+        Args:
+            op: The name of the function, `var` or `std`.
 
         Returns:
             The type.
 
         Example:
-            >>> FieldsMapper(DType("Int8")).var_dtype()
+            >>> FieldsMapper(DType("Int8"))._var_one_level()
             Float64
+            >>> FieldsMapper(DType("Duration", ("us",)))._var_one_level("std")
+            Duration(time_unit='us')
         """
-        if self._dtypes[0].leaf().name != "Duration":
+        if op != "var" or self._dtypes[0].leaf().name != "Duration":
             return self.moment_dtype()
         return self.try_map_dtype(lambda dtype: self._var_inner(self._first_level(dtype)))
+
+    @polars_releases
+    def ewm_var_dtype(self, op: str) -> DType:
+        """Give the type of `ewm_std` or `ewm_var`: a float, after a refusal of a `Duration`.
+
+        Args:
+            op: The name of the function, `ewm_std` or `ewm_var`, for the message.
+
+        Returns:
+            The type of `map_numeric_to_float_dtype`, with a `Decimal` cast.
+
+        Raises:
+            PolarsRefusal: The leaf of the input is a `Duration`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Date")).ewm_var_dtype("ewm_var")
+            Date
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Duration", ("us",))).ewm_var_dtype("ewm_var")
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: operation `ewm_var` ...
+        """
+        leaf = self._dtypes[0].leaf()
+        if leaf.name == "Duration":
+            message = f"operation `{op}` is not supported for `{leaf!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        return self.map_numeric_to_float_dtype(coerce_decimal=True)
+
+    @ewm_var_dtype.before("2.0.0")
+    def _ewm_older(self, op: str) -> DType:
+        """Give the type of `ewm_std` or `ewm_var` in the older releases.
+
+        `ewm_std` gives a float, and `ewm_var` the type of a variance.
+
+        Args:
+            op: The name of the function, `ewm_std` or `ewm_var`.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> FieldsMapper(DType("Date"))._ewm_older("ewm_var")
+            Datetime(time_unit='us', time_zone=None)
+        """
+        if op == "ewm_std":
+            return self.map_numeric_to_float_dtype(coerce_decimal=True)
+        return self.var_dtype()
+
+    @polars_releases
+    def ensure_number_or_boolean(self, op: str) -> FieldsMapper:
+        """Check that every input is a number or a `Boolean`, as `exp`, `log` and `entropy` need.
+
+        Args:
+            op: The name of the function, for the message.
+
+        Returns:
+            The mapper, so that the call goes on.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("String")).ensure_number_or_boolean("exp")
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `exp` operation ...
+        """
+        return self.ensure_satisfies(
+            lambda _, dtype: Is.numeric(dtype) or dtype.name == "Boolean",
+            op,
+        )
+
+    @ensure_number_or_boolean.before("2.0.0")
+    def _no_number_check(self, op: str) -> FieldsMapper:
+        """Check nothing, as the older releases do.
+
+        Args:
+            op: The name of the function.
+
+        Returns:
+            The mapper.
+
+        Example:
+            >>> FieldsMapper(DType("String"))._no_number_check("exp").map_to_float_dtype()
+            Float64
+        """
+        del op
+        return self
+
+    @polars_releases
+    def sign_dtype(self) -> DType:
+        """Give the type of `sign`: the type of the input, with an integer digit for a `Decimal`.
+
+        The result 1 needs one digit left of the point, so a `Decimal` takes
+        at least its scale plus one as its precision, up to 38.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Decimal", (3, 3))).sign_dtype()
+            Decimal(precision=4, scale=3)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Int8")).sign_dtype()
+            Int8
+        """
+        first = self._dtypes[0]
+        if first.name != "Decimal":
+            return first
+        precision, scale = Parameter().integer(first, 0), Parameter().integer(first, 1)
+        return DType("Decimal", (min(max(precision, scale + 1), Decimals.MAX_PRECISION), scale))
+
+    @polars_releases
+    def carry_dtype(self, decimals: int | None = 0, mode: str = "HalfToEven") -> DType:
+        """Give the type of a rounding: one more digit for a `Decimal` where the rounding can carry.
+
+        A rounding can carry into one more integer digit, as 9.9 rounds to
+        10. So a `Decimal` gets one more digit of precision, up to 38, where
+        its scale is larger than `decimals`. The mode `ToZero` never carries.
+        `floor` and `ceil` keep no decimal, and `round_sig_figs` can carry at
+        every scale (`decimals=None`). Every other type keeps its type.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps, or
+                `None` where it can carry at every scale.
+            mode: The mode of the rounding, as polars writes it.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = FieldsMapper(DType("Decimal", (5, 2)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     decimal.carry_dtype(1), decimal.carry_dtype(2)
+            (Decimal(precision=6, scale=2), Decimal(precision=5, scale=2))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     decimal.carry_dtype(1, "ToZero")
+            Decimal(precision=5, scale=2)
+        """
+        first = self._dtypes[0]
+        if first.name != "Decimal" or mode == "ToZero":
+            return first
+        precision, scale = Parameter().integer(first, 0), Parameter().integer(first, 1)
+        if decimals is not None and scale <= decimals:
+            return first
+        return DType("Decimal", (min(precision + 1, Decimals.MAX_PRECISION), scale))
+
+    @carry_dtype.before("2.0.0")
+    def _no_carry(self, decimals: int | None = 0, mode: str = "HalfToEven") -> DType:
+        """Give the type of a rounding in the older releases: the type of the input.
+
+        Args:
+            decimals: The number of decimals that the rounding keeps.
+            mode: The mode of the rounding.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> FieldsMapper(DType("Decimal", (5, 2)))._no_carry(None)
+            Decimal(precision=5, scale=2)
+        """
+        del decimals, mode
+        return self.with_same_dtype()
+
+    @sign_dtype.before("2.0.0")
+    def _same_sign(self) -> DType:
+        """Give the type of `sign` in the older releases: the type of the input.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> FieldsMapper(DType("Decimal", (3, 3)))._same_sign()
+            Decimal(precision=3, scale=3)
+        """
+        return self.with_same_dtype()
 
     def _var_inner(self, dtype: DType) -> DType:
         """Refuse a temporal type, and keep any other type.
@@ -684,6 +909,38 @@ class FieldsMapper:  # ruff: ignore[too-many-public-methods] -- one method per m
             Datetime(time_unit='us', time_zone=None)
         """
         return self.map_dtype(lambda dtype: self._moment_inner(self._first_level(dtype)))
+
+    @polars_releases
+    def quantile_dtype(self) -> DType:
+        """Give the type of `quantile`: that of `moment_dtype`, in a list for a list of quantiles.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> quantiles = DType("List", (DType("Float64"),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Int8"), quantiles).quantile_dtype()
+            List(Float64)
+        """
+        moment = self.moment_dtype()
+        listed = len(self._dtypes) > 1 and self._dtypes[1].name == "List"
+        return DType("List", (moment,)) if listed else moment
+
+    @quantile_dtype.before("2.0.0")
+    def _moment_only(self) -> DType:
+        """Give the type of `quantile` in the older releases: that of `moment_dtype`.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> quantiles = DType("List", (DType("Float64"),))
+            >>> FieldsMapper(DType("Int8"), quantiles)._moment_only()
+            Float64
+        """
+        return self.moment_dtype()
 
     def _first_level(self, dtype: DType) -> DType:
         """Give the type inside a list or an array, or the type itself.
@@ -780,7 +1037,8 @@ class FieldsMapper:  # ruff: ignore[too-many-public-methods] -- one method per m
         """Give the type of the sum of a window, as `rolling_sum` has it.
 
         Returns:
-            `Int64` for a small integer, `UInt32` for a `Boolean`, and the input type for the rest.
+            `Int64` for a small integer, `UInt32` for a `Boolean`, the type of
+            `_summed_decimal` for a `Decimal`, and the input type for the rest.
 
         Example:
             >>> FieldsMapper(DType("UInt16")).sum_dtype()
@@ -791,7 +1049,43 @@ class FieldsMapper:  # ruff: ignore[too-many-public-methods] -- one method per m
         first = self._dtypes[0]
         if first.name in Is.SMALL_INTEGERS:
             return DType("Int64")
+        if first.name == "Decimal":
+            return self._summed_decimal(first)
         return DType.idx() if first.name == "Boolean" else first
+
+    @polars_releases
+    def _summed_decimal(self, dtype: DType) -> DType:
+        """Give the type of a sum of a `Decimal`: the widest precision at its scale.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The decimal of precision 38.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FieldsMapper(DType("Decimal", (10, 2))).sum_dtype()
+            Decimal(precision=38, scale=2)
+        """
+        return Decimals().widest(Parameter().integer(dtype, 1))
+
+    @_summed_decimal.before("2.0.0")
+    def _kept_decimal(self, dtype: DType) -> DType:
+        """Give the type of a sum of a `Decimal` in the older releases: the decimal itself.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The same decimal.
+
+        Example:
+            >>> FieldsMapper(DType("Decimal", (10, 2)))._kept_decimal(DType("Decimal", (10, 2)))
+            Decimal(precision=10, scale=2)
+        """
+        return dtype
 
     def nested_sum_type(self) -> DType:
         """Give the type of the sum of each list or array.
@@ -958,9 +1252,9 @@ class FunctionClosures:
     def cum_sum(self, dtype: DType) -> DType:
         """Give the type of `cum_sum`.
 
-        A logical type, that is, one whose physical type differs, such as a
-        `Date` or a `Decimal`, stays. A literal type sums as the type that it
-        takes alone.
+        A `Decimal` takes the type of `_cum_decimal`. Any other logical type,
+        that is, one whose physical type differs, such as a `Date`, stays. A
+        literal type sums as the type that it takes alone.
 
         Args:
             dtype: The input type.
@@ -973,7 +1267,7 @@ class FunctionClosures:
             (Int64, Date)
         """
         if not dtype.same(dtype.physical()):
-            return dtype
+            return self._cum_decimal(dtype) if dtype.name == "Decimal" else dtype
         if dtype.name == "Boolean":
             return DType("UInt32")
         if dtype.name in self.CUM_SUM_KEEPS:
@@ -983,6 +1277,40 @@ class FunctionClosures:
         if Is.unknown(dtype):
             return DType("Float64") if Is.float(dtype) else dtype
         return DType("Int64")
+
+    @polars_releases
+    def _cum_decimal(self, dtype: DType) -> DType:
+        """Give the type of `cum_sum` of a `Decimal`: precision 38, with the scale of the input.
+
+        Args:
+            dtype: The decimal type.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FunctionClosures()._cum_decimal(DType("Decimal", (10, 2)))
+            Decimal(precision=38, scale=2)
+        """
+        return Decimals().widest(Parameter().integer(dtype, 1))
+
+    @_cum_decimal.before("2.0.0")
+    def _kept_cum_decimal(self, dtype: DType) -> DType:
+        """Give the type of `cum_sum` of a `Decimal` in the older releases: the input type.
+
+        Args:
+            dtype: The decimal type.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> FunctionClosures()._kept_cum_decimal(DType("Decimal", (10, 2)))
+            Decimal(precision=10, scale=2)
+        """
+        return dtype
 
     def cum_prod(self, dtype: DType) -> DType:
         """Give the type of `cum_prod`.
@@ -1387,7 +1715,8 @@ class FunctionClosures:
         of the bin. The type is an `Enum` of the labels, or with
         `include_breaks` a struct of the upper break and the label of each
         value. The labels are the labels of the call, or the intervals of the
-        breaks in the order of the call (`CutLabels`).
+        breaks in the order of the call (`CutBins`). Before polars 1.40.0,
+        the labels are `Categorical` (`CutBins.dtype`).
 
         Args:
             breaks: The breaks, in the order of the call.
@@ -1400,9 +1729,11 @@ class FunctionClosures:
             than the breaks, or where two labels are equal.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> closures = FunctionClosures()
             >>> cut = closures.cut([2.0, 0.0], None, left_closed=False, include_breaks=False)
-            >>> cut(DType("Int8"))
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     cut(DType("Int8"))
             Enum(categories=['(-inf, 2]', '(2, 0]', '(0, inf]'])
         """
         names = None if labels is None else tuple(labels)
@@ -1424,7 +1755,8 @@ class CutBins:
     The type function writes the intervals of the breaks in the order of the
     call, and the kernel in their sorted order (`sorted`). So with breaks that
     are not sorted, the planner type and the run type are two `Enum` types
-    with other categories.
+    with other categories. Before polars 1.40.0, the type is `Categorical`
+    whatever the labels (`dtype`).
 
     Example:
         >>> CutBins((0.0, 2.0), None, left_closed=False, include_breaks=False).names()
@@ -1493,6 +1825,7 @@ class CutBins:
             raise PolarsRefusal(ErrorClass.SHAPE, "provide len(breaks) + 1 labels")
         return self.labels
 
+    @polars_releases
     def dtype(self) -> DType:
         """Give the type of the output: an `Enum` of the labels, or a struct of a break and a label.
 
@@ -1503,10 +1836,14 @@ class CutBins:
             PolarsRefusal: Two labels are equal, so they do not make an `Enum`.
 
         Example:
-            >>> CutBins((0.0,), ("a", "b"), left_closed=False, include_breaks=True).dtype()
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> pair = CutBins((0.0,), ("a", "b"), left_closed=False, include_breaks=True)
+            >>> equal = CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=False)
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     pair.dtype()
             Struct({'breakpoint': Float64, 'category': Enum(categories=['a', 'b'])})
-            >>> CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=False).dtype()
-            ... # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     equal.dtype()  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: the categories of an Enum ...
@@ -1515,7 +1852,34 @@ class CutBins:
         if len(set(names)) != len(names):
             message = "the categories of an Enum must be unique"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
-        categories = DType("Enum", (names,))
+        return self._wrapped(DType("Enum", (names,)))
+
+    @dtype.before("1.40.0")
+    def _categorical(self) -> DType:
+        """Give the type of the output in the older releases: `Categorical`, whatever the labels.
+
+        Returns:
+            `Categorical`, or a struct of a break and a `Categorical`.
+
+        Example:
+            >>> CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=True)._categorical()
+            Struct({'breakpoint': Float64, 'category': Categorical})
+        """
+        return self._wrapped(DType("Categorical"))
+
+    def _wrapped(self, categories: DType) -> DType:
+        """Give the type of the labels, in a struct with the break where the call includes it.
+
+        Args:
+            categories: The type of the labels.
+
+        Returns:
+            The type of the output.
+
+        Example:
+            >>> CutBins((), None, left_closed=False, include_breaks=False)._wrapped(DType("Int8"))
+            Int8
+        """
         if not self.include_breaks:
             return categories
         return DType("Struct", ((("breakpoint", DType("Float64")), ("category", categories)),))
@@ -1987,7 +2351,8 @@ class ArrayClosures:
             The struct type.
 
         Raises:
-            PolarsRefusal: The input is not an array.
+            PolarsRefusal: The input is not an array, or the number of names is
+                not the width of the array.
 
         Example:
             >>> ArrayClosures()._places(DType("Array", (DType("Int8"), 1)), ("a",))
@@ -1996,6 +2361,11 @@ class ArrayClosures:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: expected Array ...
+            >>> ArrayClosures()._places(DType("Array", (DType("Int8"), 2)), ("a",))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: arr.to_struct() number of ...
         """
         if dtype.name != "Array":  # pragma: no cover -- the check refuses any other type
             message = f"expected Array type, got: {dtype!r}"
@@ -2004,8 +2374,14 @@ class ArrayClosures:
                 message,
             )
         width = Parameter().integer(dtype, 1)
+        if names is not None and len(names) != width:
+            message = (
+                f"arr.to_struct() number of field names provided ({len(names)}) "
+                f"does not match width of input ({width})"
+            )
+            raise PolarsRefusal(ErrorClass.COMPUTE, message)
         chosen = names if names is not None else [f"field_{index}" for index in range(width)]
-        return StructOf().of(dtype.inner(), chosen[:width])
+        return StructOf().of(dtype.inner(), chosen)
 
     def concat(self, dtypes: tuple[DType, ...]) -> DType:
         """Give the type of `concat_arr`, of all its inputs.
@@ -2810,10 +3186,7 @@ class StructClosures:
         return fields[name]
 
     def rename_fields(self, names: Sequence[str]) -> Callable[[DType], DType]:
-        """Give the closure of `struct.rename_fields`.
-
-        A struct keeps as many fields as there are names. Another type gives
-        a struct with one field of that type for each name.
+        """Give the closure of `struct.rename_fields` (`_renamed`).
 
         Args:
             names: The new names.
@@ -2822,13 +3195,65 @@ class StructClosures:
             The closure.
 
         Example:
-            >>> StructClosures().rename_fields(("x", "y"))(DType("Int8"))
-            Struct({'x': Int8, 'y': Int8})
+            >>> pair = DType("Struct", ((("a", DType("Int8")), ("b", DType("Date"))),))
+            >>> StructClosures().rename_fields(("x", "y"))(pair)
+            Struct({'x': Int8, 'y': Date})
         """
         return lambda dtype: self._renamed(dtype, names)
 
+    @polars_releases
     def _renamed(self, dtype: DType, names: Sequence[str]) -> DType:
         """Give a struct with new names for its fields, in order.
+
+        The input must be a struct, with as many fields as there are names.
+
+        Args:
+            dtype: The input type.
+            names: The new names.
+
+        Returns:
+            The struct type.
+
+        Raises:
+            PolarsRefusal: The input is not a struct, or the number of names
+                is not the number of fields.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> pair = DType("Struct", ((("a", DType("Int8")), ("b", DType("Date"))),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructClosures()._renamed(pair, ("x",))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: SchemaError: struct.rename_fields() ...
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructClosures()._renamed(pair, ("x", "y"))
+            Struct({'x': Int8, 'y': Date})
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructClosures()._renamed(DType("Int8"), ("x",))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `rename_fields` ...
+        """
+        if dtype.name != "Struct":
+            message = f"`rename_fields` operation not supported for dtype `{dtype!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        fields = dtype.fields()
+        if len(names) != len(fields):
+            message = (
+                "struct.rename_fields() argument has a different number of fields than the "
+                f"struct it operates on ({len(names)} vs {len(fields)})."
+            )
+            raise PolarsRefusal(ErrorClass.SCHEMA, message)
+        pairs = zip(fields, names, strict=True)
+        return DType("Struct", (tuple((name, field[1]) for field, name in pairs),))
+
+    @_renamed.before("2.0.0")
+    def _renamed_loosely(self, dtype: DType, names: Sequence[str]) -> DType:
+        """Give a struct with new names for its fields, as the older releases do.
+
+        A struct keeps as many fields as there are names. Another type gives
+        a struct with one field of that type for each name.
 
         Args:
             dtype: The input type.
@@ -2839,8 +3264,10 @@ class StructClosures:
 
         Example:
             >>> pair = DType("Struct", ((("a", DType("Int8")), ("b", DType("Date"))),))
-            >>> StructClosures()._renamed(pair, ("x",))
+            >>> StructClosures()._renamed_loosely(pair, ("x",))
             Struct({'x': Int8})
+            >>> StructClosures()._renamed_loosely(DType("Int8"), ("x", "y"))
+            Struct({'x': Int8, 'y': Int8})
         """
         if dtype.name != "Struct":
             return StructOf().of(dtype, names)
@@ -3059,15 +3486,108 @@ class ArithmeticField:
             >>> boolean = Operand.column(DType("Boolean"))
             >>> ArithmeticField().of(Operator.PLUS, boolean, boolean)
             UInt32
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> struct = Operand.column(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ArithmeticField().of(Operator.PLUS, struct, Operand.column(DType("Int16")))
+            Struct({'a': Int16})
         """
         ltype, rtype = left.dtype, right.dtype
+        struct = StructBesideNumber().joined(op, ltype, rtype)
+        if struct is not None:
+            return struct
         if op is Operator.MINUS:
             return self._minus(ltype, rtype)
         if op is Operator.PLUS:
             return self._plus(ltype, rtype)
         if op.is_bitwise() and self._boolean_beside_number(ltype, rtype):
-            return Supertype().require(ltype, rtype)
+            return self._mixed_bitwise(op, ltype, rtype)
         return self._other(op, left, right)
+
+    @polars_releases
+    def _mixed_bitwise(self, op: Operator, left: DType, right: DType) -> DType:
+        """Refuse `&`, `|` or `^` between a `Boolean` and a number.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Raises:
+            PolarsRefusal: The operator does not take the pair.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ArithmeticField()._mixed_bitwise(Operator.AND, DType("Boolean"), DType("Int8"))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: And on Boolean and Int8 ...
+        """
+        Supertype().require(left, right)
+        message = f"{op.value} on {left!r} and {right!r} is not supported"
+        raise PolarsRefusal(ErrorClass.COMPUTE, message)
+
+    @_mixed_bitwise.before("2.0.0")
+    def _joined_bitwise(self, op: Operator, left: DType, right: DType) -> DType:
+        """Give the supertype of a `Boolean` and a number, as the older releases do.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            The supertype.
+
+        Example:
+            >>> ArithmeticField()._joined_bitwise(Operator.AND, DType("Boolean"), DType("Int8"))
+            Int8
+        """
+        del op
+        return Supertype().require(left, right)
+
+    @polars_releases
+    def _decimal_beside_integer(self, left: DType, right: DType) -> DType | None:
+        """Give the type of a `Decimal` beside an integer: the largest precision at its scale.
+
+        Args:
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            The decimal, or `None` where the pair is not a decimal beside an integer.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     field = ArithmeticField()
+            ...     field._decimal_beside_integer(DType("Int8"), DType("Decimal", (5, 2)))
+            Decimal(precision=38, scale=2)
+        """
+        for side, other in ((left, right), (right, left)):
+            if side.name == "Decimal" and Is.integer(other) and Is.known(other):
+                return Decimals().widest(Parameter().integer(side, 1))
+        return None
+
+    @_decimal_beside_integer.before("2.0.0")
+    def _no_decimal_arm(self, left: DType, right: DType) -> DType | None:
+        """Give no type: the older releases join a decimal and an integer as the supertype does.
+
+        Args:
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> ArithmeticField()._no_decimal_arm(DType("Int8"), DType("Decimal", (5, 2))) is None
+            True
+        """
+        del left, right
+        return None
 
     def _boolean_beside_number(self, left: DType, right: DType) -> bool:
         """Say whether only one input is a `Boolean` and only one is a number.
@@ -3253,6 +3773,11 @@ class ArithmeticField:
             >>> listed = DType("List", (DType("Int8"),))
             >>> ArithmeticField()._nested(NumericOp.ADD, Operator.PLUS, DType("Float32"), listed)
             List(Float32)
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = DType("Decimal", (10, 2))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ArithmeticField()._nested(NumericOp.ADD, Operator.PLUS, decimal, DType("Int8"))
+            Decimal(precision=38, scale=2)
         """
         ListArithmeticCheck().refuse(op, left, right)
         for kind in ("List", "Array"):
@@ -3262,6 +3787,9 @@ class ArithmeticField:
             if kind == "List":
                 return nested.with_leaf(list_op.leaf_supertype(nested.leaf(), other.leaf()))
             return nested.with_leaf(Supertype().require(nested.leaf(), other.leaf()))
+        decimal = self._decimal_beside_integer(left, right)
+        if decimal is not None:
+            return decimal
         if left.name == right.name == "Decimal":
             return self.decimal(left, right)
         return Supertype().require(left, right)
@@ -3300,6 +3828,12 @@ class ArithmeticField:
             >>> duration = Operand.column(DType("Duration", ("us",)))
             >>> ArithmeticField()._other(Operator.MULTIPLY, Operand.column(DType("Int8")), duration)
             Duration(time_unit='us')
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = Operand.column(DType("Decimal", (10, 2)))
+            >>> number = Operand.column(DType("Int8"))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ArithmeticField()._other(Operator.MULTIPLY, decimal, number)
+            Decimal(precision=38, scale=2)
         """
         ltype, rtype = left.dtype, right.dtype
         if self._struct_first(ltype, rtype):
@@ -3307,6 +3841,9 @@ class ArithmeticField:
         temporal = self._other_temporal(op, ltype, rtype)
         if temporal is not None:
             return temporal
+        decimal = self._decimal_beside_integer(ltype, rtype)
+        if decimal is not None:
+            return decimal
         if ltype.name == rtype.name == "Decimal":
             return self.decimal(ltype, rtype)
         ListArithmeticCheck().refuse(op, ltype, rtype)
@@ -3452,6 +3989,197 @@ class ArithmeticField:
         return (integers or floats) and alone and Is.unknown(rtype)
 
 
+class StructBesideNumber:
+    """Give the type of arithmetic of a struct beside a number, field by field.
+
+    From polars 2.0.0, each field joins the number: a struct field recurses, a
+    `Duration` stays under `*`, a list or an array joins its leaf as list
+    arithmetic does, and a number, `Boolean` or `Null` joins the number as the
+    supertype does. A division then gives the float of each field. Any other
+    field refuses. Before that release, the arms of each operator type the
+    pair (`joined`).
+
+    Example:
+        >>> struct = DType("Struct", ((("a", DType("Int8")),),))
+        >>> StructBesideNumber()._fields(Operator.PLUS, struct, DType("Int16"))
+        Struct({'a': Int16})
+    """
+
+    LIST_OPS: ClassVar[dict[Operator, NumericOp]] = {
+        Operator.PLUS: NumericOp.ADD,
+        Operator.MINUS: NumericOp.SUB,
+        Operator.MULTIPLY: NumericOp.MUL,
+        Operator.TRUE_DIVIDE: NumericOp.DIV,
+        Operator.RUST_DIVIDE: NumericOp.DIV,
+        Operator.FLOOR_DIVIDE: NumericOp.FLOOR_DIV,
+        Operator.MODULUS: NumericOp.REM,
+    }
+
+    @polars_releases
+    def joined(self, op: Operator, left: DType, right: DType) -> DType | None:
+        """Give the struct of an arithmetic operator on a struct and a number.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            The struct, or `None` where the pair is not a struct beside a number.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> struct = DType("Struct", ((("a", DType("Int8")),),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructBesideNumber().joined(Operator.TRUE_DIVIDE, DType("Int8"), struct)
+            Struct({'a': Float64})
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructBesideNumber().joined(Operator.EQ, struct, DType("Int8")) is None
+            True
+        """
+        if op.is_comparison_or_bitwise():
+            return None
+        for struct, number in ((left, right), (right, left)):
+            if struct.name == "Struct" and Is.primitive_numeric(number):
+                return self._fields(op, struct, number)
+        return None
+
+    @joined.before("2.0.0")
+    def _per_operator(self, op: Operator, left: DType, right: DType) -> DType | None:
+        """Give no struct: the older releases type the pair in the arms of each operator.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> StructBesideNumber()._per_operator(Operator.PLUS, DType("Int8"), DType("Int8"))
+        """
+        del op, left, right
+        return None
+
+    def _fields(self, op: Operator, struct: DType, number: DType) -> DType:
+        """Join each field of a struct with a number.
+
+        Args:
+            op: The operator.
+            struct: The struct.
+            number: The number.
+
+        Returns:
+            The struct of the joined fields.
+
+        Example:
+            >>> pair = DType("Struct", ((("a", DType("Null")), ("b", DType("Boolean"))),))
+            >>> StructBesideNumber()._fields(Operator.MINUS, pair, DType("UInt8"))
+            Struct({'a': UInt8, 'b': UInt8})
+        """
+        fields = tuple(
+            (name, self._field(op, name, field, number)) for name, field in struct.fields()
+        )
+        return DType("Struct", (fields,))
+
+    def _field(self, op: Operator, name: str, field: DType, number: DType) -> DType:
+        """Join one field of a struct with a number.
+
+        Args:
+            op: The operator.
+            name: The name of the field, for the message.
+            field: The type of the field.
+            number: The number.
+
+        Returns:
+            The type of the field.
+
+        Raises:
+            PolarsRefusal: The field is not a number, and not a type that the arms take.
+
+        Example:
+            >>> StructBesideNumber()._field(Operator.PLUS, "a", DType("String"), DType("Int8"))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cannot Plus a struct ...
+            >>> inner = DType("Struct", ((("b", DType("Int8")),),))
+            >>> StructBesideNumber()._field(Operator.PLUS, "a", inner, DType("Int16"))
+            Struct({'b': Int16})
+            >>> span, listed = DType("Duration", ("us",)), DType("List", (DType("Int8"),))
+            >>> StructBesideNumber()._field(Operator.MULTIPLY, "a", span, DType("Int8"))
+            Duration(time_unit='us')
+            >>> StructBesideNumber()._field(Operator.PLUS, "a", listed, DType("Int16"))
+            List(Int16)
+        """
+        if field.name == "Struct":
+            return self._fields(op, field, number)
+        if field.name == "Duration" and op is Operator.MULTIPLY:
+            return field
+        if field.name in Is.LISTS:
+            return self._nested(op, name, field, number)
+        if Is.numeric(field) or field.name in {"Null", "Boolean"}:
+            joined = Supertype().require(field, number)
+            return TrueDivField().of(joined, joined) if op is Operator.TRUE_DIVIDE else joined
+        raise PolarsRefusal(ErrorClass.INVALID_OPERATION, self._refused(op, name, field))
+
+    def _refused(self, op: Operator, name: str, field: DType) -> str:
+        """Give the message of a field that the operator does not take.
+
+        Args:
+            op: The operator.
+            name: The name of the field.
+            field: The type of the field.
+
+        Returns:
+            The message.
+
+        Example:
+            >>> StructBesideNumber()._refused(Operator.PLUS, "a", DType("String"))
+            'cannot Plus a struct with non-numeric field: (field: a, dtype: String)'
+        """
+        return (
+            f"cannot {op.value} a struct with non-numeric field: (field: {name}, dtype: {field!r})"
+        )
+
+    def _nested(self, op: Operator, name: str, field: DType, number: DType) -> DType:
+        """Join the leaf of a list or an array field with a number, as list arithmetic does.
+
+        The leaf here is the type under the lists or the arrays of the kind of
+        the field, so a list of arrays has an array as its leaf.
+
+        Args:
+            op: The operator.
+            name: The name of the field, for the message.
+            field: The type of the field.
+            number: The number.
+
+        Returns:
+            The type of the field.
+
+        Raises:
+            PolarsRefusal: List arithmetic does not take the leaf.
+
+        Example:
+            >>> listed = DType("List", (DType("Int8"),))
+            >>> StructBesideNumber()._nested(Operator.PLUS, "a", listed, DType("Int16"))
+            List(Int16)
+            >>> texts = DType("List", (DType("String"),))
+            >>> StructBesideNumber()._nested(Operator.PLUS, "a", texts, DType("Int8"))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cannot Plus a struct ...
+        """
+        leaf = field
+        while leaf.name == field.name:
+            leaf = leaf.inner()
+        if not Is.list_arithmetic_input(leaf):
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, self._refused(op, name, field))
+        return field.with_leaf(self.LIST_OPS[op].leaf_supertype(leaf, number))
+
+
 class TrueDivField:
     """Give the planner type of `/`.
 
@@ -3484,8 +4212,16 @@ class TrueDivField:
         Example:
             >>> TrueDivField().of(DType("Duration", ("ms",)), DType("Duration", ("us",)))
             Float64
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> struct = DType("Struct", ((("a", DType("Int8")),),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField().of(struct, DType("Int8"))
+            Struct({'a': Float64})
         """
-        if left.name == "Struct" and (right.name == "Struct" or Is.numeric(right)):
+        struct = StructBesideNumber().joined(Operator.TRUE_DIVIDE, left, right)
+        if struct is not None:
+            return struct
+        if left.name == "Struct" and self._divides_fields(right):
             return self._struct(left, right)
         ListArithmeticCheck().refuse(Operator.TRUE_DIVIDE, left, right)
         for kind in ("List", "Array"):
@@ -3494,6 +4230,43 @@ class TrueDivField:
                 return nested.with_leaf(self.of(nested.leaf(), other.leaf()))
         flat = self._flat_number(left, right)
         return flat if flat is not None else self._other(left, right)
+
+    @polars_releases
+    def _divides_fields(self, right: DType) -> bool:
+        """Say whether a struct on the left divides field by field: beside a struct.
+
+        A struct beside a number of the kernels has the rule of
+        `StructBesideNumber`. Beside any other type, the struct keeps its type.
+
+        Args:
+            right: The right type.
+
+        Returns:
+            Whether the right type is a struct.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField()._divides_fields(DType("Decimal", (10, 2)))
+            False
+        """
+        return right.name == "Struct"
+
+    @_divides_fields.before("2.0.0")
+    def _divides_by_numbers(self, right: DType) -> bool:
+        """Say whether a struct on the left divides field by field, as the older releases do.
+
+        Args:
+            right: The right type.
+
+        Returns:
+            Whether the right type is a struct or a number.
+
+        Example:
+            >>> TrueDivField()._divides_by_numbers(DType("Decimal", (10, 2)))
+            True
+        """
+        return right.name == "Struct" or Is.numeric(right)
 
     def _struct(self, left: DType, right: DType) -> DType:
         """Divide a struct by a struct or by a number, field by field.
@@ -3607,8 +4380,49 @@ class TrueDivField:
         if left.name in narrow:
             return DType(narrow[left.name])
         if Is.primitive_numeric(left):
-            return DType("Float64")
+            return self._number_by(left, right)
         return self._duration_or_moment(left, right)
+
+    @polars_releases
+    def _number_by(self, left: DType, right: DType) -> DType:
+        """Give the type of a number divided by a type: the type of a decimal divisor, or `Float64`.
+
+        A `Decimal` divisor gives the type of `_beside_number`.
+
+        Args:
+            left: The number.
+            right: The divisor.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField()._number_by(DType("Int8"), DType("Decimal", (5, 2)))
+            Decimal(precision=38, scale=2)
+        """
+        if right.name == "Decimal":
+            return self._beside_number(right, left)
+        return DType("Float64")
+
+    @_number_by.before("2.0.0")
+    def _float_quotient(self, left: DType, right: DType) -> DType:
+        """Give the type of a number divided by a type in the older releases: `Float64`.
+
+        Args:
+            left: The number.
+            right: The divisor.
+
+        Returns:
+            `Float64`.
+
+        Example:
+            >>> TrueDivField()._float_quotient(DType("Int8"), DType("Decimal", (5, 2)))
+            Float64
+        """
+        del left, right
+        return DType("Float64")
 
     def _decimal(self, left: DType, right: DType) -> DType:
         """Give the type of a `Decimal` divided by a type.
@@ -3622,7 +4436,9 @@ class TrueDivField:
             of `_beside_number` otherwise.
 
         Example:
-            >>> TrueDivField()._decimal(DType("Decimal", (10, 2)), DType("Int64"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     TrueDivField()._decimal(DType("Decimal", (10, 2)), DType("Int64"))
             Decimal(precision=10, scale=2)
         """
         if right.name == "Decimal":
@@ -3631,7 +4447,39 @@ class TrueDivField:
 
     @polars_releases
     def _beside_number(self, left: DType, right: DType) -> DType:
-        """Give the type of a `Decimal` divided by a type that is not a `Decimal`.
+        """Give the type of a `Decimal` beside a type that is not a `Decimal`, in a division.
+
+        Args:
+            left: The decimal.
+            right: The other type.
+
+        Returns:
+            `Float64` beside a float, the decimal of the largest precision at
+            its scale beside an integer, and the decimal itself beside a type
+            that is not a number.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = DType("Decimal", (10, 2))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField()._beside_number(decimal, DType("Int8"))
+            Decimal(precision=38, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField()._beside_number(decimal, DType("Time"))
+            Decimal(precision=10, scale=2)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TrueDivField()._beside_number(decimal, DType("Float32"))
+            Float64
+        """
+        if Is.float(right):
+            return DType("Float64")
+        if not Is.primitive_numeric(right):
+            return left
+        return Decimals().widest(Parameter().integer(left, 1))
+
+    @_beside_number.before("2.0.0")
+    def _float_or_decimal(self, left: DType, right: DType) -> DType:
+        """Give the type of a `Decimal` divided by another type, in polars 1.43 and 1.44.
 
         Args:
             left: The left decimal.
@@ -3641,9 +4489,7 @@ class TrueDivField:
             `Float64` beside a float, and the left decimal otherwise.
 
         Example:
-            >>> from astrolabe._rules.releases import PolarsRelease
-            >>> with PolarsRelease.pretend("1.43.0"):
-            ...     TrueDivField()._beside_number(DType("Decimal", (10, 2)), DType("Float32"))
+            >>> TrueDivField()._float_or_decimal(DType("Decimal", (10, 2)), DType("Float32"))
             Float64
         """
         return DType("Float64") if Is.float(right) else left
@@ -3760,7 +4606,8 @@ class ExprFields:
 
         Polars casts both inputs to their supertype when it converts the
         expression, before the node types them, so the planner reads that
-        supertype. Two inputs with no supertype refuse the plan.
+        supertype. Two inputs with no supertype refuse the plan. Before
+        polars 1.40.0, the node types its inputs itself (`_joined`).
 
         Args:
             values: The type of the first input.
@@ -3770,10 +4617,54 @@ class ExprFields:
             The supertype.
 
         Example:
-            >>> ExprFields().append(DType("Categorical"), DType("String"))
+            >>> ExprFields().append(DType("Int8"), DType("Int16"))
+            Int16
+        """
+        return self._joined(values, Supertype().require(values, other))
+
+    @polars_releases
+    def _joined(self, values: DType, joined: DType) -> DType:
+        """Give the type of `append` from the supertype of its inputs: that supertype.
+
+        Args:
+            values: The type of the first input.
+            joined: The supertype of the two inputs.
+
+        Returns:
+            The supertype.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     ExprFields()._joined(DType("Categorical"), DType("String"))
             String
         """
-        return Supertype().require(values, other)
+        del values
+        return joined
+
+    @_joined.before("1.40.0")
+    def _mapped(self, values: DType, joined: DType) -> DType:
+        """Give the type of `append` in the older releases, as the node maps its inputs to one type.
+
+        A literal type of the supertype takes the type that it takes alone,
+        and a `Categorical` beside text keeps its categories.
+
+        Args:
+            values: The type of the first input.
+            joined: The supertype of the two inputs.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> ExprFields()._mapped(DType("Categorical"), DType("String"))
+            Categorical
+            >>> ExprFields()._mapped(DType.dynamic_int(1), DType.dynamic_int(1))
+            Int32
+        """
+        if values.name == "Categorical" and joined.name == "String":
+            return values
+        return joined.materialized() if Is.unknown(joined) else joined
 
     def when(self, predicate: DType, truthy: DType, falsy: DType) -> DType:
         """Give the type of a `when` node from its three inputs: the type of `ternary`.
@@ -3964,21 +4855,55 @@ class AggFields:
 
         Returns:
             `UInt32` for a `Boolean`, `Int64` for a small integer, a decimal
-            of the largest precision, and the input type otherwise.
+            of the largest precision (`_decimal`), and the input type otherwise.
 
         Raises:
             PolarsRefusal: The input is text, binary data, a list, an array or a struct.
 
         Example:
-            >>> AggFields().sum(DType("Decimal", (10, 2)))
-            Decimal(precision=38, scale=2)
+            >>> AggFields().sum(DType("UInt8"))
+            Int64
         """
         if dtype.name in self.UNSUMMABLE:
             message = f"`sum` operation not supported for dtype `{dtype!r}`"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         if dtype.name == "Decimal":
-            return Decimals().widest(Parameter().integer(dtype, 1))
+            return self._decimal(dtype)
         return FieldsMapper(dtype).sum_dtype()
+
+    @polars_releases
+    def _decimal(self, dtype: DType) -> DType:
+        """Give the type of the sum of a decimal: the decimal of the largest precision at its scale.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The decimal of precision 38.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     AggFields()._decimal(DType("Decimal", (10, 2)))
+            Decimal(precision=38, scale=2)
+        """
+        return Decimals().widest(Parameter().integer(dtype, 1))
+
+    @_decimal.before("1.40.0")
+    def _kept(self, dtype: DType) -> DType:
+        """Give the type of the sum of a decimal in the older releases: the decimal itself.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The same decimal.
+
+        Example:
+            >>> AggFields()._kept(DType("Decimal", (10, 2)))
+            Decimal(precision=10, scale=2)
+        """
+        return dtype
 
     def mean(self, dtype: DType) -> DType:
         """Give the type of `mean`, `median` and `std`.
@@ -3995,6 +4920,7 @@ class AggFields:
         """
         return FieldsMapper(dtype).moment_dtype()
 
+    @polars_releases
     def var(self, dtype: DType) -> DType:
         """Give the type of `var`.
 
@@ -4002,10 +4928,28 @@ class AggFields:
             dtype: The input type.
 
         Returns:
-            The type of `FieldsMapper.var_dtype`, which refuses a `Duration`.
+            The type of `FieldsMapper.moment_dtype`.
 
         Example:
-            >>> AggFields().var(DType("Float32"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     AggFields().var(DType("Duration", ("us",)))
+            Duration(time_unit='us')
+        """
+        return FieldsMapper(dtype).moment_dtype()
+
+    @var.before("2.0.0")
+    def _refused_duration(self, dtype: DType) -> DType:
+        """Give the type of `var` in the older releases: that of `FieldsMapper.var_dtype`.
+
+        Args:
+            dtype: The input type.
+
+        Returns:
+            The type, which refuses a `Duration`.
+
+        Example:
+            >>> AggFields()._refused_duration(DType("Float32"))
             Float32
         """
         return FieldsMapper(dtype).var_dtype()
