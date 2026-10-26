@@ -36,6 +36,7 @@ from astrolabe._rules.failures import (
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import FunctionOptions, Height, KernelLength, NodeKind, Shape
 from astrolabe._rules.type_functions import Operand
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -3655,15 +3656,21 @@ class RowCount:
     over an input with the height of the frame, gives the number of rows of the
     frame. The input never runs, so a run that it refuses does not fail. The
     planner and the cast pass still read the whole tree, so a refusal of either
-    stands. `count`, which leaves out the nulls, keeps its input.
+    stands. `count`, which leaves out the nulls, keeps its input. Before
+    polars 1.41.0, the pushdown counts the rows only in place of `pl.len()`,
+    which has no input, so every `len` of an input keeps its input.
 
     Example:
-        >>> RowCount().counts(QueryFlags.lazy(lone=True), nulls=True, height=Height.COLUMN)
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> lone = QueryFlags.lazy(lone=True)
+        >>> with PolarsRelease.pretend("1.41.0"):
+        ...     RowCount().counts(lone, nulls=True, height=Height.COLUMN)
         True
         >>> RowCount().counts(QueryFlags.lazy(), nulls=True, height=Height.COLUMN)
         False
     """
 
+    @polars_releases
     def counts(self, flags: QueryFlags, *, nulls: bool, height: Height) -> bool:
         """Say whether the pushdown counts the rows in place of a `len`.
 
@@ -3680,6 +3687,26 @@ class RowCount:
             False
         """
         return flags.lone and nulls and height is Height.COLUMN
+
+    @counts.before("1.41.0")
+    def _keeps_inputs(self, flags: QueryFlags, *, nulls: bool, height: Height) -> bool:
+        """Say that the pushdown of the older releases counts the rows in place of a `len`: never.
+
+        Args:
+            flags: The passes of the frame.
+            nulls: Whether the `len` counts the nulls of its input.
+            height: The projection height of the input, after the slice pushdown.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> lone = QueryFlags.lazy(lone=True)
+            >>> RowCount()._keeps_inputs(lone, nulls=True, height=Height.COLUMN)
+            False
+        """
+        del flags, nulls, height
+        return False
 
 
 class SlicePushdown:

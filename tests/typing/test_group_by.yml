@@ -1964,6 +1964,7 @@
     reveal_type(df.group_by("k").len(name="k"))  # E: len would produce duplicate column "k"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: a_shorthand_over_a_remainder_retypes_what_it_keeps
+  skip: __import__("tests.releases").releases.polars_before("1.41.0")
   main: |
     import polars as pl
     from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
@@ -1978,6 +1979,24 @@
 
     def f(df: TypedDataFrame[Keys, Numbers]) -> None:
         reveal_type(df.group_by("k").sum())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]], polars.datatypes.classes.Int64], astrolabe.remainder.Except[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]]]]]"
+
+- case: a_shorthand_over_a_remainder_retypes_what_it_keeps_before_polars_1_41
+  skip: not __import__("tests.releases").releases.polars_before("1.41.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Keys(Columns):
+        k: pl.String
+        n: pl.Int64
+
+    # Every remainder column is numeric, so the reducer answers at
+    # each one and the remainder keeps its names under the answer.
+    # Before polars 1.41.0, the sum of a Decimal keeps its type.
+    Numbers = other_columns(all_of=NumericType)
+
+    def f(df: TypedDataFrame[Keys, Numbers]) -> None:
+        reveal_type(df.group_by("k").sum())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]], polars.datatypes.classes.Int64], astrolabe.remainder.Except[main.Numbers, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]]]]"
 
 - case: a_counting_shorthand_with_no_key_over_a_frame_with_no_declared_column
   main: |

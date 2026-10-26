@@ -56,7 +56,7 @@ from astrolabe._rules.node_evaluation import (
 )
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import Height, KernelLength, NodeKind, RowForm, Shape
-from astrolabe._rules.tree import ExpressionTree, KeptName
+from astrolabe._rules.tree import ExpressionTree, KeptName, WindowKeys
 from astrolabe._rules.type_functions import ExprFields, Operand
 
 if TYPE_CHECKING:
@@ -2199,6 +2199,8 @@ class TreeEvaluation:
             return self._leaf_answers(self._struct_eval(tree))
         if tree.identity.shape == "KeepName":
             KeptName().check(tree)
+        if tree.identity.shape == "Over":
+            WindowKeys().check(tree)
         if root and tree.identity.shape in self.RENAMES:
             return self._evaluation(tree.inputs[0], root=True)
         definition = Definitions.of(tree.identity)
@@ -3520,19 +3522,21 @@ class JoinKeyRows:
 class LoneCount:
     """Give the run of a `len` that stands alone in a lazy `select`, where polars counts the rows.
 
-    The projection pushdown of polars puts a count of the rows in place of
-    such a `len` where its input has the height of the frame (`RowCount`). The
-    input then never runs. The slice pushdown runs first (`SlicePushdown`),
-    and where it moves a slice into the plan, the input loses the slice and
-    can get the height of the frame.
+    From polars 1.41.0, the projection pushdown of polars puts a count of the
+    rows in place of such a `len` where its input has the height of the frame
+    (`RowCount`). The input then never runs. The slice pushdown runs first
+    (`SlicePushdown`), and where it moves a slice into the plan, the input
+    loses the slice and can get the height of the frame.
 
     Example:
         >>> import polars as pl
         >>> from astrolabe._rules.execution import QueryFlags
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> from astrolabe._rules.tree import ExpressionTree
         >>> columns = {"s": ColumnLeaf(DType("String"), RowForm.PER_ROW)}
         >>> lone = TreeEvaluation(columns, GroupBy((3,), QueryFlags.lazy(lone=True)))
-        >>> lone.answers(ExpressionTree().of(pl.col("s").abs().len())).run_select
+        >>> with PolarsRelease.pretend("1.41.0"):
+        ...     lone.answers(ExpressionTree().of(pl.col("s").abs().len())).run_select
         UInt32
         >>> lone.answers(ExpressionTree().of(pl.col("s").abs().count())).run_select
         raises InvalidOperationError
@@ -3565,16 +3569,19 @@ class LoneCount:
         Example:
             >>> import polars as pl
             >>> from astrolabe._rules.execution import QueryFlags
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> from astrolabe._rules.tree import ExpressionTree
             >>> columns = {"s": ColumnLeaf(DType("String"), RowForm.PER_ROW)}
             >>> lone = TreeEvaluation(columns, GroupBy((3,), QueryFlags.lazy(lone=True)))
-            >>> lone.answers(ExpressionTree().of(pl.col("s").abs().head(2).len())).run_select
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     lone.answers(ExpressionTree().of(pl.col("s").abs().head(2).len())).run_select
             UInt32
             >>> sorted_head = pl.col("s").abs().sort().head(2).len()
             >>> lone.answers(ExpressionTree().of(sorted_head)).run_select
             raises InvalidOperationError
             >>> beside_first = (pl.col("s").abs().head(2) + pl.col("s").abs().first()).len()
-            >>> lone.answers(ExpressionTree().of(beside_first)).run_select
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     lone.answers(ExpressionTree().of(beside_first)).run_select
             UInt32
             >>> lone.answers(ExpressionTree().of((pl.col("s") * 2).len())).run_select
             raises InvalidOperationError

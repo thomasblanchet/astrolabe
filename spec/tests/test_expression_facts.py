@@ -20,6 +20,7 @@ import pytest
 
 from astrolabe._rules.dtypes import DType
 from astrolabe._rules.kernels.lengths import ValueBuild
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -583,9 +584,17 @@ class TestRowsDecideAType:
         [(1, pl.List(pl.Date)), (2, pl.List(pl.Int32))],
     )
     def test_the_rows_decide_the_type(self, rows: int, expected: pl.DataType) -> None:
-        """Over one row the offsets have the one row of the list, and the slice keeps the dates."""
+        """Over one row the offsets have the one row of the list, and the slice keeps the dates.
+
+        Before polars 1.41.0, the kernel does not slice one list for each row of
+        a longer offset, so two rows raise.
+        """
         days = pl.Series([date(2020, 1, 1)] * rows)
         frame = pl.DataFrame({"d": days, "i": pl.Series([0] * rows, dtype=pl.Int32)})
+        if rows > 1 and PolarsRelease.installed() < PolarsRelease.parse("1.41.0"):
+            with pytest.raises(pl.exceptions.ComputeError):
+                frame.select(self.SLICE)
+            return
         assert frame.select(self.SLICE).schema["d"] == expected
 
 

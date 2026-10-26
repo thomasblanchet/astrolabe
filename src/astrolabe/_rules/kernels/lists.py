@@ -1357,7 +1357,8 @@ class Sliced:
     length in its own way:
 
     - a list of one row beside a longer offset or length gives one slice for
-      each row. The kernel casts the length and then the offset to `Int64`;
+      each row. The kernel casts the length and then the offset to `Int64`.
+      Before polars 1.41.0, this path does not exist (`_spreads`);
     - an offset and a length of one row each give one slice for every list.
       The kernel reads the offset as one number (`_number`);
     - an offset of one row beside a longer length: the length must have the
@@ -1423,7 +1424,9 @@ class Sliced:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: ...
-            >>> Sliced().output([lists, number, number], [1, 3, 1], [])
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Sliced().output([lists, number, number], [1, 3, 1], [])
             List(Int8)
         """
         values = Container("List").checked(inputs[0])
@@ -1431,13 +1434,53 @@ class Sliced:
         literal = computed[1] if computed else None
         offset = self._lost(inputs[1], literal)
         count = self._lost(inputs[2], computed[2] if computed else None)
-        if rows == 1 and max(offsets, counts) > 1:
+        if self._spreads(rows, max(offsets, counts)):
             return self._spread(values, offset, count, (offsets, counts))
         self._shape(offsets, rows)
         self._shape(counts, rows)
         read = inputs[1] if offsets == 1 else offset
         self._read(read, count, (offsets, counts), literal)
         return self._sliced(values, offset, count, (offsets, counts))
+
+    @polars_releases
+    def _spreads(self, rows: int, longest: int) -> bool:
+        """Say whether the kernel slices one list for each row of a longer offset or length.
+
+        Args:
+            rows: The number of lists.
+            longest: The number of rows of the longer of the offset and the length.
+
+        Returns:
+            Whether there is one list and the offset or the length has more rows.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     Sliced()._spreads(1, 3), Sliced()._spreads(2, 3)
+            (True, False)
+        """
+        return rows == 1 and longest > 1
+
+    @_spreads.before("1.41.0")
+    def _never_spreads(self, rows: int, longest: int) -> bool:
+        """Say that the kernel of the older releases never slices one list for each row: never.
+
+        An offset or a length of another length than the lists then raises
+        (`_shape`).
+
+        Args:
+            rows: The number of lists.
+            longest: The number of rows of the longer of the offset and the length.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> Sliced()._never_spreads(1, 3)
+            False
+        """
+        del rows, longest
+        return False
 
     def _read(
         self,

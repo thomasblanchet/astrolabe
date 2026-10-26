@@ -36,6 +36,8 @@ class Override:
     expression, over the module `pl` of polars, that shows the behavior: it
     raises or panics in the way that the override says. `stop` says how the
     probe stops, and `error` names the class of the error where it raises.
+    `since` is the first release of polars that has the call, where an older
+    release that the checker supports does not.
 
     Example:
         >>> Overrides.ALL[0].node
@@ -47,6 +49,7 @@ class Override:
     probe: str
     stop: Stop = Stop.PANICS
     error: str | None = None
+    since: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,7 @@ class CountOfNullLiteral:
             "pl.DataFrame({'g': [1, 2]}).group_by('g')"
             ".agg(pl.lit(None).is_empty(ignore_nulls=True))"
         ),
+        since="1.41.0",
     )
 
     kernel: KernelRule

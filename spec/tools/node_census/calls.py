@@ -560,6 +560,7 @@ class CensusCalls:
     # key is a name as the other tables of the class hold it, or the name of a
     # function of `pl` that builds a frame.
     SINCE: ClassVar[dict[str, str]] = {
+        "is_empty": "1.41.0",
         "is_sorted": "1.42.0",
         "ewm_sum": "1.43.0",
         "ewm_sum_by": "1.43.0",

@@ -30,6 +30,7 @@ from astrolabe._rules.kernels.dispatch import (
     RunCast,
     Same,
 )
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.type_functions import CutBins
 
 if TYPE_CHECKING:
@@ -189,6 +190,57 @@ class Cut:
         return any(low == high for low, high in itertools.pairwise(breaks))
 
 
+class DecimalSum:
+    """Give the type of the sum of a `Decimal`: precision 38, with the scale of the input.
+
+    Before polars 1.41.0, the sum of a series and the sum of each group keep
+    the type of the input.
+
+    Example:
+        >>> sum_kernel = Dispatch("sum", (), Refuse())
+        >>> DecimalSum()._kept(Data(DType("Decimal", (10, 2))), sum_kernel)
+        Decimal(precision=10, scale=2)
+    """
+
+    @polars_releases
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type: a `Decimal` of precision 38 (`MaxPrecision`).
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The `Decimal` type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> sum_kernel = Dispatch("sum", (), Refuse())
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     DecimalSum().give(Data(DType("Decimal", (10, 2))), sum_kernel)
+            Decimal(precision=38, scale=2)
+        """
+        return MaxPrecision().give(data, kernel)
+
+    @give.before("1.41.0")
+    def _kept(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the type of the input, as the older releases do.
+
+        Args:
+            data: The data, of a `Decimal` type.
+            kernel: The dispatch.
+
+        Returns:
+            The type of the data.
+
+        Example:
+            >>> sum_kernel = Dispatch("sum", (), Refuse())
+            >>> DecimalSum()._kept(Data(DType("Decimal", (5, 0))), sum_kernel)
+            Decimal(precision=5, scale=0)
+        """
+        return Same().give(data, kernel)
+
+
 class NumericKernels:
     """Hold the dispatch of each shared numeric kernel.
 
@@ -215,9 +267,9 @@ class NumericKernels:
     panics on it.
 
     `SUM` is the sum of a series. It gives `UInt32` for a `Boolean`, `Int64`
-    for an integer of 8 or 16 bits, and a `Decimal` of precision 38. It keeps
-    the input type for a wider integer, a float, a `Duration` and `Null`. Every
-    other type raises.
+    for an integer of 8 or 16 bits, and a `Decimal` of precision 38
+    (`DecimalSum`). It keeps the input type for a wider integer, a float, a
+    `Duration` and `Null`. Every other type raises.
 
     `SUM_GROUPS` is the sum of each group, which `agg` runs. It has the arms of
     `SUM`. A type that the sum of the groups does not support gives one null
@@ -307,7 +359,7 @@ class NumericKernels:
             Arm(Kinds("Boolean"), Fixed(DType("UInt32"))),
             Arm(SMALL, Fixed(DType("Int64"))),
             Arm(Is.primitive_numeric, Same()),
-            Arm(Kinds("Decimal"), MaxPrecision()),
+            Arm(Kinds("Decimal"), DecimalSum()),
             Arm(Kinds("Duration"), Same()),
             Arm(Kinds("Null"), Same()),
         ),

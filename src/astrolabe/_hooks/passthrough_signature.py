@@ -11,6 +11,8 @@ from mypy.typeops import bind_self
 from mypy.types import CallableType, get_proper_type
 
 from astrolabe._hooks.dispatch.generic import Target
+from astrolabe._hooks.errors import InvalidCallShapeError
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe.frame import TypedDataFrame, TypedLazyFrame, TypedSeries
 
 if TYPE_CHECKING:
@@ -31,7 +33,8 @@ class PassthroughMethods:
     call: `lf.head(1, 2)` passes, and polars raises `TypeError`. This class
     finds those methods from the classes themselves, and pairs each with the
     polars method that it calls, so that a signature hook can give the call
-    the parameters of polars.
+    the parameters of polars. `SINCE` gives the first release of polars that
+    has a method that a recent release adds.
 
     Example:
         >>> methods = PassthroughMethods().targets()
@@ -46,6 +49,7 @@ class PassthroughMethods:
         TypedLazyFrame: pl.LazyFrame,
         TypedSeries: pl.Series,
     }
+    SINCE: ClassVar[dict[str, str]] = {"gather": "1.41.0"}
     PASSES: ClassVar[tuple[inspect._ParameterKind, ...]] = (
         inspect.Parameter.POSITIONAL_OR_KEYWORD,
         inspect.Parameter.VAR_POSITIONAL,
@@ -66,7 +70,8 @@ class PassthroughMethods:
             >>> methods = PassthroughMethods()
             >>> bases = methods.BASES.items()
             >>> pairs = [(base, name) for typed, base in bases for name in methods._names(typed)]
-            >>> any(typing.get_overloads(getattr(base, name)) for base, name in pairs)
+            >>> present = [getattr(base, name) for base, name in pairs if hasattr(base, name)]
+            >>> any(typing.get_overloads(method) for method in present)
             False
         """
         found: dict[Target, Target] = {}
@@ -123,7 +128,9 @@ class PolarsSignatureHook:
     method from the definitions that mypy holds, binds it to the receiver,
     and keeps the return type and the name of the typed method. So
     `lf.head(1, 2)` reports `Too many arguments`, as it does over a plain
-    `pl.LazyFrame`, and the result keeps the typed frame.
+    `pl.LazyFrame`, and the result keeps the typed frame. A method that the
+    installed release of polars does not have reports the call
+    (`check_release`).
 
     It sits in the plugin layer. It reads mypy definitions and builds a mypy
     signature, and it needs the lookup of the plugin to find the polars method.
@@ -150,6 +157,7 @@ class PolarsSignatureHook:
             return type and the name of the typed method. The declared
             signature where mypy holds no plain signature of the polars method.
         """
+        self.check_release(ctx)
         declared = self.declared()
         if declared is None:  # pragma: no cover
             # No polars method that a typed class passes on is overloaded, which a
@@ -158,6 +166,32 @@ class PolarsSignatureHook:
         bound = bind_self(declared, ctx.type)
         default = ctx.default_signature
         return bound.copy_modified(ret_type=default.ret_type, name=default.name)
+
+    def check_release(self, ctx: MethodSigContext) -> None:
+        """Report the call where the installed release of polars does not have the method.
+
+        Args:
+            ctx: The mypy context of the signature at the call.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> polars = Target.of(pl.DataFrame, "gather")
+            >>> hook = PolarsSignatureHook(new_plugin(new_type_fixture()), polars)
+            >>> older, later = new_fail_context(), new_fail_context()
+            >>> with PolarsRelease.pretend("1.40.1"):
+            ...     hook.check_release(older)
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     hook.check_release(later)
+            >>> older.api.messages[0].endswith("DataFrame.gather from release 1.41.0")
+            True
+            >>> later.api.messages
+            []
+        """
+        owner, _, name = self._polars.fullname.rpartition(".")
+        first = PassthroughMethods.SINCE.get(name)
+        if first is not None and PolarsRelease.current() < PolarsRelease.parse(first):
+            method = f"{owner.rpartition('.')[2]}.{name}"
+            InvalidCallShapeError.absent_method(method, first).fail(ctx)
 
     def declared(self) -> CallableType | None:
         """Give the signature that polars declares for its method, with `self`.

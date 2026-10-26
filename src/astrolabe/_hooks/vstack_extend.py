@@ -6,21 +6,25 @@ same order, with the same data types. A different data type raises
 `SchemaError`, and a different set or order of columns raises
 `ShapeError`. The typed frame declares each method to return the type of
 its receiver, which is right for a call that succeeds. This module checks
-that the call can succeed.
+that the call can succeed. Before polars 1.41.0, `merge_sorted` also panics
+over a column that holds a `List` or an `Array` (`MergedKinds`).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._hooks.calls.call_args import CallArgs
 from astrolabe._hooks.domain.unchecked import UncheckedCompatibility
 from astrolabe._hooks.domain.dtype_promotion import DTypePromotion
 from astrolabe._hooks.domain.frame import Frame
 from astrolabe._hooks.domain.schema_equality import SchemaEquality
-from astrolabe._hooks.errors import SchemaMismatchError
+from astrolabe._hooks.encoding.schema_renderings import SchemaRenderings
+from astrolabe._hooks.errors import SchemaMismatchError, UnsupportedDtypeOperationError
 from astrolabe._hooks.propagate import not_none, propagates
+from astrolabe._rules.dtypes import DType, Rendering, RenderingError
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from astrolabe._hooks.domain.frame import PluginLookup
@@ -66,6 +70,109 @@ class _VstackExtendPlan:
         return cls(left_columns, right_columns)
 
 
+class MergedKinds:
+    """Report a column that `merge_sorted` cannot merge in the installed release of polars.
+
+    Before polars 1.41.0, `merge_sorted` panics over a column that holds a
+    `List` or an `Array`, at the top or in a field of a struct, or ends the
+    process. It decodes the merged rows of such a column with the field of the
+    encoded rows, which has another type. From that release, it merges every
+    column.
+
+    Example:
+        >>> MergedKinds()._holds_a_list(Rendering().parse("Struct({'a': List(Int8)})"))
+        True
+    """
+
+    REASON: ClassVar[str] = (
+        "merge_sorted does not merge a List or an Array before polars 1.41.0,"
+        " and polars panics or ends the process"
+    )
+    LISTS: ClassVar[frozenset[str]] = frozenset({"List", "Array"})
+
+    @polars_releases
+    def check(self, ctx: MethodContext, renderings: dict[str, str]) -> None:
+        """Report no column: the installed release merges every column.
+
+        Args:
+            ctx: The context that mypy gives for the call.
+            renderings: The rendering of the data type of each column of the receiver.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> ctx = new_fail_context()
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     MergedKinds().check(ctx, {"l": "List(Int8)"})
+            >>> ctx.api.messages
+            []
+        """
+        del ctx, renderings
+
+    @check.before("1.41.0")
+    def _refuse_lists(self, ctx: MethodContext, renderings: dict[str, str]) -> None:
+        """Report the first column that holds a `List` or an `Array`, over which polars panics.
+
+        Args:
+            ctx: The context that mypy gives for the call.
+            renderings: The rendering of the data type of each column of the receiver.
+
+        Example:
+            >>> ctx = new_fail_context()
+            >>> MergedKinds()._refuse_lists(ctx, {"k": "Int64", "l": "List(Int8)"})
+            >>> ctx.api.messages[0][:24]
+            '"l" has no result type a'
+            >>> unknown = new_fail_context()
+            >>> MergedKinds()._refuse_lists(unknown, {"u": "Unchecked"})
+            >>> unknown.api.messages
+            []
+        """
+        for name, rendering in renderings.items():
+            if self._holds_a_list(self._dtype(rendering)):
+                UnsupportedDtypeOperationError.at_frame(name, self.REASON).fail(ctx)
+                return
+
+    def _dtype(self, rendering: str) -> DType | None:
+        """Read the data type of a column, or `None` where the rules do not know it.
+
+        Args:
+            rendering: The rendering of the data type.
+
+        Returns:
+            The data type, or `None` for a type such as `Unchecked`.
+
+        Example:
+            >>> MergedKinds()._dtype("Unchecked") is None
+            True
+        """
+        try:
+            return Rendering().parse(rendering)
+        except RenderingError:
+            return None
+
+    def _holds_a_list(self, dtype: DType | None) -> bool:
+        """Say whether a data type is a `List`, an `Array`, or a struct with a field that holds one.
+
+        Args:
+            dtype: The data type, or `None` where it is not known.
+
+        Returns:
+            Whether it holds one.
+
+        Example:
+            >>> MergedKinds()._holds_a_list(Rendering().parse("Struct({'a': Int8})"))
+            False
+            >>> MergedKinds()._holds_a_list(None)
+            False
+        """
+        if dtype is None:
+            return False
+        if dtype.name in self.LISTS:
+            return True
+        if dtype.name != "Struct":
+            return False
+        return any(self._holds_a_list(field) for _, field in dtype.fields())
+
+
 class VstackExtendHook:
     """Report a `SchemaMismatchError` if the two frames of a stacking call differ.
 
@@ -81,7 +188,7 @@ class VstackExtendHook:
     each of the three methods.
     """
 
-    def __init__(self, operation: str, plugin: PluginLookup) -> None:
+    def __init__(self, operation: str, plugin: PluginLookup, *, merges: bool = False) -> None:
         """Keep the name of the method, and build the schema comparison.
 
         Args:
@@ -90,8 +197,11 @@ class VstackExtendHook:
             plugin: The mypy plugin, which the type promotion rule of
                 `SchemaEquality` needs. This hook compares with no
                 promotion, so the rule never runs here.
+            merges: Whether the method is `merge_sorted`, whose columns
+                `MergedKinds` checks.
         """
         self._operation = operation
+        self._merges = merges
         unchecked = UncheckedCompatibility()
         self._schema_equality = SchemaEquality(unchecked, DTypePromotion(unchecked, plugin))
 
@@ -114,4 +224,6 @@ class VstackExtendHook:
         right = self._schema_equality.sorted_by_name(plan.right_columns)
         if not self._schema_equality.columns_match(left, right, relaxed=False):
             SchemaMismatchError.stacked(self._operation).fail(ctx)
+        elif self._merges:
+            MergedKinds().check(ctx, SchemaRenderings().of(plan.left_columns))
         return ctx.default_return_type

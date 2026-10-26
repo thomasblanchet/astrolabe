@@ -380,6 +380,7 @@
         reveal_type(wide.select(cs.integer() | cs.float()).select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelOr[astrolabe.remainder.OfType[polars.datatypes.classes.FloatType], astrolabe.remainder.OfType[polars.datatypes.classes.IntegerType]]]]"
 
 - case: a_selection_over_a_remainder_is_the_frame_effects
+  skip: __import__("tests.releases").releases.polars_before("1.41.0")
   main: |
     import polars as pl
     import polars.selectors as cs
@@ -410,6 +411,43 @@
         reveal_type(df.select(~cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
         reveal_type(df.select(cs.numeric().name.prefix("p_")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p_bid': polars.datatypes.classes.Float64, 'p_n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Prefixed[Literal['p_'], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]"
         # The remainder can hold a Duration, which polars refuses to cast to String.
+        df.select(pl.all().cast(pl.String))  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op]
+        reveal_type(df.select(cs.by_name("bid", "zz")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OneOf[Literal['bid'] | Literal['zz']]]]"
+        reveal_type(df.with_columns(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['bid'] | Literal['n']]]"
+
+- case: a_selection_over_a_remainder_is_the_frame_effects_before_polars_1_41
+  skip: not __import__("tests.releases").releases.polars_before("1.41.0")
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, NumericType, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+        n: pl.Int64
+
+    Numeric = other_columns(all_of=NumericType)
+    Rest = other_columns()
+
+    def numeric_rest(df: TypedDataFrame[Quotes, Numeric]) -> None:
+        reveal_type(df.select(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric().cast(pl.String)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], polars.datatypes.classes.String]]"
+        reveal_type(df.select(cs.numeric().name.suffix("_r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid_r': polars.datatypes.classes.Float64, 'n_r': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Suffixed[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], Literal['_r']]]"
+        reveal_type(df.select("symbol", cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric(), pl.lit(1).alias("symbol")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64, 'symbol': polars.datatypes.classes.Int32}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.with_columns(cs.numeric().cast(pl.String)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.String, 'n': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]], polars.datatypes.classes.String], astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['bid'] | Literal['n']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]]]"
+        # The remainder can hold a name like "x_r", which the suffix would overwrite.
+        df.with_columns(cs.numeric().name.suffix("_r"))  # E: The result of "with_columns" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped] # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] with_columns = "possible"
+        reveal_type(df.select(cs.string().str.len_chars()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.UInt32}, closed=True), astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.String]]]"
+        reveal_type(df.select(cs.numeric().sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]], polars.datatypes.classes.Int64], astrolabe.remainder.Only[main.Numeric, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Int16 | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt16 | polars.datatypes.classes.UInt8]]]]]]"
+
+    def any_rest(df: TypedDataFrame[Quotes, Rest]) -> None:
+        reveal_type(df.select(cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(~cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.String}, closed=True), astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]"
+        reveal_type(df.select(cs.numeric().name.prefix("p_")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'p_bid': polars.datatypes.classes.Float64, 'p_n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Prefixed[Literal['p_'], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.NumericType]]]]"
+        # The remainder can hold a Duration, which polars refuses to cast to String.
+    # Before polars 1.41.0, the sum of a Decimal keeps its type.
         df.select(pl.all().cast(pl.String))  # E: The selection has no result type at a type the remainder can hold  [unsupported-dtype-op]
         reveal_type(df.select(cs.by_name("bid", "zz")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OneOf[Literal['bid'] | Literal['zz']]]]"
         reveal_type(df.with_columns(cs.numeric().round(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Quotes, {'symbol': polars.datatypes.classes.String, 'bid': polars.datatypes.classes.Float64, 'n': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Minus[main.Rest, Literal['bid'] | Literal['n']]]"

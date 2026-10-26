@@ -47,7 +47,7 @@ Every identifier is defined in `OPERATIONS.md`. The ones used most:
 
 ### 0.4 How the Polars column was measured
 
-Every behavior stated here was executed on **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
+Every behavior stated here was executed on **polars 1.40.1**, **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
 
 ```
 uv run pytest spec
@@ -57,7 +57,7 @@ A polars release that changes one of these behaviors fails the test that names i
 
 ### 0.5 Scope, and why nothing is missing
 
-In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
+In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Polars 1.41.0 adds `gather` to both frames and `LazyFrame.execute`, so the frame API of polars 1.40 has 149 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
 
 | Group | Count | Where |
 | -- | -- | -- |
@@ -100,7 +100,7 @@ A row-only operation changes which rows survive, or in what order. It never chan
 | `.slice(offset, length)` | takes a window of rows | unchanged | `E-1` | `none` |
 | `.reverse()` | reverses the row order | unchanged | `E-1` | `none` |
 | `.sample(n=..., fraction=...)` | takes rows at random | unchanged | `E-1` | `none` |
-| `.gather(indices)` | takes rows by position | unchanged | `E-1` | `none` |
+| `.gather(indices)` | takes rows by position, from polars 1.41.0 | unchanged | `E-1` | `none` |
 | `.gather_every(n, offset=0)` | takes every `n`th row | unchanged | `E-1` | `none` |
 | `.top_k(k, by=...)`, `.bottom_k(k, by=...)` | takes the extreme rows | unchanged | `E-1` | `none` |
 | `.shift(n)` | moves values between rows | unchanged | `E-1` | `none` |
@@ -382,7 +382,7 @@ These combine two or more frames. What each demands of the two column sets is wh
 | `.vstack(other)` | as `how="vertical"` | that schema | `E-1` | rejected over a remainder |
 | `.extend(other)` | as `how="vertical"`, in place | that schema | `E-1` | rejected over a remainder |
 | `.hstack(other)` | as `how="horizontal_extend"` | the union | `E-4` | `R-10` |
-| `.merge_sorted(other, key=...)` | as `how="vertical"`, interleaved by key | that schema | `E-1` | rejected over a remainder |
+| `.merge_sorted(other, key=...)` | as `how="vertical"`, interleaved by key; before polars 1.41.0, it panics over a column that holds a `List` or an `Array` | that schema | `E-1` | rejected over a remainder |
 | `.update(other, on=..., how=...)` | replaces values, keeping the left columns | the left schema, a shared column widened | `E-1` | `R-2` naming the right's columns |
 
 The schema check of `how="vertical"`, `how="diagonal"`, `.vstack` and `.extend` reads every `Decimal` as one type, at any depth: a `Decimal(10, 2)` column beside a `Decimal(38, 3)` column runs, and the result keeps the type of the first frame. The relaxed forms widen two `Decimal` types to the larger precision and the larger scale. An align strategy and `.merge_sorted` refuse two different `Decimal` types (measured by `TestDecimalStacks` in `spec/tests/test_polars_facts.py`).
@@ -734,10 +734,11 @@ A lazy frame stores the planner type of each column, and plans each later step a
 
 ### 17.3 The counts
 
-`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.42.0 adds the method `is_sorted`. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
+`pl.Expr` carries 10 namespaces. Its methods, the members of its namespaces and the constructors of section 18 depend on the release of polars. Polars 1.41.0 adds the method `is_empty`. Polars 1.42.0 adds the method `is_sorted`. Polars 1.43.0 adds the methods `ewm_sum` and `ewm_sum_by`, the members `cat.physical` and `cat.to`, and the constructor `pl.list`. Polars 1.44.0 adds the members `arr.dot` and `struct.drop`.
 
 | Polars | Methods | Methods that the census calls | Members of the namespaces | Methods and members | Constructors |
 | -- | -- | -- | -- | -- | -- |
+| 1.40.1 | 208 | 201 | 221 | 429 | 81 |
 | 1.41.2 | 209 | 202 | 221 | 430 | 81 |
 | 1.42.1 | 210 | 203 | 221 | 431 | 81 |
 | 1.43.2 | 212 | 205 | 223 | 435 | 82 |

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import KnownNan
-from astrolabe._rules.definitions.node_options import NodeIdentity, NodeOptions
+from astrolabe._rules.definitions.node_options import NodeIdentity, NodeOptions, OptionReader
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal
 from astrolabe._rules.releases import polars_releases
 
@@ -149,6 +149,193 @@ class AnyCast:
             True
         """
         return serialized
+
+
+class EarlierForms:
+    """Rewrite a node that polars builds before 1.41.0 into the form that polars 1.41.0 builds.
+
+    Before polars 1.41.0, `quantile` is an aggregation that holds its input and
+    its quantile, and the members `reverse`, `unique` and `n_unique` of `list`
+    and `arr` are functions of their own. From that release, `quantile` is a
+    function of two inputs, and each of these members is an `eval` of the
+    element. The rules hold the later forms, and the two forms give the same
+    types.
+
+    Example:
+        >>> member = {"ListExpr": "Reverse"}
+        >>> reversed_list = {"Function": {"input": [{"Column": "l"}], "function": member}}
+        >>> EarlierForms()._later(reversed_list)["Eval"]["variant"]
+        'List'
+    """
+
+    VARIANTS: ClassVar[dict[tuple[str, str], object]] = {
+        ("ListExpr", "Reverse"): "List",
+        ("ListExpr", "Unique"): "List",
+        ("ListExpr", "NUnique"): "ListAgg",
+        ("ArrayExpr", "Reverse"): {"Array": {"as_list": False}},
+        ("ArrayExpr", "Unique"): {"Array": {"as_list": True}},
+        ("ArrayExpr", "NUnique"): "ArrayAgg",
+    }
+
+    @polars_releases
+    def rewritten(self, serialized: object) -> object:
+        """Give a node in the form that the installed release builds: unchanged.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The node.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     EarlierForms().rewritten({"Column": "a"})
+            {'Column': 'a'}
+        """
+        return serialized
+
+    @rewritten.before("1.41.0")
+    def _later(self, serialized: object) -> object:
+        """Give a node of an older release in the form of polars 1.41.0.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The function of `quantile`, or the `eval` of a member, where the node
+            is one of them, and the node otherwise.
+
+        Example:
+            >>> body = {"expr": {"Column": "x"}, "quantile": {"Column": "q"}, "method": "Linear"}
+            >>> EarlierForms()._later({"Agg": {"Quantile": body}})["Function"]["function"]
+            {'Quantile': {'method': 'Linear'}}
+            >>> EarlierForms()._later({"Agg": {"Sum": {"Column": "x"}}})
+            {'Agg': {'Sum': {'Column': 'x'}}}
+            >>> EarlierForms()._later({"Function": {"input": [{"Column": "x"}], "function": "Abs"}})
+            {'Function': {'input': [{'Column': 'x'}], 'function': 'Abs'}}
+            >>> EarlierForms()._later("Element")
+            'Element'
+        """
+        if not isinstance(serialized, dict):
+            return serialized
+        aggregation = serialized.get("Agg")
+        if isinstance(aggregation, dict) and isinstance(aggregation.get("Quantile"), dict):
+            return self._quantile(aggregation["Quantile"])
+        body = serialized.get("Function")
+        member = self._member(body) if isinstance(body, dict) else None
+        return serialized if member is None else member
+
+    def _quantile(self, body: dict[str, object]) -> object:
+        """Give the function of `quantile`, whose inputs are the value and the quantile.
+
+        Args:
+            body: The body of the aggregation.
+
+        Returns:
+            The function.
+
+        Example:
+            >>> body = {"expr": {"Column": "x"}, "quantile": {"Column": "q"}, "method": "Nearest"}
+            >>> EarlierForms()._quantile(body)["Function"]["input"]
+            [{'Column': 'x'}, {'Column': 'q'}]
+        """
+        inputs = [body.get("expr"), body.get("quantile")]
+        function = {"Quantile": {"method": body.get("method")}}
+        return {"Function": {"input": inputs, "function": function}}
+
+    def _member(self, body: dict[str, object]) -> object | None:
+        """Give the `eval` of the element that a member of `list` or `arr` is in polars 1.41.0.
+
+        Args:
+            body: The body of the function.
+
+        Returns:
+            The `eval`, or `None` where the function is not one of the members.
+
+        Example:
+            >>> member = {"ArrayExpr": "NUnique"}
+            >>> body = {"input": [{"Column": "a"}], "function": member}
+            >>> EarlierForms()._member(body)["Eval"]["evaluation"]
+            {'Agg': {'NUnique': 'Element'}}
+            >>> unique = {"input": [{"Column": "l"}], "function": {"ListExpr": {"Unique": True}}}
+            >>> EarlierForms()._member(unique)["Eval"]["evaluation"]["Function"]["function"]
+            {'Unique': True}
+            >>> EarlierForms()._member({"input": [], "function": {"ListExpr": "Sum"}}) is None
+            True
+        """
+        function = body.get("function")
+        if not isinstance(function, dict):
+            return None
+        namespace, member = next(iter(function.items()))
+        name = next(iter(member)) if isinstance(member, dict) else str(member)
+        variant = self.VARIANTS.get((namespace, name))
+        if variant is None:
+            return None
+        if name == "NUnique":
+            evaluation: object = {"Agg": {"NUnique": "Element"}}
+        else:
+            evaluation = {"Function": {"input": ["Element"], "function": member}}
+        inputs = body.get("input")
+        value = inputs[0] if isinstance(inputs, list) else None
+        return {"Eval": {"expr": value, "evaluation": evaluation, "variant": variant}}
+
+
+class WindowKeys:
+    """Check the names of the keys of `over`, as the conversion of polars does.
+
+    Before polars 1.41.0, the conversion refuses an `over` with two keys of
+    one output name, as two literals, with `DuplicateError`. From that
+    release, it does not compare the names.
+
+    Example:
+        >>> body = {"function": {"Column": "x"}, "partition_by": []}
+        >>> WindowKeys()._distinct(ExpressionTree().read({"Over": body})) is None
+        True
+    """
+
+    @polars_releases
+    def check(self, tree: TreeNode) -> None:
+        """Check the keys of an `over`: no check.
+
+        Args:
+            tree: The node of `over`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> body = {"function": {"Column": "x"}, "partition_by": [{"Column": "g"}] * 2}
+            >>> tree = ExpressionTree().read({"Over": body})
+            >>> with PolarsRelease.pretend("1.41.0"):
+            ...     WindowKeys().check(tree)
+        """
+        del tree
+
+    @check.before("1.41.0")
+    def _distinct(self, tree: TreeNode) -> None:
+        """Refuse two keys of one output name, as the older releases do.
+
+        Args:
+            tree: The node of `over`.
+
+        Raises:
+            PolarsRefusal: Two keys have one output name.
+
+        Example:
+            >>> keys = [{"Literal": {"Dyn": {"Int": 0}}}, {"Literal": {"Dyn": {"Int": 1}}}]
+            >>> body = {"function": {"Column": "x"}, "partition_by": keys}
+            >>> WindowKeys()._distinct(ExpressionTree().read({"Over": body}))
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: DuplicateError: column with name 'literal' ...
+        """
+        body = tree.serialized.get("Over") if isinstance(tree.serialized, dict) else None
+        keys = body.get("partition_by") if isinstance(body, dict) else None
+        seen: set[str] = set()
+        for name in OptionReader().names(keys if isinstance(keys, list) else []):
+            if name in seen:
+                message = f"column with name '{name}' has more than one occurrence"
+                raise PolarsRefusal(ErrorClass.DUPLICATE, message)
+            seen.add(name)
 
 
 class KeptName:
@@ -362,6 +549,7 @@ class ExpressionTree:
             >>> tree.identity.shape, tree.inputs[0].identity.shape
             ('Alias', 'Column')
         """
+        serialized = EarlierForms().rewritten(serialized)
         serialized = AnyCast().rewritten(HorizontalLogic().rewritten(serialized))
         if not isinstance(serialized, dict):
             return TreeNode(serialized, NodeIdentity(str(serialized), ""))

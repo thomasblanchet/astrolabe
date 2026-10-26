@@ -1791,16 +1791,15 @@ def test_the_slice_pushdown_hangs_where_a_cycle_reaches_the_value() -> None:
 class LoneCounts:
     """Give each `len` that stands alone in a lazy `select`, and its run from polars and the rules.
 
-    The projection pushdown counts the rows in place of such a `len` where its
-    input has the height of the frame, also after the slice pushdown moves
-    the slices of the input into the plan (`RowCount`). The input `s` is text,
-    which `abs` refuses at the run, so a run that keeps its input raises.
+    From polars 1.41.0, the projection pushdown counts the rows in place of
+    such a `len` where its input has the height of the frame, also after the
+    slice pushdown moves the slices of the input into the plan (`RowCount`).
+    The input `s` is text, which `abs` refuses at the run, so a run that keeps
+    its input raises.
 
     Example:
-        >>> LoneCounts().polars("abs")
-        'UInt32'
-        >>> LoneCounts().rules("abs")
-        'UInt32'
+        >>> LoneCounts().polars("abs") == LoneCounts().rules("abs")
+        True
     """
 
     FRAME: ClassVar[pl.DataFrame] = pl.DataFrame({"s": ["a", "b", "c"], "g": [1, 1, 2]})

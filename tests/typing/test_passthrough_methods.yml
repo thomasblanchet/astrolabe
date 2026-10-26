@@ -453,6 +453,7 @@
     narrowed: LzFrame = lf.drop_nans()
 
 - case: gather_narrows_precisely
+  skip: __import__("tests.releases").releases.polars_before("1.41.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -465,7 +466,22 @@
     df: Frame
     narrowed: Frame = df.gather([0, 2])
 
+- case: gather_narrows_precisely_before_polars_1_41
+  skip: not __import__("tests.releases").releases.polars_before("1.41.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        foo: pl.Int64
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    narrowed: Frame = df.gather([0, 2])  # E: This call raises AttributeError: polars has DataFrame.gather from release 1.41.0  [invalid-call-shape]
+
 - case: gather_narrows_precisely_lazy
+  skip: __import__("tests.releases").releases.polars_before("1.41.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedLazyFrame

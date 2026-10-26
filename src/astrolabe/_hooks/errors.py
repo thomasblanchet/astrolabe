@@ -925,6 +925,26 @@ class InvalidCallShapeError(AstrolabeError):
         return cls(f"This call raises {error} before any frame meets it: {message}")
 
     @classmethod
+    def absent_method(cls, method: str, first: str) -> InvalidCallShapeError:
+        """Build the message for a method that the installed release of polars does not have.
+
+        A typed frame declares some methods of polars that only a later
+        release has. Polars raises `AttributeError` for such a call.
+
+        Args:
+            method: The class and the method, for example `DataFrame.gather`.
+            first: The first release that has the method.
+
+        Returns:
+            The error.
+
+        Example:
+            >>> InvalidCallShapeError.absent_method("DataFrame.gather", "1.41.0")._message
+            'This call raises AttributeError: polars has DataFrame.gather from release 1.41.0'
+        """
+        return cls(f"This call raises AttributeError: polars has {method} from release {first}")
+
+    @classmethod
     def refused_at_every_frame(cls, refusal: str) -> InvalidCallShapeError:
         """Build the message for a call whose expression polars refuses at every frame.
 

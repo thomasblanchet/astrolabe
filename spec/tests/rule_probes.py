@@ -675,6 +675,11 @@ class JoinCalls:
     def explained(self, dtypes: tuple[pl.DataType, pl.DataType], expression: pl.Expr) -> str | None:
         """Give the text of `explain()` for an expression over two columns `x0` and `x1`.
 
+        The plan runs no projection pushdown, which does not change a cast.
+        Before polars 1.41.0, that pass types the plan again after the cast
+        pass, and it panics where a cast leaves an input of another kind, as
+        `list.set_union` of a list beside text does.
+
         Args:
             dtypes: The types of `x0` and `x1`.
             expression: The expression.
@@ -688,7 +693,8 @@ class JoinCalls:
             False
         """
         frame = pl.LazyFrame(schema={"x0": dtypes[0], "x1": dtypes[1]})
-        return PolarsAnswer().text(lambda: frame.select(expression).explain())
+        flags = pl.QueryOptFlags(projection_pushdown=False)
+        return PolarsAnswer().text(lambda: frame.select(expression).explain(optimizations=flags))
 
     def full_join(self, left: pl.DataType, right: pl.DataType) -> DType | None:
         """Give the type of the key of a full join that coalesces its keys, from a run on no rows.
@@ -1548,6 +1554,7 @@ class ApiGate:
     """
 
     NODES: ClassVar[dict[str, NodeIdentity]] = {
+        "is_empty": NodeIdentity("Function", "Boolean.IsEmpty"),
         "is_sorted": NodeIdentity("Function", "Boolean.IsSorted"),
         "ewm_sum": NodeIdentity("Function", "EwmSum"),
         "ewm_sum_by": NodeIdentity("Function", "EwmSumBy"),

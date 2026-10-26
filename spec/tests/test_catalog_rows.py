@@ -19,6 +19,7 @@ import polars as pl
 import pytest
 
 from spec.tests.documents import Document
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -142,6 +143,9 @@ def everywhere(dtype: str) -> dict[str, str]:
 class Replay:
     """One catalogue row's replay: the call, and the schema it must give.
 
+    `since` is the first release of polars where the call runs over the
+    replay frame, where an older release that the checker supports refuses it.
+
     Example:
         >>> Replay("sort", "sort", lambda df: df.sort("k"), FULL).label
         'sort'
@@ -151,6 +155,19 @@ class Replay:
     method: str
     build: Callable[[pl.DataFrame], pl.DataFrame]
     expects: Mapping[str, str]
+    since: str | None = None
+
+    def runs(self) -> bool:
+        """Say whether the call runs over the replay frame in the installed release of polars.
+
+        Returns:
+            Whether the installed release is `since` or a later one.
+
+        Example:
+            >>> Replay("sort", "sort", lambda df: df.sort("k"), FULL).runs()
+            True
+        """
+        return self.since is None or PolarsRelease.installed() >= PolarsRelease.parse(self.since)
 
     def observed(self) -> dict[str, str]:
         """Run the call and give the output schema as text.
@@ -175,7 +192,7 @@ ROW_ONLY: tuple[Replay, ...] = (
     Replay("drop_nulls", "drop_nulls", lambda df: df.drop_nulls(), FULL),
     Replay("filter", "filter", lambda df: df.filter(pl.col("k") > 0), FULL),
     Replay("first", "first", lambda df: df.lazy().first().collect(), FULL),
-    Replay("gather", "gather", lambda df: df.gather([0]), FULL),
+    Replay("gather", "gather", lambda df: df.gather([0]), FULL, since="1.41.0"),
     Replay("gather_every", "gather_every", lambda df: df.gather_every(1), FULL),
     Replay("head", "head", lambda df: df.head(1), FULL),
     Replay("last", "last", lambda df: df.lazy().last().collect(), FULL),
@@ -201,6 +218,7 @@ ROW_ONLY: tuple[Replay, ...] = (
         "merge_sorted",
         lambda df: df.merge_sorted(replay_frame(), key="k"),
         FULL,
+        since="1.41.0",
     ),
     Replay("vstack", "vstack", lambda df: df.vstack(replay_frame()), FULL),
     Replay("extend", "extend", lambda df: df.extend(replay_frame()), FULL),
@@ -508,9 +526,16 @@ class TestEveryRowReplays:
     """Each replayed row's full output schema equals the expectation."""
 
     def test_every_entry_matches(self) -> None:
-        """Run all replays; a schema drift names its row."""
+        """Run all replays; a schema drift names its row.
+
+        A call that the installed release of polars refuses over the replay
+        frame has no replay there: `gather` before polars 1.41.0, which adds
+        it, and `merge_sorted` before that release, which panics over the
+        list column `l`.
+        """
         for entry in ENTRIES:
-            assert entry.observed() == dict(entry.expects), entry.label
+            if entry.runs():
+                assert entry.observed() == dict(entry.expects), entry.label
 
 
 class TestCorrReplays:

@@ -52,7 +52,11 @@ class PolarsApi:
     GENERIC_FRAME_FUNCTIONS = frozenset({"align_frames", "concat"})
 
     # The frame methods that a recent release of polars adds, each with that release.
-    FRAME_METHODS_SINCE: ClassVar[dict[str, str]] = {"is_sorted": "1.42.0"}
+    FRAME_METHODS_SINCE: ClassVar[dict[str, str]] = {
+        "execute": "1.41.0",
+        "gather": "1.41.0",
+        "is_sorted": "1.42.0",
+    }
 
     HELPERS = frozenset({
         "expand_selector",
