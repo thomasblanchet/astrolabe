@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 import polars as pl
 import polars.selectors as cs
 import pytest
+from polars.datatypes.classes import NestedType
 
 from astrolabe._hooks.fill_null import RefusedKinds
 from astrolabe._rules.releases import PolarsRelease
@@ -456,14 +457,16 @@ class TestReducerContexts:
         assert agg_dtype("li", reducer) == "List(Int64)"
         assert frame_dtype("li", reducer) == "List(Int64)"
 
-    def test_var_rejects_a_duration_where_std_accepts_it(self) -> None:
-        """The variance gate is exactly `Duration`, and it is not shared with `std`.
+    def test_var_rejects_a_duration_and_std_does_from_2_0(self) -> None:
+        """The variance gate is exactly `Duration`. Before polars 2.0.0, `std` does not share it.
 
         An error message for this gate must name durations. A message
-        naming numbers and Booleans describes a different family.
+        naming numbers and Booleans describes a different family. From
+        polars 2.0.0, `std` refuses a `Duration` too.
         """
+        older = PolarsRelease.installed() < PolarsRelease.parse("2.0.0")
         assert select_dtype("du", "var") == "raises"
-        assert select_dtype("du", "std") == "Duration(time_unit='us')"
+        assert select_dtype("du", "std") == ("Duration(time_unit='us')" if older else "raises")
 
     @pytest.mark.parametrize(
         ("column", "expected"),
@@ -1798,13 +1801,16 @@ class TestUserClassesAsDataTypes:
     or an instance of it, by its name alone. A class named after a kind
     reads as the polars class of that name, whatever it subclasses. Every
     other name raises `TypeError`, and so do the names `Decimal` and
-    `Extension`. `pl.Series` refuses every subclass of a kind other than
-    `List`, `Array` and `Struct`, whatever its name and its data. It
-    ignores a subclass of those three, so the values decide.
+    `Extension`. `pl.Series` refuses every subclass of a kind that is not
+    nested, whatever its name and its data. It ignores a subclass of a
+    nested kind, `List`, `Array`, `Struct` or the `Map` of polars 2.0.0, so
+    the values decide.
     """
 
     UNREAD: ClassVar[tuple[str, ...]] = ("Decimal", "Extension")
-    NESTED: ClassVar[tuple[type[pl.DataType], ...]] = (pl.List, pl.Array, pl.Struct)
+    NESTED: ClassVar[tuple[type[pl.DataType], ...]] = tuple(
+        kind for kind in KindRoster().classes() if issubclass(kind, NestedType)
+    )
 
     def named(self, name: str, base: type[pl.DataType] = pl.Int64) -> Any:
         """Define a subclass of a polars data type, as user code does.
@@ -2140,7 +2146,7 @@ class TestRowCountWidths:
     OTHERS: ClassVar[dict[tuple[str, str], dict[str, Any]]] = {
         ("top_k", "k"): {"by": "x"},
         ("bottom_k", "k"): {"by": "x"},
-        ("gather_every", "offset"): {"n": 1},
+        ("gather_every", "offset"): {"n": 2},
         ("slice", "length"): {"offset": 0},
     }
     CASES: ClassVar[list[tuple[str, str, str]]] = [
@@ -2166,8 +2172,13 @@ class TestRowCountWidths:
         try:
             result = getattr(self.CALLS[kind], method)(**keywords)
             if isinstance(result, pl.LazyFrame):
-                result.collect()
-        except (OverflowError, ValueError, pl.exceptions.PolarsError) as error:
+                result.collect(engine="in-memory")
+        except (
+            OverflowError,
+            ValueError,
+            pl.exceptions.PolarsError,
+            pl.exceptions.PanicException,
+        ) as error:
             return type(error).__name__
         return None
 
@@ -2218,6 +2229,23 @@ class TestDecimalStacks:
         """The result takes the larger precision and the larger scale."""
         stacked = pl.concat([self.FIRST, self.SECOND], how=how)
         assert stacked.schema["d"] == pl.Decimal(38, 3)
+
+    @pytest.mark.parametrize("how", ["vertical_relaxed", "diagonal_relaxed"])
+    def test_a_relaxed_stack_keeps_the_integer_digits_from_2_0(
+        self,
+        how: Literal["vertical_relaxed", "diagonal_relaxed"],
+    ) -> None:
+        """From polars 2.0.0, the precision holds the integer digits of both, and the larger scale.
+
+        `Decimal(5, 2)` has three integer digits, and `Decimal(6, 4)` has
+        four places after the point, so the result needs seven digits. Before
+        that release, it takes the larger precision, six.
+        """
+        first = pl.DataFrame({"d": pl.Series([], dtype=pl.Decimal(5, 2))})
+        second = pl.DataFrame({"d": pl.Series([], dtype=pl.Decimal(6, 4))})
+        older = PolarsRelease.installed() < PolarsRelease.parse("2.0.0")
+        expected = pl.Decimal(6, 4) if older else pl.Decimal(7, 4)
+        assert pl.concat([first, second], how=how).schema["d"] == expected
 
     def test_an_align_and_a_sorted_merge_refuse(self) -> None:
         """An align strategy and `merge_sorted` compare the parameters too."""

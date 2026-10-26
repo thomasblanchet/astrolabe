@@ -26,7 +26,6 @@ from astrolabe._rules.kernels.dispatch import (
     Fixed,
     Kinds,
     MaxPrecision,
-    Physical,
     Recast,
     Refuse,
     RunCast,
@@ -116,6 +115,9 @@ class Neighbors:
     direction, `is_sorted` first infers it with `<` and `>` of the same
     values, over any type. An ordering refuses a list, an array and a struct
     (`Comparison`). A series of one row, or of only nulls, compares nothing.
+    From polars 2.0.0, `is_sorted` encodes each row of a list, an array and a
+    struct also in these two places, so it compares no such value
+    (`_encodes`).
 
     Example:
         >>> lists = Data(DType("List", (DType("Int8"),)), one_row=True)
@@ -135,16 +137,53 @@ class Neighbors:
 
         Example:
             >>> lists = Data(DType("List", (DType("Int8"),)))
-            >>> Neighbors().give(lists, Dispatch("is_sorted", (), Neighbors()))
-            ... # doctest: +ELLIPSIS
+            >>> sorted_check = Dispatch("is_sorted", (), Neighbors())
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Neighbors().give(lists, sorted_check)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
         """
         del kernel
-        if not data.one_row and not data.nulls:
+        if not data.one_row and not data.nulls and not self._encodes(data.dtype):
             Comparison(CompareOp.LT_EQ).output(data, data)
         return DType("Boolean")
+
+    @polars_releases
+    def _encodes(self, dtype: DType) -> bool:
+        """Say whether `is_sorted` encodes each row of the type: a list, an array or a struct.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether it encodes the rows.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     Neighbors()._encodes(DType("List", (DType("Int8"),)))
+            True
+        """
+        return dtype.name in {*Is.LISTS, "Struct"}
+
+    @_encodes.before("2.0.0")
+    def _compares(self, dtype: DType) -> bool:
+        """Say that `is_sorted` encodes no type here, as the older releases do.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            `False`.
+
+        Example:
+            >>> Neighbors()._compares(DType("List", (DType("Int8"),)))
+            False
+        """
+        del dtype
+        return False
 
 
 class GroupedFloat16:
@@ -198,6 +237,127 @@ class GroupedFloat16:
         return dtype.name == "Float16"
 
 
+class StdDuration:
+    """Test for a `Duration` that `std` of a series takes, as polars does before 2.0.0.
+
+    Before polars 2.0.0, `std` gives a `Duration` for a `Duration`. From that
+    release, `std` and `var` of a series refuse it. Over the groups of `agg`,
+    both give one null of the input type for each group, in every release.
+
+    Example:
+        >>> StdDuration()._older(DType("Duration", ("us",)))
+        True
+    """
+
+    @polars_releases
+    def __call__(self, dtype: DType) -> bool:
+        """Say whether `std` takes the type as a `Duration`: never.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StdDuration()(DType("Duration", ("us",)))
+            False
+        """
+        del dtype
+        return False
+
+    @__call__.before("2.0.0")
+    def _older(self, dtype: DType) -> bool:
+        """Say whether `std` takes the type in the older releases: where it is a `Duration`.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether the type is a `Duration`.
+
+        Example:
+            >>> StdDuration()._older(DType("Float32"))
+            False
+        """
+        return dtype.name == "Duration"
+
+
+class EntropyFloat:
+    """Give the type of `entropy` of a series: a float.
+
+    From polars 2.0.0, a float keeps its type, and an integer, a `Decimal`
+    and a `Boolean` give `Float64`. Before that release, the kernel reads the
+    physical type: `Float32` stays, and any other number gives `Float64`.
+    Every other type raises.
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> entropy = Dispatch("entropy", (), EntropyFloat())
+        >>> with PolarsRelease.pretend("2.0.0"):
+        ...     EntropyFloat().give(Data(DType("Float16")), entropy)
+        Float16
+    """
+
+    @polars_releases
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the float, or refuse the type.
+
+        Args:
+            data: The data.
+            kernel: The dispatch.
+
+        Returns:
+            The float type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> entropy = Dispatch("entropy", (), EntropyFloat())
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     EntropyFloat().give(Data(DType("Boolean")), entropy)
+            Float64
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     EntropyFloat().give(Data(DType("String")), entropy)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: entropy does not ...
+        """
+        dtype = data.dtype
+        if Is.float(dtype):
+            return dtype
+        if Is.integer(dtype) or dtype.name in {"Decimal", "Boolean"}:
+            return DType("Float64")
+        return Refuse().give(data, kernel)
+
+    @give.before("2.0.0")
+    def _physical(self, data: Data, kernel: Dispatch) -> DType:
+        """Give the float of the older releases, which read the physical type.
+
+        Args:
+            data: The data.
+            kernel: The dispatch.
+
+        Returns:
+            The float type.
+
+        Example:
+            >>> entropy = Dispatch("entropy", (), EntropyFloat())
+            >>> EntropyFloat()._physical(Data(DType("Date")), entropy)
+            Float64
+            >>> EntropyFloat()._physical(Data(DType("Boolean")), entropy)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: entropy ...
+        """
+        if data.dtype.name == "Float32":
+            return data.dtype
+        if Is.primitive_numeric(data.dtype.physical()):
+            return DType("Float64")
+        return Refuse().give(data, kernel)
+
+
 class ReductionKernels:
     """Hold the dispatch of each reduction of one input.
 
@@ -210,22 +370,23 @@ class ReductionKernels:
     `MEDIAN` has the arms of `NumericKernels.MEAN`. `MOMENT_GROUPS` is the mean
     and the median of each group: the same arms, and one null of the input
     type for any other type. `STD` gives `Float64` for an integer, a `Boolean`
-    and a `Decimal`, and keeps a float, a `Duration` and `Null`. `VAR` has the
-    arms of `STD` without the `Duration`. `STD_GROUPS` is the standard
-    deviation and the variance of each group, with the arms of `STD`.
+    and a `Decimal`, and keeps a float and `Null`, and a `Duration` before
+    polars 2.0.0 (`StdDuration`). `VAR` has the arms of `STD` without the
+    `Duration`. `STD_GROUPS` is the standard deviation and the variance of
+    each group, with the arms of `STD`, and one null of the input type for any
+    other type.
 
     `IMPLODE` gives a `List` of the input type. `ITEM` needs exactly one row.
     `AGG_GROUPS` gives the row indices of each group. The reduction of a whole
     series has no groups, so it panics there (`AGG_GROUPS_WHOLE`).
 
     `APPROX_N_UNIQUE` refuses a `List`, an `Array` and a `Struct`. `ENTROPY`
-    reads the physical type: a number gives `Float64`, apart from `Float32`,
-    which stays. `PRODUCT` gives `Int64` for a `Boolean` and an integer of 32
+    gives a float (`EntropyFloat`). `PRODUCT` gives `Int64` for a `Boolean` and an integer of 32
     bits or fewer, keeps a wider integer and a float, and gives a `Decimal` of
     precision 38.
 
-    `IS_SORTED` gives `Boolean`, and refuses a `List` or an `Array` of
-    two rows or more (`Neighbors`).
+    `IS_SORTED` gives `Boolean`, and before polars 2.0.0 refuses a `List` or
+    an `Array` of two rows or more (`Neighbors`).
 
     `BITWISE` is the bitwise `and`, `or` and `xor` of a series: a `Boolean`, an
     integer and a float stay. `ANY_ALL` needs a `Boolean`. `SKEW` casts its
@@ -240,7 +401,9 @@ class ReductionKernels:
         astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: min does not accept ...
         >>> ReductionKernels.MOMENT_GROUPS.output(Data(DType("String")))
         String
-        >>> ReductionKernels.STD.output(Data(DType("Duration", ("ms",))))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     ReductionKernels.STD.output(Data(DType("Duration", ("ms",))))
         Duration(time_unit='ms')
         >>> ReductionKernels.PRODUCT.output(Data(DType("UInt8")))
         Int64
@@ -263,7 +426,7 @@ class ReductionKernels:
         Arm(Kinds("Boolean", "Decimal"), Fixed(FLOAT64)),
         Arm(Kinds("Null"), Same()),
     )
-    STD_ARMS: ClassVar[tuple[Arm, ...]] = (*VAR_ARMS, Arm(Kinds("Duration"), Same()))
+    STD_ARMS: ClassVar[tuple[Arm, ...]] = (*VAR_ARMS, Arm(StdDuration(), Same()))
     STD: ClassVar[Dispatch] = Dispatch("std", STD_ARMS, Refuse())
     VAR: ClassVar[Dispatch] = Dispatch("var", VAR_ARMS, Refuse())
     STD_GROUPS: ClassVar[Dispatch] = Dispatch("std", STD_ARMS, Same())
@@ -280,14 +443,7 @@ class ReductionKernels:
         (Arm(NESTED, Refuse()),),
         Fixed(DType.idx()),
     )
-    ENTROPY: ClassVar[Dispatch] = Dispatch(
-        "entropy",
-        (
-            Arm(Kinds("Float32"), Same()),
-            Arm(Physical(Is.primitive_numeric), Fixed(FLOAT64)),
-        ),
-        Refuse(),
-    )
+    ENTROPY: ClassVar[Dispatch] = Dispatch("entropy", (), EntropyFloat())
     PRODUCT: ClassVar[Dispatch] = Dispatch(
         "product",
         (
@@ -345,7 +501,10 @@ class ReductionKernels:
             >>> struct = Data(DType("Struct", ((("a", DType("Int8")),),)))
             >>> ReductionKernels().is_sorted(descending=False).output(struct)
             Boolean
-            >>> ReductionKernels().is_sorted(descending=None).output(struct)  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> inferred = ReductionKernels().is_sorted(descending=None)
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     inferred.output(struct)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
@@ -921,7 +1080,9 @@ class GroupQuantile:
             >>> from astrolabe._rules.type_functions import Operand
             >>> computed = (Operand.column(DType("Int8")), Operand.of_value(True))
             >>> inputs = [Data(DType("Int8")), Data(DType("Boolean"))]
-            >>> GroupQuantile().output(inputs, [3, 1], computed)  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     GroupQuantile().output(inputs, [3, 1], computed)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: expected expression of dtype ...

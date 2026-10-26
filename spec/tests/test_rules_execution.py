@@ -60,6 +60,7 @@ from astrolabe._rules.execution import (
 )
 from astrolabe._rules.failures import PolarsRefusal, Stop
 from astrolabe._rules.operators import Operator
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.options import (
     RowForm,
     FunctionFlag,
@@ -74,7 +75,6 @@ from astrolabe._rules.supertype import SupertypeFlag
 from astrolabe._rules.tree import ExpressionTree
 from astrolabe._rules.tree_evaluation import TreeEvaluation
 from astrolabe._rules.type_functions import Operand
-from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -626,7 +626,7 @@ class Polars:
             2
         """
         lazy = self._frames.frame.lazy().select(self.expression(node, forms))
-        return PolarsAnswer().result(lambda: lazy.collect().height)
+        return PolarsAnswer().result(lambda: lazy.collect(engine="in-memory").height)
 
     def agg(self, node: Node, forms: tuple[str, ...]) -> object:
         """Give the column of the node in `agg`, or how polars stops.
@@ -649,7 +649,9 @@ class Polars:
         lazy = self._frames.frame.lazy()
         row = lazy.select(expression).collect_schema()["o"]
         query = lazy.group_by("g", maintain_order=True).agg(expression)
-        return PolarsAnswer().result(lambda: self._column(query.collect()["o"], row))
+        return PolarsAnswer().result(
+            lambda: self._column(query.collect(engine="in-memory")["o"], row)
+        )
 
     def _column(self, column: pl.Series, row: pl.DataType) -> AggOutput:
         """Read the shape of the column of `agg`.
@@ -790,6 +792,10 @@ def test_min_by_reads_past_the_end_of_one_value_for_each_group() -> None:
     assert Rules(frames).agg(node, forms) == Stopped(Stop.CRASHES)
 
 
+@pytest.mark.skipif(
+    PolarsRelease.installed() >= PolarsRelease.parse("2.0.0"),
+    reason="polars 2.0.0 runs a literal key of min_by in agg group by group",
+)
 def test_a_literal_key_of_min_by_gives_one_row_for_two_groups() -> None:
     """Check that a literal key of `min_by` raises in `agg` with two groups, and runs with one."""
     frames = Frames()
@@ -803,7 +809,19 @@ def test_a_literal_key_of_min_by_gives_one_row_for_two_groups() -> None:
     one_group = frames.frame.lazy().with_columns(g=pl.lit(1))
     # The checker evaluates `agg` over two groups, so it refuses this call, which runs with one.
     query = one_group.group_by("g").agg(pl.col("x").min_by(pl.lit(1)).alias("o"))  # type: ignore[invalid-call-shape]
-    assert query.collect().height == 1
+    assert query.collect(engine="in-memory").height == 1
+
+
+@pytest.mark.skipif(
+    PolarsRelease.installed() < PolarsRelease.parse("2.0.0"),
+    reason="polars 2.0.0 runs a literal key of min_by in agg group by group",
+)
+def test_a_literal_key_of_min_by_gives_one_value_for_each_group() -> None:
+    """Check that a literal key of `min_by` picks one value in each group, from polars 2.0.0."""
+    frames = Frames()
+    node = Cases().nodes()["min_by"]
+    assert Polars(frames).agg(node, ("per row", "literal")) == AggOutput(None)
+    assert Rules(frames).agg(node, ("per row", "literal")) == AggOutput(None)
 
 
 class SortedValues:
@@ -860,7 +878,7 @@ class SortedValues:
         first = pl.col("x").first()
         node = SortedValues.NODES[name](first.sort() if sort else first).alias("o")
         query = Frames().frame.lazy().group_by("g", maintain_order=True).agg(node)
-        answer = PolarsAnswer().result(lambda: query.collect()["o"])
+        answer = PolarsAnswer().result(lambda: query.collect(engine="in-memory")["o"])
         results.put(repr(answer.to_list()) if isinstance(answer, pl.Series) else repr(answer))
 
     def differences(self) -> list[str]:
@@ -1185,7 +1203,7 @@ class Builds:
         """
         grouped = split.lazy().group_by("g", maintain_order=True)
         query = grouped.agg(node.build(pl.col("x")).alias("o"))
-        outcome = PolarsAnswer().result(lambda: query.collect()["o"].dtype)
+        outcome = PolarsAnswer().result(lambda: query.collect(engine="in-memory")["o"].dtype)
         if isinstance(outcome, pl.List):
             return DType.of(outcome.inner)
         return outcome
@@ -1407,12 +1425,14 @@ class FoldContexts:
         lazy = self.FRAME.lazy()
         off = pl.QueryOptFlags(simplify_expression=False)
         runs: dict[str, Callable[[], pl.DataFrame]] = {
-            "root of select": lambda: lazy.select(node).collect(),
-            "nested in select": lambda: lazy.select(node).collect(),
-            "wrapped in agg": lambda: lazy.group_by("g").agg(node).collect(),
-            "root of agg": lambda: lazy.group_by("g").agg(node).collect(),
+            "root of select": lambda: lazy.select(node).collect(engine="in-memory"),
+            "nested in select": lambda: lazy.select(node).collect(engine="in-memory"),
+            "wrapped in agg": lambda: lazy.group_by("g").agg(node).collect(engine="in-memory"),
+            "root of agg": lambda: lazy.group_by("g").agg(node).collect(engine="in-memory"),
             "root of an eager select": lambda: self.FRAME.select(node),
-            "root without the simplifier": lambda: lazy.select(node).collect(optimizations=off),
+            "root without the simplifier": lambda: lazy.select(node).collect(
+                optimizations=off, engine="in-memory"
+            ),
         }
         return PolarsAnswer().result(lambda: runs[name]()["o"].dtype)
 
@@ -1690,7 +1710,7 @@ class SliceCases:
             >>> SliceCases()._listed(SliceCases.FRAME.lazy().select(pl.col("x").sum().alias("o")))
             [15]
         """
-        collected = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+        collected = frame.collect(engine="in-memory") if isinstance(frame, pl.LazyFrame) else frame
         return collected["o"].to_list()
 
 
@@ -1719,7 +1739,7 @@ class HangProbe:
             started: The event to set before the query runs.
         """
         started.set()
-        SliceCases.FRAME.lazy().select(HangProbe.QUERIES[name]).collect()
+        SliceCases.FRAME.lazy().select(HangProbe.QUERIES[name]).collect(engine="in-memory")
 
     def hangs(self, names: list[str]) -> list[bool]:
         """Say for each query whether it runs longer than the wait.
@@ -1888,7 +1908,7 @@ class LoneCounts:
             'raises'
         """
         query = self.FRAME.lazy().select(self.TREES[name])
-        return RunText().polars(lambda: query.collect().dtypes[0])
+        return RunText().polars(lambda: query.collect(engine="in-memory").dtypes[0])
 
     def rules(self, name: str) -> str:
         """Give the run of the tree from the rules, in a lazy `select` that holds it alone.
@@ -2141,7 +2161,7 @@ class LoneSlices:
             'raises'
         """
         query = OverFrame.FRAME.lazy().select(self.TREES[name])
-        return RunText().polars(lambda: query.collect().dtypes[0])
+        return RunText().polars(lambda: query.collect(engine="in-memory").dtypes[0])
 
     def rules(self, name: str) -> str:
         """Give the run of the tree from the rules, in a lazy `select` that holds it alone.
@@ -2250,3 +2270,73 @@ def test_a_literal_first_gives_its_length_beside_the_list_of_a_group(
     """Check an elementwise function whose first input is a literal against polars."""
     polars = LiteralFirst().polars(name, context)
     assert LiteralFirst().rules(name, context) in {polars, "unchecked"}
+
+
+class SortByInputs:
+    """Give each `sort_by` in `agg` over inputs of other states, and its run in polars and rules.
+
+    From polars 2.0.0, `sort_by` reads each input as a list for each group
+    where the inputs do not share their groups: an input of one value for
+    each group beside lists, or a value whose lists a node rebuilt. One value
+    for each group then gives no list, and polars panics. Before that
+    release, only a rebuilt value reads its key so, and a key of lists then
+    runs.
+
+    Example:
+        >>> SortByInputs().rules("one value by two values")
+        'Int64'
+    """
+
+    TREES: ClassVar[dict[str, pl.Expr]] = {
+        "a rebuilt value by an imploded key": pl.col("x").cum_sum().sort_by(pl.col("x").implode()),
+        "one value by one row": pl.col("x").first().sort_by(pl.col("x").head(1)),
+        "one row by one value": pl.col("x").head(1).sort_by(pl.col("t").first()),
+        "one value by one value and a literal": pl
+        .col("x")
+        .first()
+        .sort_by([pl.col("t").first(), pl.lit(1)]),
+        "one value by two values": pl
+        .col("x")
+        .first()
+        .sort_by([pl.col("t").first(), pl.col("x").last()]),
+        "one row by one row": pl.col("x").head(1).sort_by(pl.col("t").head(1)),
+    }
+
+    def polars(self, name: str) -> str:
+        """Give the type of the eager run of the tree in `agg`, or how polars stops.
+
+        Args:
+            name: The name of the tree.
+
+        Returns:
+            The rendering of the type of the run, or `raises`.
+
+        Example:
+            >>> SortByInputs().polars("one row by one row")
+            'List(Int64)'
+        """
+        tree = self.TREES[name]
+        return RunText().polars(lambda: OverFrame.FRAME.group_by("g").agg(tree).dtypes[1])
+
+    def rules(self, name: str) -> str:
+        """Give the run of the tree in `agg` from the rules, over the groups of the frame.
+
+        Args:
+            name: The name of the tree.
+
+        Returns:
+            The rendering of the type, `raises`, or `unchecked` where the rules do not know.
+
+        Example:
+            >>> SortByInputs().rules("one row by one row")
+            'List(Int64)'
+        """
+        frame = GroupBy((3, 2), QueryFlags.eager())
+        tree = ExpressionTree().of(self.TREES[name])
+        return RunText().rules(TreeEvaluation(OverFrame().columns(), frame).answers(tree).run_agg)
+
+
+@pytest.mark.parametrize("name", sorted(SortByInputs.TREES))
+def test_a_sort_by_in_agg_reads_its_inputs_as_polars_does(name: str) -> None:
+    """Check a `sort_by` in `agg` over inputs of other states against polars."""
+    assert SortByInputs().rules(name) == SortByInputs().polars(name)

@@ -32,7 +32,12 @@ from astrolabe._rules.definitions.kernel_adapters import (
 )
 from astrolabe._rules.definitions.node_options import FromOptions, NodeIdentity, NodeOption
 from astrolabe._rules.definitions.overrides import CountOfNullLiteral
-from astrolabe._rules.definitions.type_function_adapters import AggField, ExprField, Mapper
+from astrolabe._rules.definitions.type_function_adapters import (
+    AggField,
+    ExprField,
+    Mapper,
+    MapperCheck,
+)
 from astrolabe._rules.dtypes import DType
 from astrolabe._rules.execution import PhysicalExpr
 from astrolabe._rules.kernels.numeric import NumericKernels
@@ -313,7 +318,10 @@ class Aggregations:
     )
     ENTROPY: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Entropy"),
-        type_function=Mapper(FieldsMapper.map_to_float_dtype),
+        type_function=Mapper(
+            FieldsMapper.map_to_float_dtype,
+            checks=[MapperCheck(FieldsMapper.ensure_number_or_boolean, op="entropy")],
+        ),
         options=UNORDERED,
         casts=FunctionCasting(),
         kernel=OneInput(ReductionKernels.ENTROPY),
@@ -398,7 +406,7 @@ class Aggregations:
     QUANTILE: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "Quantile"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.moment_dtype),
+        type_function=Mapper(FieldsMapper.quantile_dtype),
         options=UNORDERED,
         casts=FunctionCasting(),
         kernel=LiteralReduction(Quantile(), GroupQuantile()),

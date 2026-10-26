@@ -242,7 +242,9 @@ class NestedCheck:
         named = node.alias("o")
         query = frame.group_by("g", maintain_order=True).agg(named) if agg else frame.select(named)
         eager = pl.QueryOptFlags._eager()  # ruff: ignore[private-member-access]
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=eager)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=eager, engine="in-memory")["o"].dtype
+        )
 
 
 class TripleSample:
@@ -352,7 +354,10 @@ class NestedNodes:
         "list.sort": NestedCheck(Lists.SORT, lambda x: x.list.sort()),
         "list.drop_nulls": NestedCheck(Lists.DROP_NULLS, lambda x: x.list.drop_nulls()),
         "list.to_array": NestedCheck(Lists.TO_ARRAY, lambda x: x.list.to_array(2)),
-        "list.to_struct": NestedCheck(Lists.TO_STRUCT, lambda x: x.list.to_struct(upper_bound=2)),
+        "list.to_struct": NestedCheck(
+            Lists.TO_STRUCT,
+            lambda x: x.list.to_struct(fields=["field_0", "field_1"]),
+        ),
         "concat_list": NestedCheck(Lists.CONCAT, pl.concat_list),
         "arr.len": NestedCheck(Arrays.LENGTH, lambda x: x.arr.len()),
         "arr.min": NestedCheck(Arrays.MIN, lambda x: x.arr.min()),

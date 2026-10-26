@@ -16,7 +16,10 @@ rules:
   `max_horizontal` and `index_of`, which cast their inputs to one type, and
   `clip`, which has no casting rule.
 - `is_in` and `list.contains`, with the `implode` of a collection of the
-  same level, and with literals with no data type.
+  same level, and with literals with no data type. From polars 2.0.0, the
+  node can hold a cast of its values that runs with the kernel. The
+  traverser cannot show such a node, and its error names the target of the
+  cast, which the test compares (`NeedleCast`).
 - The visit of a strict cast, which removes or relaxes it, and the fold of
   a cast of a literal.
 
@@ -34,6 +37,7 @@ from __future__ import annotations
 import concurrent.futures
 import datetime
 import itertools
+import re
 import subprocess  # ruff: ignore[suspicious-subprocess-import] -- a hang of polars needs a process
 import sys
 from dataclasses import dataclass
@@ -64,7 +68,7 @@ from astrolabe._rules.cast_pass import (
     TernaryCasts,
     Visit,
 )
-from astrolabe._rules.dtypes import DType
+from astrolabe._rules.dtypes import DType, Is
 from astrolabe._rules.failures import Stop, UndecidedError
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import CastingRules
@@ -106,6 +110,58 @@ class PlanShape:
     inputs: tuple[InputShape, ...]
 
 
+class NeedleCast:
+    """Name the cast of its values that an `is_in` or a `contains` node holds, as polars shows it.
+
+    From polars 2.0.0, the cast pass of `is_in` can leave a cast of the values
+    in the function, which runs with the kernel. The plan traverser cannot
+    show that function, and its error names the target, for example
+    `is_in[needle: i8]`. The shape of the node is then the target alone.
+
+    Example:
+        >>> NeedleCast().rule(DType("Int8"))
+        PlanShape(root='needle i8', inputs=())
+    """
+
+    PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"(?:is_in|list\.contains|arr\.contains)\[needle: (.+)\]"
+    )
+
+    def read(self, error: NotImplementedError) -> PlanShape | None:
+        """Give the shape that the error of the traverser names, or `None` for another error.
+
+        Args:
+            error: The error of the traverser.
+
+        Returns:
+            The shape.
+
+        Example:
+            >>> NeedleCast().read(NotImplementedError("is_in[needle: decimal[38,0]]"))
+            PlanShape(root='needle decimal[38,0]', inputs=())
+        """
+        match = self.PATTERN.fullmatch(str(error))
+        return None if match is None else PlanShape(f"needle {match.group(1)}", ())
+
+    def rule(self, dtype: DType) -> PlanShape:
+        """Give the shape of a node whose rules hold a cast of its values to a type.
+
+        Args:
+            dtype: The target of the cast.
+
+        Returns:
+            The shape.
+
+        Example:
+            >>> NeedleCast().rule(DType.dynamic_int(1))
+            PlanShape(root='needle dyn int', inputs=())
+        """
+        if Is.unknown(dtype):
+            return PlanShape(f"needle dyn {dtype.args[0]}", ())
+        text = dtype.polars()._string_repr()  # ruff: ignore[private-member-access] -- the name polars shows
+        return PlanShape(f"needle {text}", ())
+
+
 class PlanReader:
     """Read the root node of the plan of a query, after the cast pass, with the plan traverser.
 
@@ -140,7 +196,13 @@ class PlanReader:
         view = self._view(schema, expression)
         if isinstance(view, Stopped):
             return view
-        root = view.view_expression(view.view_current_node().expr[0].node)
+        try:
+            root = view.view_expression(view.view_current_node().expr[0].node)
+        except NotImplementedError as error:
+            needle = NeedleCast().read(error)
+            if needle is None:
+                raise
+            return needle
         label, inputs = self._root(view, root)
         return PlanShape(label, tuple(self.input(view, index) for index in inputs))
 
@@ -1157,7 +1219,9 @@ class TestIsInCasts:
             checked = mapper.ensure_is_list() if contains else mapper
             return checked.with_dtype(DType("Boolean"))
 
-        return Rules().function(field, lambda: casts.visit(inputs), inputs)
+        shape = Rules().function(field, lambda: casts.visit(inputs), inputs)
+        needle = None if isinstance(shape, Stopped) else casts.needle_cast(inputs)
+        return shape if needle is None else NeedleCast().rule(needle)
 
 
 class TestCastNodes:

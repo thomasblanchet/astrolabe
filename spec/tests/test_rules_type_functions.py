@@ -26,6 +26,7 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     PolarsAnswer,
     RuleAnswer,
     RuleKinds,
@@ -486,7 +487,11 @@ class Nodes:
             lambda d: FieldsMapper(d).map_numeric_to_float_dtype(coerce_decimal=False),
         ),
         UnaryNode("sin", lambda x: x.sin(), lambda d: FieldsMapper(d).map_to_float_dtype()),
-        UnaryNode("exp", lambda x: x.exp(), lambda d: FieldsMapper(d).map_to_float_dtype()),
+        UnaryNode(
+            "exp",
+            lambda x: x.exp(),
+            lambda d: FieldsMapper(d).ensure_number_or_boolean("exp").map_to_float_dtype(),
+        ),
         UnaryNode(
             "to_physical",
             lambda x: x.to_physical(),
@@ -513,7 +518,7 @@ class Nodes:
         UnaryNode(
             "ewm_var",
             lambda x: x.ewm_var(alpha=0.5),
-            EwmPlanned(lambda d: FieldsMapper(d).var_dtype()),
+            EwmPlanned(lambda d: FieldsMapper(d).ewm_var_dtype("ewm_var")),
         ),
         UnaryNode(
             "ewm_mean",
@@ -524,9 +529,7 @@ class Nodes:
             "sign",
             lambda x: x.sign(),
             lambda d: (
-                FieldsMapper(d)
-                .ensure_satisfies(lambda _, t: Is.numeric(t), "sign")
-                .with_same_dtype()
+                FieldsMapper(d).ensure_satisfies(lambda _, t: Is.numeric(t), "sign").sign_dtype()
             ),
         ),
         UnaryNode(
@@ -709,7 +712,7 @@ class Nodes:
         PairNode(
             "log",
             lambda a, b: a.log(b),
-            lambda a, b: FieldsMapper(a.dtype, b.dtype).log_dtype(),
+            lambda a, b: FieldsMapper(a.dtype, b.dtype).ensure_number_or_boolean("log").log_dtype(),
         ),
         PairNode(
             "rolling_cov",
@@ -773,7 +776,11 @@ class Nodes:
 class TestTypeFunctions:
     """Replay the type functions against the planner of polars, node by node."""
 
-    @pytest.mark.parametrize("node", Nodes.UNARY, ids=lambda node: node.name)
+    @pytest.mark.parametrize(
+        "node",
+        [node for node in Nodes.UNARY if ApiGate().has(node.name)],
+        ids=lambda node: node.name,
+    )
     def test_node_of_one_column_matches_the_planner(self, node: UnaryNode) -> None:
         """The node over a column of each type has the type of its rule, in `select` and `agg`."""
         problems = []

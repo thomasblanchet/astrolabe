@@ -452,7 +452,9 @@ class Replaced:
 
         Example:
             >>> old = DType("Struct", ((("b", DType("Boolean")),),))
-            >>> Replaced()._mask(old, DType("Boolean"))  # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Replaced()._mask(old, DType("Boolean"))  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: could not evaluate comparison ...

@@ -325,6 +325,37 @@
 # Polars converts a count of rows to an integer of a fixed width before it
 # reads any data, so a count outside that width raises at the call.
 - case: a_count_of_rows_outside_the_width_that_polars_reads_is_an_error
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Final, Literal
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    BIG: Final = 2**64
+
+    class Rows(Columns):
+        k: pl.String
+        x: pl.Int64
+
+    def run(df: TypedDataFrame[Rows], lf: TypedLazyFrame[Rows]) -> None:
+        df.head(BIG)  # E: head() with n=18446744073709551616 raises OverflowError: polars reads it as a whole number up to 18446744073709551615  [invalid-call-shape]
+        df.head(-(2**70))
+        lf.head(-1)  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.slice(2**63)  # E: slice() with offset=9223372036854775808 raises OverflowError: polars reads it as a whole number from -9223372036854775808 to 9223372036854775807  [invalid-call-shape]
+        lf.top_k(2**32, by="x")  # E: top_k() with k=4294967296 raises OverflowError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.gather_every(0)  # E: gather_every() with n=0 raises InvalidOperationError: polars reads it as a whole number from 1 to 9223372036854775807  [invalid-call-shape]
+        df.with_row_index(offset=2**32)  # E: with_row_index() with offset=4294967296 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.group_by("k").head(-1)  # E: head() with n=-1 raises OverflowError: polars reads it as a whole number from 0 to 18446744073709551615  [invalid-call-shape]
+        reveal_type(df.head(3))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Rows, {'k': polars.datatypes.classes.String, 'x': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    def typed(df: TypedDataFrame[Rows], lf: TypedLazyFrame[Rows], n: Literal[-1]) -> None:
+        lf.head(n)  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        lf.head((count := -1))  # E: head() with n=-1 raises ValueError: polars reads it as a whole number from 0 to 4294967295  [invalid-call-shape]
+        df.group_by("k").head(3, count)  # E: Too many arguments for "head" of "GroupBy"  [call-arg]
+
+- case: a_count_of_rows_outside_the_width_that_polars_reads_is_an_error_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Final, Literal
 
@@ -1244,7 +1275,31 @@
     zf.fill_null(datetime(2020, 1, 1, tzinfo=None))  # E: "dz" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ms', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
 
 - case: fill_null_on_an_open_frame_retypes_each_kind_of_the_remainder
-  skip: __import__("tests.releases").releases.polars_before("1.40.0")
+  skip: (__import__("tests.releases").releases.polars_before("1.40.0")) or __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from datetime import timedelta
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    Rest = other_columns()
+
+    wide: TypedDataFrame[FrameSchema, Rest]
+    # Each kind of the remainder that the value changes takes its own type.
+    reveal_type(wide.fill_null("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], polars.datatypes.classes.String], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]]"
+    # The precision and the scale of a Decimal, and the unit of a Duration,
+    # depend on the column, so these kinds keep only their kind.
+    reveal_type(wide.fill_null(300))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Int8]], polars.datatypes.classes.Int16], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], polars.datatypes.classes.Int32], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.UInt8]], polars.datatypes.classes.UInt16], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['u']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int8 | polars.datatypes.classes.Null | polars.datatypes.classes.UInt8]]]]]]]]]"
+    reveal_type(wide.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]], polars.datatypes.classes.Duration], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]]]]"
+    # The rules have no data type of the kind Extension, so its columns are Unchecked.
+    reveal_type(wide.fill_null(strategy="forward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]]]]"
+    reveal_type(wide.fill_null(pl.lit("x")))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: fill_null_on_an_open_frame_retypes_each_kind_of_the_remainder_before_polars_2_0
+  skip: (__import__("tests.releases").releases.polars_before("1.40.0")) or not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from datetime import timedelta
 
@@ -1292,6 +1347,42 @@
     reveal_type(wide.fill_null(pl.lit("x")))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
 
 - case: fill_null_with_a_strategy_keeps_every_type_or_reports_a_refused_kind
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns
+    from astrolabe.frame import List
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        l: List[pl.Int64]
+        x: Unchecked
+
+    class Loose(Columns):
+        x: Unchecked
+
+    Flat = other_columns(none_of={pl.List, pl.Array, pl.Struct})
+    Rest = other_columns()
+
+    df: TypedDataFrame[FrameSchema]
+    flat: TypedDataFrame[Loose, Flat]
+    wide: TypedDataFrame[FrameSchema, Rest]
+    loose: TypedDataFrame[Loose, Rest]
+    # forward and backward refuse no kind, on a closed and on an open frame.
+    reveal_type(df.fill_null(strategy="forward", limit=1))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'l': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.Unchecked}, closed=True), None]"
+    # min, max, zero, one and mean refuse some kinds where the column holds a
+    # null, and a fill of nulls exists to meet one, so a declared column of
+    # such a kind is an error. A Null column holds only nulls.
+    reveal_type(df.fill_null(strategy="min"))  # E: "l" has no result type at this frame's column types: the fill strategy does not accept List where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(df.fill_null(strategy="zero"))  # E: "n" has no result type at this frame's column types: the fill strategy does not accept Null where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(wide.fill_null(None, "backward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'l': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.Unchecked}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]]]]"
+    # A remainder that can hold a List makes the result depend on the caller.
+    # A remainder of no nested kind keeps each kind, but the kind Extension.
+    reveal_type(loose.fill_null(strategy="max"))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(flat.fill_null(strategy="max"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Loose, {'x': astrolabe.frame.Unchecked}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Flat, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Flat, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]]]]"
+
+- case: fill_null_with_a_strategy_keeps_every_type_or_reports_a_refused_kind_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, Unchecked, other_columns

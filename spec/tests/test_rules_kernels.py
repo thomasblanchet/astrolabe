@@ -497,7 +497,7 @@ class ExpressionCheck:
 
         Example:
             >>> check = ExpressionCheck(pl.col("l").log(pl.col("r")), LogRule())
-            >>> check._pair_problems(pl.Struct({"a": pl.Int8()}), pl.Float64())
+            >>> check._pair_problems(pl.Float32(), pl.Float64())
             []
         """
         problems = []
@@ -649,7 +649,9 @@ class UncastCheck:
         other = self._samples.series(right, nulls=False, one_row=False).alias("r")
         query = pl.DataFrame([one, other]).lazy().select(self._expression)
         flags = KernelFlags().uncast()
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=flags)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=flags, engine="in-memory")["o"].dtype
+        )
 
 
 @dataclass(frozen=True)
@@ -852,7 +854,7 @@ class UnaryCheck:
             The answer.
 
         Example:
-            >>> UnaryCheck(pl.col("x").exp(), FloatKernels.EXP)._answer(pl.Date(), nulls=False)
+            >>> UnaryCheck(pl.col("x").exp(), FloatKernels.EXP)._answer(pl.Int8(), nulls=False)
             Float64
             >>> grouped = UnaryCheck(pl.col("x").sum(), NumericKernels.SUM_GROUPS, grouped=True)
             >>> grouped._answer(pl.Date(), nulls=False)
@@ -1175,7 +1177,9 @@ class FillCheck:
         column: pl.Expr = pl.col("v").head(1) if one_row else pl.col("v")
         filler: pl.Expr = pl.col("f")
         query = frame.select(column.fill_null(filler).alias("o"))
-        return PolarsAnswer().answer(lambda: query.collect(optimizations=self._flags)["o"].dtype)
+        return PolarsAnswer().answer(
+            lambda: query.collect(optimizations=self._flags, engine="in-memory")["o"].dtype
+        )
 
 
 class OutOfProcess:
@@ -1287,9 +1291,11 @@ class Kernels:
         "bitwise_xor": (lambda column: column.bitwise_xor(), BitwiseKernels.REDUCE),
         "log": (lambda column: column.log(), LogOfBase()),
         "neg": (lambda column: column.neg(), NumericKernels.NEGATE),
-        "round": (lambda column: column.round(), NumericKernels.KEEP_NUMBER),
-        "floor": (lambda column: column.floor(), NumericKernels.KEEP_NUMBER),
-        "ceil": (lambda column: column.ceil(), NumericKernels.KEEP_NUMBER),
+        "round": (lambda column: column.round(), NumericKernels().rounding()),
+        "round 2": (lambda column: column.round(2), NumericKernels().rounding(2)),
+        "floor": (lambda column: column.floor(), NumericKernels().rounding()),
+        "ceil": (lambda column: column.ceil(), NumericKernels().rounding()),
+        "sign": (lambda column: column.sign(), NumericKernels.SIGN),
         "truncate": (lambda column: column.truncate(), NumericKernels.KEEP_NUMBER),
         "round_sig_figs": (
             lambda column: column.round_sig_figs(2),
@@ -1324,18 +1330,24 @@ class Kernels:
 
         `sqrt` and `cbrt` check the type that their cast gives from polars
         1.44.0, so a struct raises there, and the other tests of the kernels
-        run it in this process.
+        run it in this process. From polars 2.0.0, the planner refuses a
+        struct in `exp`, `log1p` and `log` before their kernel runs, so no
+        cell ends the process.
 
         Returns:
             The names of the kernels.
 
         Example:
-            >>> "exp" in Kernels.crashing()
+            >>> newest = PolarsRelease.installed() >= PolarsRelease.parse("2.0.0")
+            >>> ("log" in Kernels.crashing()) is not newest
             True
         """
-        if PolarsRelease.installed() < PolarsRelease.parse("1.44.0"):
+        installed = PolarsRelease.installed()
+        if installed < PolarsRelease.parse("1.44.0"):
             return cls.CHECKED + cls.CRASHING
-        return cls.CRASHING
+        if installed < PolarsRelease.parse("2.0.0"):
+            return cls.CRASHING
+        return ()
 
     def every_dtype(self) -> list[pl.DataType]:
         """Give the types of the rules and of the nested kernels, each once.
@@ -1915,18 +1927,29 @@ class KernelTrees:
             pl.lit(None, dtype=pl.Decimal(2, 2)).fill_null(strategy="one"),  # type: ignore[invalid-call-shape]
         ),
     })
-    UNDECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+    # A base of categories reads the ids of the categories of the process. From
+    # polars 2.0.0, the cast of the base to an integer refuses a category, so
+    # the tree raises in every process and joins the trees that the rules decide.
+    CATEGORICAL_BASE: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
         "to_integer by a categorical base": (
             {"n": TreeColumns.NUMBERS, "c": TreeColumns.CATEGORIES},
             pl.col("n").str.to_integer(base=pl.col("c")),
         ),
     }
+    NEWEST: ClassVar[bool] = PolarsRelease.installed() >= PolarsRelease.parse("2.0.0")
+    UNDECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = (
+        {} if NEWEST else CATEGORICAL_BASE
+    )
+    DECIDED: ClassVar[dict[str, tuple[dict[str, pl.Series], pl.Expr]]] = {
+        **TREES,
+        **(CATEGORICAL_BASE if NEWEST else {}),
+    }
 
 
-@pytest.mark.parametrize("name", sorted(KernelTrees.TREES))
+@pytest.mark.parametrize("name", sorted(KernelTrees.DECIDED))
 def test_a_tree_reaches_a_path_of_the_kernels(name: str) -> None:
     """The four answers of the rules match polars, for a tree that reaches one path of a kernel."""
-    columns, expression = KernelTrees.TREES[name]
+    columns, expression = KernelTrees.DECIDED[name]
     frame = TreeFrame(columns)
     assert frame.rules(expression) == frame.polars(expression)
 

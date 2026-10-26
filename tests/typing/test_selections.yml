@@ -804,6 +804,51 @@
         reveal_type(open_frame.select(~cs.datetime("us", None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema1, {'c': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Except[main.R, astrolabe.remainder.OfType[astrolabe.frame.Datetime[Literal['us'], None]]]]"
 
 - case: a_selection_reads_other_columns_beside_the_matched_one
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, other_columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.String
+        a: pl.Int64
+        x: pl.Float64
+        y: pl.Int32
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    # Each matched column meets the expression, and keeps its own name.
+    reveal_type(df.select(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int64}, closed=True), None]"
+    # Two selections of one selector pair column by column.
+    reveal_type(df.select(cs.numeric() * cs.numeric()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    # A window, a filter and a sort key add the columns they steer by.
+    reveal_type(df.select(cs.numeric().sum().over("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(cs.numeric().filter(pl.col("a") > 0)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.select(cs.numeric().sort_by("g")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.String, 'a': astrolabe.frame.List[polars.datatypes.classes.Int64], 'x': astrolabe.frame.List[polars.datatypes.classes.Float64], 'y': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    df.select(cs.numeric() + pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+    df.select(cs.numeric().over("zz"))  # E: Unknown column "zz"  [unknown-column]
+    # An int variable has no fixed width, so each column keeps the type that
+    # every value that the checker tries gives, else Unchecked.
+    width: int = 2**40
+    reveal_type(df.select(cs.numeric() + width))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': astrolabe.frame.Unchecked, 'x': polars.datatypes.classes.Float64, 'y': astrolabe.frame.Unchecked}, closed=True), None]"
+    # The spelling reads back.
+    added = cs.numeric() + pl.col("a")
+    reveal_type(df.select(added * 2))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64, 'x': polars.datatypes.classes.Float64, 'y': polars.datatypes.classes.Int64}, closed=True), None]"
+
+    R = other_columns()
+
+    class Schema1(Columns):
+        a: pl.Int64
+
+    def f(open_frame: TypedDataFrame[Schema1, R]) -> None:
+        # A remainder column of each numeric kind meets "a" at its own type.
+        reveal_type(open_frame.select(cs.numeric() + pl.col("a")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Schema1, {'a': polars.datatypes.classes.Int64}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Float16 | polars.datatypes.classes.Float32 | polars.datatypes.classes.Float64]], polars.datatypes.classes.Float64], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.OfType[polars.datatypes.classes.Int128 | polars.datatypes.classes.UInt128 | polars.datatypes.classes.UInt64]], polars.datatypes.classes.Int128], astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.R, astrolabe.remainder.SelAnd[astrolabe.remainder.OfType[polars.datatypes.classes.NumericType], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Float16 | polars.datatypes.classes.Float32 | polars.datatypes.classes.Float64 | polars.datatypes.classes.Int128 | polars.datatypes.classes.UInt128 | polars.datatypes.classes.UInt64]]]], polars.datatypes.classes.Int64]]]]]"
+
+- case: a_selection_reads_other_columns_beside_the_matched_one_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     import polars.selectors as cs
