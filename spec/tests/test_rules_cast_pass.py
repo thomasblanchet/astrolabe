@@ -70,6 +70,7 @@ from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import CastingRules
 from astrolabe._rules.supertype import SupertypeFlag
 from astrolabe._rules.type_functions import ExprFields, FieldsMapper, Operand
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -585,6 +586,29 @@ class FunctionRules:
             inputs,
         )
 
+    def supertype_only(self, inputs: Sequence[Operand]) -> PlanShape | Stopped:
+        """Give the rules of a function that types its output with the supertype and casts nothing.
+
+        `max_horizontal` has these rules before polars 1.40.0.
+
+        Args:
+            inputs: The inputs.
+
+        Returns:
+            The shape, or how the rules say that polars stops.
+
+        Example:
+            >>> inputs = [Operand.column(DType("Int8")), Operand.column(DType("UInt8"))]
+            >>> FunctionRules().supertype_only(inputs).inputs[0].steps
+            ()
+        """
+        mapper = FieldsMapper(*(operand.dtype for operand in inputs))
+        return Rules().function(
+            mapper.map_to_supertype,
+            lambda: Visit.unchanged(len(inputs)),
+            inputs,
+        )
+
     def no_rule(self, inputs: Sequence[Operand]) -> PlanShape | Stopped:
         """Give the rules of `clip`, which has no casting rule.
 
@@ -648,7 +672,8 @@ class Cases:
         """Give each function of two inputs, by name.
 
         `fill_null` and `coalesce` join with the default flags, and
-        `max_horizontal` joins with no cast of a number to text. `index_of`
+        `max_horizontal` joins with no cast of a number to text, from polars
+        1.40.0 on, and casts nothing before. `index_of`
         casts its element to the type of its column, and refuses a cast that
         can lose a value. `clip` has no casting rule. `str.find` checks its
         namespace. `index_of` refuses an element that is not one value.
@@ -661,6 +686,7 @@ class Cases:
             ['clip', 'coalesce']
         """
         rules = FunctionRules()
+        joins = PolarsRelease.installed() >= PolarsRelease.parse("1.40.0")
         return {
             "fill_null": FunctionCase(
                 lambda e: e[0].fill_null(e[1]),
@@ -669,7 +695,7 @@ class Cases:
             "coalesce": FunctionCase(lambda e: pl.coalesce(*e), rules.supertyping(self.DEFAULT)),
             "max_horizontal": FunctionCase(
                 lambda e: pl.max_horizontal(*e),
-                rules.supertyping(self.NO_TEXT),
+                rules.supertyping(self.NO_TEXT) if joins else rules.supertype_only,
             ),
             "index_of": FunctionCase(
                 lambda e: e[0].index_of(self._one_value(e[1])),

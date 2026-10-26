@@ -1082,6 +1082,54 @@ class EwmFallback:
         return Recast(DType("Float64")).give(data, kernel)
 
 
+class EncodedNested:
+    """Accept a `List` and an `Array` in the kernel of `is_unique`, as polars does from 1.40.0.
+
+    From that release, `is_unique` and `is_duplicated` encode each row of a
+    list or an array, and hash the encoded rows. Older releases raise on
+    these kinds.
+
+    Example:
+        >>> EncodedNested()._refused(DType("List", (DType("Int8"),)))
+        False
+    """
+
+    @polars_releases
+    def __call__(self, dtype: DType) -> bool:
+        """Say whether the kernel accepts the type: a `List` or an `Array`.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether the type is a `List` or an `Array`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     EncodedNested()(DType("List", (DType("Int8"),)))
+            True
+        """
+        return dtype.name in {"List", "Array"}
+
+    @__call__.before("1.40.0")
+    def _refused(self, dtype: DType) -> bool:
+        """Say that the kernel of the older releases accepts no type here.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> EncodedNested()._refused(DType("Array", (DType("Int8"), 2)))
+            False
+        """
+        del dtype
+        return False
+
+
 class WindowKernels:
     """Hold the dispatch of each kernel of one input whose value at a row reads other rows.
 
@@ -1108,7 +1156,8 @@ class WindowKernels:
 
     `UNIQUE` gives `Boolean` for each kind that `is_unique` and
     `is_duplicated` hash: a number by its physical type, text, binary data,
-    `Boolean`, `Null` and the nested kinds.
+    `Boolean`, `Null`, a struct, and from polars 1.40.0 a list and an array
+    (`EncodedNested`).
 
     `FIRST_DISTINCT` gives `Boolean` for a series of one row, and otherwise
     refuses `Null`, an `Array` and a list of nested values (`FirstRow`).
@@ -1171,10 +1220,8 @@ class WindowKernels:
     UNIQUE: ClassVar[Dispatch] = Dispatch(
         "is_unique",
         (
-            Arm(
-                Physical(Kinds("Boolean", "String", "Binary", "Null", "List", "Array", "Struct")),
-                Fixed(BOOLEAN),
-            ),
+            Arm(Physical(Kinds("Boolean", "String", "Binary", "Null", "Struct")), Fixed(BOOLEAN)),
+            Arm(EncodedNested(), Fixed(BOOLEAN)),
             Arm(Physical(Is.primitive_numeric), Fixed(BOOLEAN)),
         ),
         Refuse(),

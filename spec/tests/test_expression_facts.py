@@ -515,12 +515,29 @@ class TestEngines:
         with pytest.raises(pl.exceptions.ComputeError):
             self.ROWS.select(pl.col("a").slice(pl.col("o"), 2))
 
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
     def test_a_lazy_slice_by_a_column_leaves_the_tree_over_a_column(self) -> None:
         """The slice pushdown deletes the slice, and the column comes back whole."""
         out = self.ROWS.lazy().select(pl.col("a").slice(pl.col("o"), 2)).collect()
         assert out.schema["a"] == pl.Int64
         assert out.height == self.ROWS.height
 
+    @pytest.mark.skipif(
+        PolarsRelease.installed() >= PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
+    def test_a_lazy_slice_by_a_column_raises_as_an_eager_one_before_1_40(self) -> None:
+        """The older releases keep the slice, whose offset of more than one row raises."""
+        with pytest.raises(pl.exceptions.ComputeError):
+            self.ROWS.lazy().select(pl.col("a").slice(pl.col("o"), 2)).collect()
+
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
     def test_a_lazy_slice_by_a_column_hangs_over_an_elementwise_value(self) -> None:
         """The slice pushdown makes a cycle below `abs`, and the query never returns."""
         with pytest.raises(subprocess.TimeoutExpired):

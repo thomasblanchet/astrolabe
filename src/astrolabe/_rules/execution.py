@@ -1666,8 +1666,10 @@ class AggregationRun:
 class ImplodeRun:
     """Run `implode()`, which gives the list of the values of each group.
 
-    In `agg`, the list of each group is one value, and each value gets a group
-    of its own. Over a literal, `implode` stays a literal of one list.
+    In `agg`, the list of each group is one value, and from polars 1.40.0 each
+    value gets a group of its own. Before that release, the values keep the
+    groups of the `group_by`, as the other aggregations do. Over a literal,
+    `implode` stays a literal of one list.
 
     Example:
         >>> frame = GroupBy((3, 2))
@@ -1704,14 +1706,57 @@ class ImplodeRun:
             >>> ImplodeRun(Shape.of(NodeKind.AGG), Kernel()).agg([frame.literal()], frame).state
             <AggState.LITERAL_SCALAR: 'literal scalar'>
         """
-        del frame
         value = inputs[0]
         if value.state is AggState.LITERAL_SCALAR:
             return replace(value, height=Height.SCALAR, dtype=self._kernel.data)
+        return self._lists(value, frame)
+
+    @polars_releases
+    def _lists(self, value: InGroups, frame: GroupBy) -> InGroups:
+        """Give the list of each group as one value, in a group of its own.
+
+        Args:
+            value: The input, which is not a literal.
+            frame: The groups of the `group_by`.
+
+        Returns:
+            The output.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> frame = GroupBy((3, 2))
+            >>> run = ImplodeRun(Shape.of(NodeKind.AGG), Kernel())
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     run._lists(frame.column(), frame).original
+            False
+        """
+        del frame
         units = (1,) * len(value.groups)
         state = AggState.AGGREGATED_SCALAR
         out = InGroups(state, units, Height.SCALAR, len(units), dtype=self._kernel.data)
         return replace(out, original=False)
+
+    @_lists.before("1.40.0")
+    def _in_groups(self, value: InGroups, frame: GroupBy) -> InGroups:
+        """Give the list of each group as one value, in the groups of the `group_by`.
+
+        Args:
+            value: The input, which is not a literal.
+            frame: The groups of the `group_by`.
+
+        Returns:
+            The output.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = ImplodeRun(Shape.of(NodeKind.AGG), Kernel())
+            >>> run._in_groups(frame.column(), frame).groups
+            (3, 2)
+        """
+        del value
+        state = AggState.AGGREGATED_SCALAR
+        rows = len(frame.sizes)
+        return InGroups(state, frame.sizes, Height.SCALAR, rows, dtype=self._kernel.data)
 
 
 class GroupsFunctionRun:
@@ -2918,7 +2963,8 @@ class SortByRun:
     Where every key is a literal, the run gives the value as it is. A literal
     value beside a key that is not a literal sorts over the rows of the keys:
     a key of more than one row in a group does not match the one row of the
-    literal, and a key of one row gives its own state to the output.
+    literal, and a key of one row gives its own state to the output. Before
+    polars 1.40.0, a literal value gives itself as it is (`_literal_value`).
     Otherwise the value and each key must have the same rows in each group,
     and the output keeps the rows of the value, in another order.
 
@@ -2968,7 +3014,7 @@ class SortByRun:
         if all(key.state is literal for key in keys):
             return replace(value, dtype=self._kernel.data or value.dtype)
         if value.state is literal:
-            return self._literal_value(keys)
+            return self._literal_value(value, keys)
         if value.rebuilt and len(keys) == 1:
             return self._rebuilt(value, keys[0])
         for key in keys:
@@ -3040,10 +3086,12 @@ class SortByRun:
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
         return replace(value, dtype=self._kernel.data)
 
-    def _literal_value(self, keys: Sequence[InGroups]) -> InGroups:
+    @polars_releases
+    def _literal_value(self, value: InGroups, keys: Sequence[InGroups]) -> InGroups:
         """Give the output of a literal value beside keys that are not all literals.
 
         Args:
+            value: The value, which the output does not read.
             keys: The keys.
 
         Returns:
@@ -3053,17 +3101,43 @@ class SortByRun:
             PolarsRefusal: A key has more than one row in a group.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> frame = GroupBy((3, 2))
             >>> first = Run(Shape.of(NodeKind.AGG)).agg([frame.column()], frame)
             >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel(data=DType("Int32")))
-            >>> run._literal_value([first]).state
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     run._literal_value(frame.literal(), [first]).state
             <AggState.AGGREGATED_SCALAR: 'aggregated scalar'>
         """
+        del value
         columns = [key for key in keys if key.state is not AggState.LITERAL_SCALAR]
         if any(size != 1 for key in columns for size in RowRuns().sizes(key)):
             message = "`sort_by` produced another length than the Series to sort"
             raise PolarsRefusal(ErrorClass.SHAPE, message)
         return replace(columns[0], original=False, dtype=self._kernel.data)
+
+    @_literal_value.before("1.40.0")
+    def _literal_kept(self, value: InGroups, keys: Sequence[InGroups]) -> InGroups:
+        """Give the literal value as it is, as the older releases do.
+
+        Before polars 1.40.0, `agg` puts no node above the root, so the run of
+        `sort_by` over the groups gives a literal value with no sort.
+
+        Args:
+            value: The value.
+            keys: The keys, which the output does not read.
+
+        Returns:
+            The value, with the type of the kernel.
+
+        Example:
+            >>> frame = GroupBy((3, 2))
+            >>> run = SortByRun(Shape.of(NodeKind.SORT_BY), Kernel(data=DType("Int32")))
+            >>> run._literal_kept(frame.literal(), [frame.column()]).state
+            <AggState.LITERAL_SCALAR: 'literal scalar'>
+        """
+        del keys
+        return replace(value, dtype=self._kernel.data or value.dtype)
 
 
 class GatherRun:
@@ -3728,12 +3802,18 @@ class SlicePushdown:
     wraps the slice in a list for each group before the pushdown runs, so the
     column then holds the values of the value in a list for each group.
 
+    Before polars 1.40.0, the pushdown only moves a slice below a value that
+    is elementwise, and an offset or a length is no place (`_below_only`).
+
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> column = SliceInput(Height.COLUMN)
-        >>> SlicePushdown().outcome(column, column, column)
+        >>> with PolarsRelease.pretend("1.40.0"):
+        ...     SlicePushdown().outcome(column, column, column)
         <Pushdown.DELETED: 'deleted'>
     """
 
+    @polars_releases
     def outcome(self, value: SliceInput, offset: SliceInput, length: SliceInput) -> Pushdown:
         """Give what the pushdown does to a slice of `value`.
 
@@ -3749,12 +3829,16 @@ class SlicePushdown:
             PolarsRefusal: A place below the value reads the cycle, so the query never returns.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> literal = SliceInput(Height.SCALAR, literal=True)
             >>> plus_one = SliceInput(Height.COLUMN, passes=True)
-            >>> SlicePushdown().outcome(plus_one, literal, literal)
-            <Pushdown.MOVED: 'moved'>
             >>> column = SliceInput(Height.COLUMN)
-            >>> SlicePushdown().outcome(plus_one, column, column)  # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SlicePushdown().outcome(plus_one, literal, literal)
+            <Pushdown.MOVED: 'moved'>
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SlicePushdown().outcome(plus_one, column, column)
+            ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: hangs: ...
@@ -3774,6 +3858,35 @@ class SlicePushdown:
             (False, True): Pushdown.DELETED,
         }
         return outcomes[below, arguments]
+
+    @outcome.before("1.40.0")
+    def _below_only(self, value: SliceInput, offset: SliceInput, length: SliceInput) -> Pushdown:
+        """Give what the pushdown of the older releases does: it moves a slice below its value.
+
+        These releases push a slice into the inputs of an elementwise value,
+        and read the offset and the length as they are, so the run of a slice
+        by a column checks them.
+
+        Args:
+            value: The value that the slice cuts.
+            offset: The offset, which is no place.
+            length: The length, which is no place.
+
+        Returns:
+            What the pushdown does.
+
+        Example:
+            >>> column = SliceInput(Height.COLUMN)
+            >>> plus_one = SliceInput(Height.COLUMN, passes=True)
+            >>> pushdown = SlicePushdown()
+            >>> pushdown._below_only(plus_one, column, column)
+            <Pushdown.MOVED: 'moved'>
+            >>> pushdown._below_only(column, column, column)
+            <Pushdown.KEPT: 'kept'>
+        """
+        del offset, length
+        below = value.height is not Height.SCALAR and value.passes
+        return Pushdown.MOVED if below else Pushdown.KEPT
 
     def _aligned(self, rows: Sequence[SliceInput]) -> bool:
         """Say whether the inputs that are not one value keep their places.

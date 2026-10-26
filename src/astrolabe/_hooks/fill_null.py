@@ -6,11 +6,12 @@ the checker loses every column of a typed frame at this call.
 polars runs the call as another operation over one expression. It picks the
 filled columns from the Python class of the value. A number fills the
 numeric columns, a `str` fills the `String` and `Categorical` columns, a
-`date` fills the `Date` columns, and each of these also fills the `Null`
-columns: polars runs `with_columns(pl.col([...]).fill_null(value))` over
-those data types. An expression, a value of another class and a strategy
-fill every column: polars runs `select(pl.all().fill_null(...))`. The hook
-types the call as that operation.
+`date` fills the `Date` columns, and from polars 1.40.0 each of these also
+fills the `Null` columns: polars runs
+`with_columns(pl.col([...]).fill_null(value))` over those data types. An
+expression, a value of another class and a strategy fill every column:
+polars runs `select(pl.all().fill_null(...))`. The hook types the call as
+that operation.
 """
 
 from __future__ import annotations
@@ -433,11 +434,12 @@ class FilledDataTypes:
     """Give the data types of the columns that a `fill_null` value fills, in the code of polars.
 
     polars tests the Python class of the value in a fixed order, a subclass
-    before its base, and fills the columns of the data types of that class
-    and the `Null` columns. An `int` or a `float` fills every numeric
-    column. With `matches_supertype=False`, an `int` fills only the `Int64`
-    columns, and a `float` only the `Float64` columns. An expression, a
-    value of another class and a strategy fill every column.
+    before its base, and fills the columns of the data types of that class,
+    and from polars 1.40.0 the `Null` columns (`_with_nulls`). An `int` or a
+    `float` fills every numeric column. With `matches_supertype=False`, an
+    `int` fills only the `Int64` columns, and a `float` only the `Float64`
+    columns. An expression, a value of another class and a strategy fill
+    every column.
 
     The type of a value does not always tell its class. mypy accepts an
     `int` where the type is `float`, and the type `date` also covers a
@@ -454,32 +456,32 @@ class FilledDataTypes:
         True
     """
 
-    DATETIMES: ClassVar[str] = "(cs.datetime() | cs.by_dtype(pl.Null))"
-    DATES: ClassVar[str] = "pl.col([pl.Date, pl.Null])"
+    DATETIMES: ClassVar[str] = "cs.datetime()"
+    DATES: ClassVar[str] = "pl.col([pl.Date])"
     CLASSES: ClassVar[tuple[tuple[str, str], ...]] = (
-        (Target.of(bool).fullname, "pl.col([pl.Boolean, pl.Null])"),
+        (Target.of(bool).fullname, "pl.col([pl.Boolean])"),
         (Target.of(int).fullname, "int"),
         (Target.of(float).fullname, "float"),
-        (Target.of(str).fullname, "pl.col([pl.String, pl.Categorical, pl.Null])"),
+        (Target.of(str).fullname, "pl.col([pl.String, pl.Categorical])"),
         (Target.of(datetime).fullname, DATETIMES),
         (Target.of(date).fullname, DATES),
-        (Target.of(time).fullname, "pl.col([pl.Time, pl.Null])"),
-        (Target.of(timedelta).fullname, "(cs.duration() | cs.by_dtype(pl.Null))"),
+        (Target.of(time).fullname, "pl.col([pl.Time])"),
+        (Target.of(timedelta).fullname, "cs.duration()"),
     )
     NUMBERS: ClassVar[str] = (
         "pl.col([pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.Int128, pl.UInt8, pl.UInt16, "
-        "pl.UInt32, pl.UInt64, pl.Float32, pl.Float64, pl.Decimal, pl.Null])"
+        "pl.UInt32, pl.UInt64, pl.Float32, pl.Float64, pl.Decimal])"
     )
     EXACT: ClassVar[dict[str, str]] = {
-        "int": "pl.col([pl.Int64, pl.Null])",
-        "float": "pl.col([pl.Float64, pl.Null])",
+        "int": "pl.col([pl.Int64])",
+        "float": "pl.col([pl.Float64])",
     }
     # An int or a float, for a variable of the type `float`.
-    EITHER: ClassVar[str] = "pl.col([pl.Int64, pl.Float64, pl.Null])"
+    EITHER: ClassVar[str] = "pl.col([pl.Int64, pl.Float64])"
     EXPRESSION: ClassVar[str] = Target.of(pl.Expr).fullname
 
     # The kinds that a `datetime` fills, where the type of the value is `date`.
-    DATETIME_KINDS: ClassVar[frozenset[str]] = frozenset({"Datetime", "Null"})
+    DATETIME_KINDS: ClassVar[frozenset[str]] = frozenset({"Datetime"})
 
     def __init__(self, arguments: CallArgs, kinds: FrameKinds) -> None:
         """Keep the arguments of the call and the kinds of the frame.
@@ -507,9 +509,65 @@ class FilledDataTypes:
         found = not_refused(self._class(typ))
         node = self._arguments.node_list("value")[0]
         if found in self.EXACT:
-            return not_refused(self._number(found, node))
+            return self._with_nulls(not_refused(self._number(found, node)))
         not_refused(self._temporal(found, node))
-        return found
+        return None if found is None else self._with_nulls(found)
+
+    def _with_nulls(self, code: str) -> str:
+        """Add the `Null` columns to the columns that the value fills, where polars fills them.
+
+        Args:
+            code: The data types of the class of the value.
+
+        Returns:
+            The data types, with `Null` where the installed release fills it
+            (`_nulls`).
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> empty = FrameKinds(frozenset(), frozenset())
+            >>> fill = FilledDataTypes(None, empty)
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     fill._with_nulls("pl.col([pl.Date])"), fill._with_nulls("cs.datetime()")
+            ('pl.col([pl.Date, pl.Null])', '(cs.datetime() | cs.by_dtype(pl.Null))')
+            >>> with PolarsRelease.pretend("1.39.3"):
+            ...     fill._with_nulls("pl.col([pl.Date])")
+            'pl.col([pl.Date])'
+        """
+        if not self._nulls():
+            return code
+        if code.startswith("pl.col(["):
+            return code.removesuffix("])") + ", pl.Null])"
+        return f"({code} | cs.by_dtype(pl.Null))"
+
+    @polars_releases
+    def _nulls(self) -> frozenset[str]:
+        """Give the kinds that every value fills beside the kinds of its class: `Null`.
+
+        Returns:
+            The kinds.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> empty = FrameKinds(frozenset(), frozenset())
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     sorted(FilledDataTypes(None, empty)._nulls())
+            ['Null']
+        """
+        return frozenset({"Null"})
+
+    @_nulls.before("1.40.0")
+    def _no_nulls(self) -> frozenset[str]:
+        """Give the kinds of the older releases: none, as they leave the `Null` columns as they are.
+
+        Returns:
+            No kind.
+
+        Example:
+            >>> FilledDataTypes(None, FrameKinds(frozenset(), frozenset()))._no_nulls()
+            frozenset()
+        """
+        return frozenset()
 
     @explains(Reason.UNTYPED_ARGUMENT)
     def _class(self, typ: MypyType) -> str | None:
@@ -529,7 +587,7 @@ class FilledDataTypes:
             >>> fixture = new_type_fixture()
             >>> empty = FrameKinds(frozenset(), frozenset())
             >>> FilledDataTypes(None, empty)._class(fixture.lit_str1)
-            'pl.col([pl.String, pl.Categorical, pl.Null])'
+            'pl.col([pl.String, pl.Categorical])'
             >>> FilledDataTypes(None, empty)._class(fixture.a) is None
             True
             >>> FilledDataTypes(None, empty)._class(fixture.anyt)
@@ -571,7 +629,7 @@ class FilledDataTypes:
             True
             >>> exact = call_args(["value", "matches_supertype"], [one, [bool_literal_node(False)]])
             >>> FilledDataTypes(exact, empty)._number("int", one[0])
-            'pl.col([pl.Int64, pl.Null])'
+            'pl.col([pl.Int64])'
         """
         matches = self._arguments.literal_bool("matches_supertype", default=True)
         if not_none(matches):
@@ -599,13 +657,14 @@ class FilledDataTypes:
             >>> day = NameExpr("day")
             >>> FilledDataTypes(None, empty)._temporal(FilledDataTypes.DATES, day) is None
             True
-            >>> nulls = FrameKinds(frozenset({"Null"}), frozenset())
-            >>> FilledDataTypes(None, nulls)._temporal(FilledDataTypes.DATES, day)
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> dates = FrameKinds(frozenset({"Datetime"}), frozenset())
+            >>> FilledDataTypes(None, dates)._temporal(FilledDataTypes.DATES, day)
             Refusal(reason=<Reason.NON_LITERAL_DTYPE: ...>)
         """
         reader = TemporalValueReader()
         open_zone = found == self.DATETIMES and reader.datetime_rendering(node) is None
         open_class = found == self.DATES and not reader.exact_date(node)
-        if (open_zone or open_class) and self._kinds.touches(self.DATETIME_KINDS):
+        if (open_zone or open_class) and self._kinds.touches(self.DATETIME_KINDS | self._nulls()):
             return Refusal(Reason.NON_LITERAL_DTYPE)
         return None

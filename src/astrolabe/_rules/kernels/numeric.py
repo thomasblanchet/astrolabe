@@ -52,8 +52,10 @@ class Cut:
     the type of the labels (`CutBins.dtype`).
 
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> bins = CutBins((2.0, 0.0), None, left_closed=False, include_breaks=False)
-        >>> Cut(bins).give(Data(DType("Int8")), Dispatch("cut", (), Cut(bins)))
+        >>> with PolarsRelease.pretend("1.40.0"):
+        ...     Cut(bins).give(Data(DType("Int8")), Dispatch("cut", (), Cut(bins)))
         Enum(categories=['(-inf, 0]', '(0, 2]', '(2, inf]'])
     """
 
@@ -429,9 +431,11 @@ class NumericKernels:
             The dispatch.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> labels = ["low", "high"]
             >>> cut = NumericKernels().cut([0.0], labels, left_closed=False, include_breaks=False)
-            >>> cut.output(Data(DType("String")))
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     cut.output(Data(DType("String")))
             Enum(categories=['low', 'high'])
         """
         names = None if labels is None else tuple(labels)

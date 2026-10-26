@@ -17,6 +17,8 @@ from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
 from astrolabe._rules.casts import CastAbility, SeriesCast
 from astrolabe._rules.kernels.arithmetic import Coercion
 from astrolabe._rules.kernels.dispatch import Data, RunCast
+from astrolabe._rules.kernels.lists import IsIn
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import Supertype
 
 if TYPE_CHECKING:
@@ -331,10 +333,11 @@ class Replaced:
     values to the type of the input with a strict cast, so a cast that
     polars does not have, or a literal value that does not fit, raises. A
     struct cast to a number stays a struct. The input must then compare with
-    the old values at their supertype (`_mask`). The output joins the new
-    values with the input, at their supertype, so a struct of new values
-    gives a struct. Polars refuses a struct of several fields there, and a
-    struct whose field is a struct.
+    the old values at their supertype (`_mask`). Before polars 1.40.0, polars
+    looks up the input in the list of the old values instead (`_member`).
+    The output joins the new values with the input, at their supertype, so a
+    struct of new values gives a struct. Polars refuses a struct of several
+    fields there, and a struct whose field is a struct.
 
     Example:
         >>> listed = Data(DType("List", (DType("Int64"),)))
@@ -407,13 +410,13 @@ class Replaced:
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `new` input ...
         """
-        counts = [self._count(operand) for operand in computed[1:3]]
+        counts = [self.count(operand) for operand in computed[1:3]]
         if len(counts) < 2 or None in counts or counts[1] in {1, counts[0]}:
             return
         message = "`new` input for `replace` must have the same length as `old` or have length 1"
         raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
 
-    def _count(self, operand: Operand) -> int | None:
+    def count(self, operand: Operand) -> int | None:
         """Give the number of values of an input that the code holds, or `None` for a column.
 
         Args:
@@ -424,13 +427,14 @@ class Replaced:
 
         Example:
             >>> from astrolabe._rules.type_functions import Operand
-            >>> Replaced()._count(Operand.of_value(1))
+            >>> Replaced().count(Operand.of_value(1))
             1
         """
         if isinstance(operand.value, tuple):
             return len(operand.value)
         return 1 if operand.literal else None
 
+    @polars_releases
     def _mask(self, old: DType, target: DType) -> None:
         """Refuse old values that the input cannot compare with, as polars does to find its rows.
 
@@ -460,6 +464,26 @@ class Replaced:
             return
         message = f"could not evaluate comparison of {target!r} and {old!r}"
         raise PolarsRefusal(ErrorClass.SCHEMA, message)
+
+    @_mask.before("1.40.0")
+    def _member(self, old: DType, target: DType) -> None:
+        """Refuse old values that the input cannot be looked up in, as the older releases do.
+
+        These releases find the rows of the input with `is_in`, over the list
+        of the old values, with no cast (`IsIn`).
+
+        Args:
+            old: The type of the old values after their cast.
+            target: The type of the input.
+
+        Example:
+            >>> old = DType("Struct", ((("a", DType("Int64")),),))
+            >>> Replaced()._member(old, DType("Int16"))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: cannot get ref Int16 from Struct(...)
+        """
+        IsIn().output(Data(target), Data(DType("List", (old,))), ())
 
     def _struct(self, new: DType, target: DType) -> None:
         """Refuse a struct of new values that polars cannot join with an input of another kind.
@@ -516,7 +540,8 @@ class ReplacedStrict:
     Without a default, the old values must cast to the type of the input by
     the table of polars (`CastAbility`), then they cast to it with a strict
     cast. The new values cast to `return_dtype` with a strict cast where the
-    call names one. The output has the type of the new values.
+    call names one. The output has the type of the new values. Before polars
+    1.40.0, one new value does not map a null row of a struct (`_single`).
 
     With a default, the default must have the length of the input or one
     row. The output type is `return_dtype`, or the supertype of the new
@@ -574,6 +599,7 @@ class ReplacedStrict:
             message = f"cannot use values of type `{old!r}` to replace values in a column of type"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, f"{message} `{target!r}`")
         listed.cast(inputs[1], self._given(computed, 1), target)
+        self._single(inputs[0], self._given(computed, 2))
         if self.return_dtype is None:
             return listed.inner(inputs[2]).dtype.materialized()
         listed.cast(inputs[2], self._given(computed, 2), self.return_dtype)
@@ -632,6 +658,53 @@ class ReplacedStrict:
         listed.cast(inputs[1], self._given(computed, 1), inputs[0].dtype)
         RunCast().of(new, output)
         return output
+
+    @polars_releases
+    def _single(self, values: Data, new: Operand | None) -> None:
+        """Check the rows that one new value maps: every row that is not null.
+
+        Args:
+            values: The data of the input.
+            new: The new values as the run computes them, or `None`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> struct = Data(DType("Struct", ((("a", DType("Int8")),),)), nulls=True)
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     ReplacedStrict()._single(struct, Operand.of_value(0))
+        """
+        del values, new
+
+    @_single.before("1.40.0")
+    def _null_structs(self, values: Data, new: Operand | None) -> None:
+        """Refuse a struct that holds nulls where one new value maps it, as the older releases do.
+
+        These releases find the rows of one new value with a test that gives
+        no null for a null row of a struct, so that row counts as a value
+        that the mapping misses.
+
+        Args:
+            values: The data of the input.
+            new: The new values as the run computes them, or `None`.
+
+        Raises:
+            PolarsRefusal: The input is a struct that holds nulls, and the call
+                gives one new value.
+
+        Example:
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> struct = Data(DType("Struct", ((("a", DType("Int8")),),)), nulls=True)
+            >>> ReplacedStrict()._null_structs(struct, Operand.of_value(0))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: incomplete mapping ...
+            >>> ReplacedStrict()._null_structs(struct, None)
+        """
+        single = new is not None and Replaced().count(new) == 1
+        if values.dtype.name == "Struct" and values.nulls and single:
+            message = "incomplete mapping specified for `replace_strict`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
 
     def _given(self, computed: Sequence[Operand], place: int) -> Operand | None:
         """Give an input as the run computes it, where the call gives it.

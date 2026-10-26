@@ -47,7 +47,7 @@ Every identifier is defined in `OPERATIONS.md`. The ones used most:
 
 ### 0.4 How the Polars column was measured
 
-Every behavior stated here was executed on **polars 1.40.1**, **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
+Every behavior stated here was executed on **polars 1.39.3**, **polars 1.40.1**, **polars 1.41.2**, **polars 1.42.1**, **polars 1.43.2** and **polars 1.44.2**, and is asserted by a test under `spec/tests/`: the frame facts in `test_polars_facts.py`, the expression facts in `test_expression_facts.py`, and the rules that type Part III in `test_rules_*.py` and `test_definitions_*.py`. Run them with:
 
 ```
 uv run pytest spec
@@ -57,7 +57,7 @@ A polars release that changes one of these behaviors fails the test that names i
 
 ### 0.5 Scope, and why nothing is missing
 
-In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Polars 1.41.0 adds `gather` to both frames and `LazyFrame.execute`, so the frame API of polars 1.40 has 149 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
+In polars 1.44.2, the frame API is 152 methods across `DataFrame` and `LazyFrame`. Polars 1.42.0 adds `DataFrame.is_sorted`, so the frame API of polars 1.41 has 151 methods. Polars 1.41.0 adds `gather` to both frames and `LazyFrame.execute`, so the frame API of polars 1.39 and of polars 1.40 has 149 methods. Every one of them appears below, in Part I if it can change a schema and in Part II with a reason if it cannot, so a reader can look up any polars method and find it.
 
 | Group | Count | Where |
 | -- | -- | -- |
@@ -202,7 +202,7 @@ These change the *shape* of the frame, so several of them are where the model re
 | -- | -- | -- | -- | -- |
 | `.explode(*names)` | keeps every name; drops one nesting level from the named columns | those columns' inner type | `E-1` | `none` |
 | `.unnest(*names)` | replaces a struct **in place** with its fields | minus the struct, plus its fields | `E-1` | `R-2` on each field name |
-| `.unnest()` with no argument | unnests every struct column | the same, for every declared struct | `E-1` | `R-9` on `pl.Struct` |
+| `.unnest()` with no argument | unnests every struct column; before polars 1.40.0, `columns` has no default, and the call raises `TypeError` | the same, for every declared struct | `E-1` | `R-9` on `pl.Struct` |
 | `.unpivot(on=..., index=...)` | turns every non-index column into rows | the index columns, plus `variable : String` and `value` | `E-2` | `none` |
 | `.melt(...)` | the deprecated spelling of `.unpivot` | as `.unpivot` | `E-2` | `none` |
 | `.pivot(on=..., index=..., values=...)` | output names come from **data** | the index columns, plus unknown names | `E-2` | `B-5` |
@@ -249,10 +249,10 @@ These keep every name and change types.
 | `.cast(dtype)` | casts every column to one type | every type replaced | `E-6` | `R-9` on `{pl.List, pl.Array}` |
 | `.cast(mapping)` | casts the named columns | those types replaced | `E-1` | `none` |
 | `.cast(<selector>: dtype)` | casts what the selector picks | as for `.select` of that selector | `E-6` on the picked part | as for `.select` |
-| `.fill_null(value)`, an `int` or a `float` | fills the columns of the number kinds, `Int8` to `Int128`, `UInt8` to `UInt64`, `Float32`, `Float64` and `Decimal`, and every `Null` column. `UInt128` and `Float16` are not filled. With `matches_supertype=False`, it fills only `Int64` for an int, or `Float64` for a float, and `Null` | as for `.with_columns` of `pl.col(<the filled kinds>).fill_null(value)` | as for that `.with_columns`: each filled kind of the remainder retyped kind by kind (`T-20`) | `none` |
-| `.fill_null(value)`, a `bool`, `str`, `date` or `time` | fills the columns of the value's own kinds, `Boolean`, `String` and `Categorical`, `Date`, or `Time`, and every `Null` column | as for `.with_columns` of `pl.col(<the filled kinds>).fill_null(value)`: unchanged, but a `Null` column takes the value's type | as for that `.with_columns`: the `Null` part retyped to the value's type | `none` |
-| `.fill_null(value)`, a `timedelta` | fills every `Duration` column and every `Null` column | as for `.with_columns` of `(cs.duration() \| cs.by_dtype(pl.Null)).fill_null(value)`: a `Duration` takes the coarser of its unit and `us`, and `Null` gives `Duration('us')` | as for that `.with_columns` | `none` |
-| `.fill_null(value)`, a `datetime` of zone $z$ | fills every `Datetime` column and every `Null` column, and raises on a `Datetime` of another zone | as for `.with_columns` of `(cs.datetime() \| cs.by_dtype(pl.Null)).fill_null(value)`: a `Datetime` of zone $z$ takes the coarser of its unit and `us`, and `Null` gives `Datetime('us', z)` | as for that `.with_columns` | `R-9` on `Datetime` |
+| `.fill_null(value)`, an `int` or a `float` | fills the columns of the number kinds, `Int8` to `Int128`, `UInt8` to `UInt64`, `Float32`, `Float64` and `Decimal`, and from polars 1.40.0 every `Null` column. `UInt128` and `Float16` are not filled. With `matches_supertype=False`, it fills only `Int64` for an int, or `Float64` for a float, and from polars 1.40.0 `Null` | as for `.with_columns` of `pl.col(<the filled kinds>).fill_null(value)` | as for that `.with_columns`: each filled kind of the remainder retyped kind by kind (`T-20`) | `none` |
+| `.fill_null(value)`, a `bool`, `str`, `date` or `time` | fills the columns of the value's own kinds, `Boolean`, `String` and `Categorical`, `Date`, or `Time`, and from polars 1.40.0 every `Null` column | as for `.with_columns` of `pl.col(<the filled kinds>).fill_null(value)`: unchanged, but a `Null` column takes the value's type | as for that `.with_columns`: the `Null` part retyped to the value's type | `none` |
+| `.fill_null(value)`, a `timedelta` | fills every `Duration` column and, from polars 1.40.0, every `Null` column | as for `.with_columns` of `(cs.duration() \| cs.by_dtype(pl.Null)).fill_null(value)`: a `Duration` takes the coarser of its unit and `us`, and `Null` gives `Duration('us')` | as for that `.with_columns` | `none` |
+| `.fill_null(value)`, a `datetime` of zone $z$ | fills every `Datetime` column and, from polars 1.40.0, every `Null` column, and raises on a `Datetime` of another zone | as for `.with_columns` of `(cs.datetime() \| cs.by_dtype(pl.Null)).fill_null(value)`: a `Datetime` of zone $z$ takes the coarser of its unit and `us`, and `Null` gives `Datetime('us', z)` | as for that `.with_columns` | `R-9` on `Datetime` |
 | `.fill_null(value)`, an expression, a `Decimal` or `bytes` | fills every column, as `.select(pl.all().fill_null(value))` | as for that `.select` | as for that `.select` | `R-9` on each kind where the fill raises |
 | `.fill_null(strategy="forward"/"backward")` | carries a value along the column | unchanged | `E-1` | `none` |
 | `.fill_null(strategy="min"/"max")` | takes a value from the column | unchanged | `E-1` | `R-9` on `NestedType` |
@@ -280,7 +280,7 @@ This is the case that decides the shape of the vocabulary. Had `none_of=` accept
 
 Measured: `forward` and `backward` are total across every data type. `min`, `max`, `zero`, `one` and `mean` each raise on some type, once the column holds a null. So the two groups are different rows, and only the first needs no promise. `zero` and `one` also raise on a `Null` column, which has neither. No strategy changes a data type. A column of a refused type that holds no null keeps its type, so the refusal needs a row with a null. The checker reports a declared column of a refused type all the same, as it reports a `List` compared with a value, which polars refuses only once a row exists.
 
-`.fill_null(value)` picks the filled columns from the Python type of the value, and runs `fill_null` as an expression on them alone. A column that the value does not pick keeps its type and its nulls, so the call is total for every kind it does not pick. The row of each value states the picked kinds. Every value but an expression also picks `Null`, and a `Null` column takes the type of the value.
+`.fill_null(value)` picks the filled columns from the Python type of the value, and runs `fill_null` as an expression on them alone. A column that the value does not pick keeps its type and its nulls, so the call is total for every kind it does not pick. The row of each value states the picked kinds. From polars 1.40.0, every value but an expression also picks `Null`, and a `Null` column takes the type of the value. Before that release, a `Null` column keeps its type.
 
 - **A number** picks the number kinds of its row. `UInt128` and `Float16` are numeric, but polars does not list them, so a number never fills them: `.fill_null(1.5)` keeps `u : UInt128`, where a fill would give `Float64`. On each picked column the fill is the expression form `.fill_null(value)`, so the value is a literal beside the column (`D-34`): on `i : Int64`, `.fill_null(1.5)` gives `i : Float64`, on `u : UInt32`, `.fill_null(-1)` gives `u : Int64`, and on `u : UInt8`, `.fill_null(1)` keeps `u : UInt8`. A `Null` column takes the standalone type of the value. An int widens a `Decimal` to 38 digits and keeps its scale, and a float gives `Float64`. `matches_supertype=False` narrows the picked kinds to `Int64` for an int, or `Float64` for a float. A variable of the type `int` or `float` is a hole (`D-44`): a column keeps the answer that every value of the sample gives, and is `Unchecked` where they differ.
 - **A `bool`, `str`, `date` or `time`** picks its own kinds, and each picked column keeps its type. A `str` picks `Categorical` but not `Enum`.
@@ -382,7 +382,7 @@ These combine two or more frames. What each demands of the two column sets is wh
 | `.vstack(other)` | as `how="vertical"` | that schema | `E-1` | rejected over a remainder |
 | `.extend(other)` | as `how="vertical"`, in place | that schema | `E-1` | rejected over a remainder |
 | `.hstack(other)` | as `how="horizontal_extend"` | the union | `E-4` | `R-10` |
-| `.merge_sorted(other, key=...)` | as `how="vertical"`, interleaved by key; before polars 1.41.0, it panics over a column that holds a `List` or an `Array` | that schema | `E-1` | rejected over a remainder |
+| `.merge_sorted(other, key=...)` | as `how="vertical"`, interleaved by key; before polars 1.41.0, it panics over a column that holds a `List` or an `Array`, and before polars 1.40.0, it has no parameter `maintain_order`, so `maintain_order=True` raises `TypeError` | that schema | `E-1` | rejected over a remainder |
 | `.update(other, on=..., how=...)` | replaces values, keeping the left columns | the left schema, a shared column widened | `E-1` | `R-2` naming the right's columns |
 
 The schema check of `how="vertical"`, `how="diagonal"`, `.vstack` and `.extend` reads every `Decimal` as one type, at any depth: a `Decimal(10, 2)` column beside a `Decimal(38, 3)` column runs, and the result keeps the type of the first frame. The relaxed forms widen two `Decimal` types to the larger precision and the larger scale. An align strategy and `.merge_sorted` refuse two different `Decimal` types (measured by `TestDecimalStacks` in `spec/tests/test_polars_facts.py`).
@@ -738,6 +738,7 @@ A lazy frame stores the planner type of each column, and plans each later step a
 
 | Polars | Methods | Methods that the census calls | Members of the namespaces | Methods and members | Constructors |
 | -- | -- | -- | -- | -- | -- |
+| 1.39.3 | 208 | 201 | 221 | 429 | 81 |
 | 1.40.1 | 208 | 201 | 221 | 429 | 81 |
 | 1.41.2 | 209 | 202 | 221 | 430 | 81 |
 | 1.42.1 | 210 | 203 | 221 | 431 | 81 |

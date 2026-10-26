@@ -2970,7 +2970,7 @@ class IntRangeCasts:
     """Cast the bounds of `int_range` to the integer type of the call, as the cast pass does.
 
     The type of the call must be an integer, and each bound must be a
-    number or `Null`. Where both bounds have the type of the call, they
+    number or `Null` (`_numbers`). Where both bounds have the type of the call, they
     stay. Otherwise each bound casts to it with a strict cast (`CastExprIr`),
     so a literal bound that does not fit refuses the plan. `int_ranges` has
     the same rule for its three inputs, with `Int64` as the target.
@@ -3000,12 +3000,13 @@ class IntRangeCasts:
             The steps of each input.
 
         Raises:
-            PolarsRefusal: The type of the call is not an integer, or a bound is
-                not a number.
+            PolarsRefusal: The type of the call is not an integer.
 
         Example:
-            >>> IntRangeCasts(DType("Int64")).visit([Operand.of_value("a"), Operand.of_value(3)])
-            ... # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> bounds = [Operand.of_value("a"), Operand.of_value(3)]
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     IntRangeCasts(DType("Int64")).visit(bounds)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `start` must be ...
@@ -3014,14 +3015,44 @@ class IntRangeCasts:
             message = f"non-integer `dtype` passed to `int_range`: {self.dtype!r}"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
         bounds = operands[: len(self.names)]
-        for name, operand in zip(self.names, bounds, strict=True):
-            if not Is.numeric(operand.dtype) and operand.dtype.name != "Null":
-                message = f"`{name}` must be numeric for `int_range`, got {operand.dtype!r}"
-                raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._numbers(bounds)
         if all(operand.dtype.same(self.dtype) for operand in bounds):
             return Visit.unchanged(len(operands))
         steps = [CastExprIr().steps(operand, self.dtype, CastOption.STRICT) for operand in bounds]
         return Visit(tuple(steps))
+
+    @polars_releases
+    def _numbers(self, bounds: Sequence[Operand]) -> None:
+        """Refuse a bound that is not a number or `Null`.
+
+        Args:
+            bounds: The bounds.
+
+        Raises:
+            PolarsRefusal: A bound is not a number.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> bounds = [Operand.of_value(0), Operand.of_value(3)]
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     IntRangeCasts(DType("Int64"))._numbers(bounds)
+        """
+        for name, operand in zip(self.names, bounds, strict=True):
+            if not Is.numeric(operand.dtype) and operand.dtype.name != "Null":
+                message = f"`{name}` must be numeric for `int_range`, got {operand.dtype!r}"
+                raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+
+    @_numbers.before("1.40.0")
+    def _any_bounds(self, bounds: Sequence[Operand]) -> None:
+        """Refuse no bound, as the older releases do: the strict cast of each bound decides.
+
+        Args:
+            bounds: The bounds.
+
+        Example:
+            >>> IntRangeCasts(DType("Int64"))._any_bounds([Operand.of_value("a")])
+        """
+        del bounds
 
 
 @dataclass(frozen=True)

@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from astrolabe._hooks.checked import checked_cast
 from astrolabe._rules.dtypes import Decimals, DType, IntegerRange, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, Undecided, UndecidedError
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import LosslessUpcast
 
 if TYPE_CHECKING:
@@ -2813,13 +2814,12 @@ class CastAbility:
             target: The type of the cast.
 
         Returns:
-            `False` beside `Binary`, `True` beside `String`, and `None` otherwise.
+            `False` beside `Binary`, the answer of `_text` beside `String`,
+            and `None` otherwise.
 
         Example:
             >>> CastAbility()._categories(DType("Categorical"), DType("Binary"))
             False
-            >>> CastAbility()._categories(DType("String"), DType("Categorical"))
-            True
             >>> CastAbility()._categories(DType("Categorical"), DType("Date")) is None
             True
         """
@@ -2827,7 +2827,35 @@ class CastAbility:
         if other.name == "Binary":
             return False
         if other.name == "String":
-            return True
+            return self._text()
+        return None
+
+    @polars_releases
+    def _text(self) -> bool | None:
+        """Give the answer for a category beside `String`: `True`.
+
+        Returns:
+            `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     CastAbility()._categories(DType("String"), DType("Categorical"))
+            True
+        """
+        return True
+
+    @_text.before("1.40.0")
+    def _no_text_entry(self) -> bool | None:
+        """Give the answer of the older releases for a category beside `String`: no entry.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> CastAbility()._no_text_entry() is None
+            True
+        """
         return None
 
     def _boolean(self, source: DType, target: DType) -> bool:

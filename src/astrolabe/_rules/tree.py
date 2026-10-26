@@ -159,7 +159,9 @@ class EarlierForms:
     and `arr` are functions of their own. From that release, `quantile` is a
     function of two inputs, and each of these members is an `eval` of the
     element. The rules hold the later forms, and the two forms give the same
-    types.
+    types. Before polars 1.40.0, `tail(n)` also builds its offset as `-n`
+    cast to `Int64` where the later releases write the literal `-n`
+    (`_tail`).
 
     Example:
         >>> member = {"ListExpr": "Reverse"}
@@ -194,6 +196,93 @@ class EarlierForms:
             {'Column': 'a'}
         """
         return serialized
+
+    @rewritten.before("1.40.0")
+    def _earliest(self, serialized: object) -> object:
+        """Give a node of a release before 1.40.0 in the form of polars 1.41.0.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The node, with the offset of `tail` as a literal (`_tail`) and the
+            later forms of the releases before 1.41.0 (`_later`).
+
+        Example:
+            >>> EarlierForms()._earliest({"Column": "a"})
+            {'Column': 'a'}
+        """
+        return self._later(self._tail(serialized))
+
+    def _tail(self, serialized: object) -> object:
+        """Give the slice of `tail(n)` with its offset as the literal `-n`.
+
+        Args:
+            serialized: The node, as `json.loads` gives it.
+
+        Returns:
+            The slice with the literal offset where the node is a slice whose
+            offset is `-n` cast to `Int64`, and the node otherwise.
+
+        Example:
+            >>> three = {"Literal": {"Dyn": {"Int": 3}}}
+            >>> to_int64 = {"expr": three, "dtype": {"Literal": "Int64"}, "options": "Overflowing"}
+            >>> cast = {"Cast": to_int64}
+            >>> offset = {"Function": {"input": [cast], "function": "Negate"}}
+            >>> body = {"input": {"Column": "x"}, "offset": offset, "length": three}
+            >>> EarlierForms()._tail({"Slice": body})["Slice"]["offset"]
+            {'Literal': {'Dyn': {'Int': -3}}}
+            >>> EarlierForms()._tail({"Slice": {**body, "offset": three}})["Slice"]["offset"]
+            {'Literal': {'Dyn': {'Int': 3}}}
+        """
+        body = serialized.get("Slice") if isinstance(serialized, dict) else None
+        if not isinstance(body, dict):
+            return serialized
+        count = self._negated_count(body.get("offset"))
+        if count is None:
+            return serialized
+        return {"Slice": {**body, "offset": {"Literal": {"Dyn": {"Int": -count}}}}}
+
+    def _negated_count(self, offset: object) -> int | None:
+        """Give `n` where an offset is `-n` cast to `Int64`, as an older `tail(n)` builds it.
+
+        Args:
+            offset: The offset, as `json.loads` gives it.
+
+        Returns:
+            The count, or `None` for any other offset.
+
+        Example:
+            >>> EarlierForms()._negated_count({"Literal": {"Dyn": {"Int": 3}}}) is None
+            True
+        """
+        function = offset.get("Function") if isinstance(offset, dict) else None
+        if not isinstance(function, dict) or function.get("function") != "Negate":
+            return None
+        inputs = function.get("input")
+        first = inputs[0] if isinstance(inputs, list) and len(inputs) == 1 else None
+        return self._cast_count(first.get("Cast") if isinstance(first, dict) else None)
+
+    def _cast_count(self, cast: object) -> int | None:
+        """Give `n` where a cast is the integer literal `n` cast to `Int64`.
+
+        Args:
+            cast: The body of the cast, as `json.loads` gives it.
+
+        Returns:
+            The count, or `None` for any other cast.
+
+        Example:
+            >>> EarlierForms()._cast_count({"expr": {"Column": "n"}, "dtype": {"Literal": "Int64"}})
+            >>> EarlierForms()._cast_count({"expr": {"Column": "n"}, "dtype": {"Literal": "Int8"}})
+        """
+        if not isinstance(cast, dict) or cast.get("dtype") != {"Literal": "Int64"}:
+            return None
+        literal = cast.get("expr")
+        value = literal.get("Literal") if isinstance(literal, dict) else None
+        dynamic = value.get("Dyn") if isinstance(value, dict) else None
+        count = dynamic.get("Int") if isinstance(dynamic, dict) else None
+        return count if isinstance(count, int) else None
 
     @rewritten.before("1.41.0")
     def _later(self, serialized: object) -> object:
@@ -284,9 +373,9 @@ class EarlierForms:
 class WindowKeys:
     """Check the names of the keys of `over`, as the conversion of polars does.
 
-    Before polars 1.41.0, the conversion refuses an `over` with two keys of
-    one output name, as two literals, with `DuplicateError`. From that
-    release, it does not compare the names.
+    The polars 1.40 releases refuse an `over` with two keys of one output
+    name, as two literals, with `DuplicateError`, while they convert the
+    expression. The releases before and after them do not compare the names.
 
     Example:
         >>> body = {"function": {"Column": "x"}, "partition_by": []}
@@ -312,7 +401,7 @@ class WindowKeys:
 
     @check.before("1.41.0")
     def _distinct(self, tree: TreeNode) -> None:
-        """Refuse two keys of one output name, as the older releases do.
+        """Refuse two keys of one output name, as the polars 1.40 releases do.
 
         Args:
             tree: The node of `over`.
@@ -336,6 +425,20 @@ class WindowKeys:
                 message = f"column with name '{name}' has more than one occurrence"
                 raise PolarsRefusal(ErrorClass.DUPLICATE, message)
             seen.add(name)
+
+    @check.before("1.40.0")
+    def _unchecked(self, tree: TreeNode) -> None:
+        """Check the keys of an `over` in the releases before 1.40.0: no check.
+
+        Args:
+            tree: The node of `over`.
+
+        Example:
+            >>> keys = [{"Literal": {"Dyn": {"Int": 0}}}, {"Literal": {"Dyn": {"Int": 1}}}]
+            >>> body = {"function": {"Column": "x"}, "partition_by": keys}
+            >>> WindowKeys()._unchecked(ExpressionTree().read({"Over": body}))
+        """
+        del tree
 
 
 class KeptName:

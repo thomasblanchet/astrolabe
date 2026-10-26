@@ -440,6 +440,7 @@
         reveal_type(df.sum())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'v': astrolabe.frame.Unchecked, 'w': polars.datatypes.classes.Int64}, closed=True), None]"
 
 - case: a_reducer_maps_both_types_of_a_planned_column
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
 
@@ -453,6 +454,22 @@
     planned = lf.select(d=pl.col("dec").cum_sum())
     reveal_type(planned.max())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'d': astrolabe.frame.Planned[astrolabe.frame.Decimal[Literal[38], Literal[2]], astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
     reveal_type(planned.sum())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'d': astrolabe.frame.Decimal[Literal[38], Literal[2]]}, closed=True), None]"
+
+- case: a_reducer_maps_both_types_of_a_planned_column_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Columns, Decimal, TypedLazyFrame
+
+    class Rows(Columns):
+        dec: Decimal[Literal[10], Literal[2]]
+
+    lf: TypedLazyFrame[Rows]
+    planned = lf.select(d=pl.col("dec").cum_sum())
+    reveal_type(planned.max())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'d': astrolabe.frame.Planned[astrolabe.frame.Decimal[Literal[38], Literal[2]], astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
+    reveal_type(planned.sum())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'d': astrolabe.frame.Planned[astrolabe.frame.Decimal[Literal[38], Literal[2]], astrolabe.frame.Decimal[Literal[10], Literal[2]]]}, closed=True), None]"
 
 - case: a_sum_keeps_a_decimal_of_open_parameters
   main: |

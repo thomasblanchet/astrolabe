@@ -173,8 +173,9 @@ class PolarsApi:
     def selectors(self) -> set[str]:
         """Give every selector constructor `polars.selectors` offers.
 
-        A selector constructor is a public callable that is neither a
-        type nor one of the module's helpers.
+        A selector constructor is a public callable of polars that is
+        neither a type nor one of the module's helpers. Some releases also
+        import a name of `typing` into the module, which is not polars.
 
         Returns:
             Each name that builds a selector, without the helpers.
@@ -190,7 +191,8 @@ class PolarsApi:
             if name.startswith("_") or name in self.HELPERS:
                 continue
             value = getattr(cs, name)
-            if callable(value) and not isinstance(value, type):
+            ours = str(getattr(value, "__module__", "")).startswith("polars")
+            if ours and callable(value) and not isinstance(value, type):
                 found.add(name)
         return found
 

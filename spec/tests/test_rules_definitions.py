@@ -58,7 +58,8 @@ from astrolabe._rules.definitions.structs import Structs
 from astrolabe._rules.definitions.temporal import Temporal
 from astrolabe._rules.definitions.node_options import NodeOptions
 from astrolabe._rules.dtypes import DType
-from astrolabe._rules.node_evaluation import LiteralLeaf, NodeEvaluation, Unchecked
+from astrolabe._rules.node_evaluation import LiteralLeaf, NodeEvaluation, Refused, Unchecked
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.tree import NonFinite
 
 
@@ -409,16 +410,22 @@ def test_cut_over_a_break_that_the_tree_does_not_hold_is_unchecked(breaks: list[
     """The rules give `Unchecked` for `cut` with no labels and a break that is NaN or infinite.
 
     The JSON form of the tree writes each such break as null, so the rules do
-    not know the interval of the break, and polars gives its label.
+    not know the interval of the break, and polars gives its label. Before
+    polars 1.40.0, the type is `Categorical` whatever the labels, and the
+    kernel refuses the break, so the rules know the answers.
     """
     node = pl.col("c10").cut(breaks)
     definition = Elementwise.CUT.at(NodeOptions(json.loads(node.meta.serialize(format="json"))))
     leaf = Inputs().labelled("Float64/per row").leaf
     answers = NodeEvaluation(definition, [leaf], CellCheck.GROUPS).answers()
-    unchecked = [answers.planner_select, answers.planner_agg, answers.run_select, answers.run_agg]
-    assert all(isinstance(answer, Unchecked) for answer in unchecked), unchecked
     planned = PolarsCell(node.alias("o")).planner(agg=False)
     assert isinstance(planned, DType)
+    if PolarsRelease.installed() < PolarsRelease.parse("1.40.0"):
+        assert answers.planner_select == planned
+        assert isinstance(answers.run_select, Refused)
+        return
+    unchecked = [answers.planner_select, answers.planner_agg, answers.run_select, answers.run_agg]
+    assert all(isinstance(answer, Unchecked) for answer in unchecked), unchecked
 
 
 def test_cut_over_a_nan_break_that_the_code_holds_gives_the_answers_of_polars() -> None:

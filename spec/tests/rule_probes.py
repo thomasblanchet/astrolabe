@@ -1967,6 +1967,22 @@ class TreeFrame:
         ]
         return [self.answer(run) for run in runs]
 
+    def _leaves(self) -> dict[str, ColumnLeaf]:
+        """Give a leaf for each column of the frame, which says where every value is null.
+
+        Returns:
+            The leaf of each column, by its name.
+
+        Example:
+            >>> nulls = pl.Series([None] * 5, dtype=pl.Date)
+            >>> TreeFrame({"d": nulls})._leaves()["d"].nulls, TreeFrame()._leaves()["x"].nulls
+            (True, False)
+        """
+        return {
+            name: ColumnLeaf(DType.of(series.dtype), RowForm.PER_ROW, nulls=series.is_null().all())
+            for name, series in self._frame.to_dict().items()
+        }
+
     def rules(self, expression: pl.Expr) -> list[str]:
         """Give the four answers of the evaluator, in the text that the census stores.
 
@@ -1980,10 +1996,7 @@ class TreeFrame:
             >>> TreeFrame().rules(pl.col("x").abs())
             ['Int64', 'List(Int64)', 'Int64', 'List(Int64)']
         """
-        columns = {
-            name: ColumnLeaf(DType.of(dtype), RowForm.PER_ROW)
-            for name, dtype in self._frame.schema.items()
-        }
+        columns = self._leaves()
         evaluation = TreeEvaluation(columns, GroupBy((3, 2), QueryFlags.lazy(lone=True)))
         return list(CensusText().answers(evaluation.answers(ExpressionTree().of(expression))))
 
@@ -2026,10 +2039,7 @@ class TreeFrame:
             >>> TreeFrame().rules_message(pl.col("x").shift(pl.col("g")))
             "'n' must be a scalar value"
         """
-        columns = {
-            name: ColumnLeaf(DType.of(dtype), RowForm.PER_ROW)
-            for name, dtype in self._frame.schema.items()
-        }
+        columns = self._leaves()
         evaluation = TreeEvaluation(columns, GroupBy((3, 2)))
         answer = evaluation.answers(ExpressionTree().of(expression)).run_select
         return answer.message if isinstance(answer, Refused) else ""

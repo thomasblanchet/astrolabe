@@ -20,7 +20,7 @@ from typing import ClassVar
 from astrolabe._rules.cast_pass import CastOption, FirstInputCast
 from astrolabe._rules.definitions.cast_adapters import FunctionCasting, NoCasts, OwnRuleCasts
 from astrolabe._rules.definitions.value_adapters import KeptValue
-from astrolabe._rules.definitions.definition import DdofNulls, Definition, NullRule
+from astrolabe._rules.definitions.definition import DdofNulls, Definition, NullRule, ShapeSince
 from astrolabe._rules.definitions.kernel_adapters import (
     AllInputs,
     ItemReduction,
@@ -70,6 +70,9 @@ class Aggregations:
     SCALAR: ClassVar[Shape] = Shape.function(FunctionOptions.aggregation())
     UNORDERED: ClassVar[Shape] = Shape.function(
         FunctionOptions.aggregation().flag(FunctionFlag.NON_ORDER_OBSERVING),
+    )
+    INDEXED: ClassVar[Shape] = Shape.function(
+        FunctionOptions.aggregation().with_casting_rules(CastingRules.first_arg_lossless()),
     )
     SUM: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Agg", "Sum"),
@@ -373,9 +376,11 @@ class Aggregations:
     INDEX_OF: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "IndexOf"),
         type_function=Mapper(FieldsMapper.with_dtype, dtype=DType.idx()),
-        options=Shape.function(
-            FunctionOptions.aggregation().with_casting_rules(CastingRules.first_arg_lossless()),
-        ).with_scalar_inputs(ScalarInput.passed(1, "value", "index_of")),
+        options=ShapeSince(
+            INDEXED.with_scalar_inputs(ScalarInput.passed(1, "value", "index_of")),
+            "1.40.0",
+            INDEXED,
+        ),
         casts=FunctionCasting(),
         kernel=AllInputs(IndexOf()),
     )

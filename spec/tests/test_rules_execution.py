@@ -74,6 +74,7 @@ from astrolabe._rules.supertype import SupertypeFlag
 from astrolabe._rules.tree import ExpressionTree
 from astrolabe._rules.tree_evaluation import TreeEvaluation
 from astrolabe._rules.type_functions import Operand
+from astrolabe._rules.releases import PolarsRelease
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -1368,7 +1369,9 @@ class FoldContexts:
         """Give whether the cast of the node reads the folded literal.
 
         The conversion pass folds where the simplifier runs, and only the root
-        of the pass reads a folded input at its cast.
+        of the pass reads a folded input at its cast. Before polars 1.40.0,
+        `agg` puts no node above the expression, so the node that it wraps is
+        the root too.
 
         Args:
             name: The context.
@@ -1380,7 +1383,9 @@ class FoldContexts:
             >>> FoldContexts().visible("root of agg")
             True
         """
-        root = name not in {"nested in select", "wrapped in agg"}
+        implodes = PolarsRelease.installed() >= PolarsRelease.parse("1.40.0")
+        below = {"nested in select", "wrapped in agg"} if implodes else {"nested in select"}
+        root = name not in below
         simplify = name != "root without the simplifier"
         return root and simplify
 
@@ -1508,7 +1513,8 @@ class SliceCase:
             What the pushdown does, or a `Stopped` that hangs.
 
         Example:
-            >>> SliceCases().cases()[0].outcome()
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SliceCases().cases()[0].outcome()
             <Pushdown.DELETED: 'deleted'>
         """
         inputs = (self.value[1], self.offset[1], self.length[1])
@@ -1767,6 +1773,10 @@ def test_the_slice_pushdown_keeps_moves_or_deletes_a_slice_as_polars_does(case: 
         assert (lazy_select, lazy_agg) == (eager_select, eager_agg)
 
 
+@pytest.mark.skipif(
+    PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+    reason="polars 1.40.0 makes an offset or a length that is not a literal a place of a slice",
+)
 def test_the_slice_pushdown_hangs_where_a_cycle_reaches_the_value() -> None:
     """Check that the slices that the rules say hang do not return, in processes of their own.
 
@@ -1786,6 +1796,23 @@ def test_the_slice_pushdown_hangs_where_a_cycle_reaches_the_value() -> None:
     runs = [lone.answers(ExpressionTree().of(HangProbe.QUERIES[name])).run_select for name in names]
     assert runs == [Refused(Stop.HANGS)] * len(names)
     assert HangProbe().hangs(names) == [True] * len(names)
+
+
+@pytest.mark.skipif(
+    PolarsRelease.installed() >= PolarsRelease.parse("1.40.0"),
+    reason="polars 1.40.0 makes an offset or a length that is not a literal a place of a slice",
+)
+def test_the_slice_pushdown_of_an_older_release_ends_where_a_later_one_hangs() -> None:
+    """Check that the slices that hang from polars 1.40.0 return before it, in the rules and polars.
+
+    The older releases read an offset or a length as it is, so the pushdown
+    builds no cycle.
+    """
+    names = list(HangProbe.QUERIES)
+    cases = {case.name: case for case in SliceCases().cases()}
+    outcomes = [cases[name].outcome() for name in names if name in cases]
+    assert Stopped(Stop.HANGS) not in outcomes
+    assert HangProbe().hangs(names) == [False] * len(names)
 
 
 class LoneCounts:
@@ -2050,16 +2077,17 @@ def test_an_over_of_keys_of_one_row_runs_over_one_group_of_the_frame(
 class LoneSlices:
     """Give each sliced expression alone in a lazy `select`, and its run in polars and the rules.
 
-    The slice pushdown moves the slices of such an expression into the plan,
-    where each slice cuts a column and the slices join into one set of rows,
-    `first` and `last` and a slice inside a slice included (`SlicePushdown`).
-    The expression then runs over the rows of the plan, so a window over a
-    literal key fits them. Each window raises in an eager `select`, where it
-    has the rows of the frame.
+    From polars 1.40.0, the slice pushdown moves the slices of such an
+    expression into the plan, where each slice cuts a column and the slices
+    join into one set of rows, `first` and `last` and a slice inside a slice
+    included (`SlicePushdown`). The expression then runs over the rows of the
+    plan, so a window over a literal key fits them. Each window raises in an
+    eager `select`, where it has the rows of the frame, and in the releases
+    before 1.40.0.
 
     Example:
-        >>> LoneSlices().polars("head"), LoneSlices().rules("head")
-        ('Int64', 'Int64')
+        >>> LoneSlices().polars("head") == LoneSlices().rules("head")
+        True
     """
 
     TREES: ClassVar[dict[str, pl.Expr]] = {
@@ -2125,7 +2153,8 @@ class LoneSlices:
             The rendering of the type, `raises`, or `unchecked` where the rules do not know.
 
         Example:
-            >>> LoneSlices().rules("a head inside a head")
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     LoneSlices().rules("a head inside a head")
             'Int64'
         """
         frame = GroupBy((3, 2), QueryFlags.lazy(lone=True))

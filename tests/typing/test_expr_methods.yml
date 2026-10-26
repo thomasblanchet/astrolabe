@@ -452,6 +452,7 @@
     df.select(pl.col("u").cum_sum().over("k"))  # E: "u" has no result type at this frame's column types: cannot build list with different dtypes, and polars panics  [unsupported-dtype-op]
 
 - case: an_over_of_literal_keys_runs_over_one_group_of_the_frame
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
@@ -478,6 +479,36 @@
     reveal_type(lf.select(pl.col("x").head(2).over(pl.lit(0)).first()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'x': polars.datatypes.classes.Int64}, closed=True), None]"
     reveal_type(lf.select(pl.col("x").tail(2).over(pl.lit(0)).last()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'x': polars.datatypes.classes.Int64}, closed=True), None]"
     reveal_type(lf.select(pl.col("x").head(2).head(3).over(pl.lit(0))))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'x': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: an_over_of_literal_keys_runs_over_one_group_of_the_frame_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+        x: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+    lf: TypedLazyFrame[FrameSchema]
+
+    # Literal keys make one group of the whole frame, so the function must keep every row.
+    df.select(pl.col("x").head(3).over(pl.lit(0)))  # E: "x" has no result type at this frame's column types: the length of the window expression did not match that of the group, and polars raises ShapeError  [unsupported-dtype-op]
+    reveal_type(df.select(pl.col("x").head(9).over(pl.lit(0))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.Int64}, closed=True), None]"
+    # The mapping `join` gives each row a list of its group, and checks no rows.
+    reveal_type(df.select(pl.col("x").head(3).over(pl.lit(0), mapping_strategy="join")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(pl.col("x").head(3).over(pl.lit(0), mapping_strategy="join")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[astrolabe.frame.List[polars.datatypes.classes.Int64]]}, closed=True), None]"
+    # Before polars 1.40.0, a lazy select of one expression moves no slice into the plan, so the
+    # window holds the rows of the frame, as in an eager select.
+    reveal_type(pl.col("x").head(2).over(pl.lit(0)))  # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape] # N: Revealed type is "polars.expr.expr.Expr"
+    reveal_type(lf.select(pl.col("x").head(2).over(pl.lit(0))))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame" # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
+    reveal_type(lf.select(pl.col("x").slice(1, 3).over(pl.lit(0))))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame" # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
+    lf.select(pl.col("x").head(2).over(pl.lit(0)), pl.col("k"))  # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
+    # `first`, `last` and a slice inside a slice move no slice either.
+    reveal_type(lf.select(pl.col("x").head(2).over(pl.lit(0)).first()))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame" # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
+    reveal_type(lf.select(pl.col("x").tail(2).over(pl.lit(0)).last()))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame" # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
+    reveal_type(lf.select(pl.col("x").head(2).head(3).over(pl.lit(0))))  # N: Revealed type is "polars.lazyframe.frame.LazyFrame" # E: This call has no result at any frame: the length of the window expression did not match that of the group, and polars raises ShapeError  [invalid-call-shape]
 
 - case: steering_members_read_their_key_columns
   main: |
@@ -773,6 +804,7 @@
     df.select(pl.col("g").shift((pl.col("t") - pl.col("u")).max()))  # E: "g" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
 
 - case: an_operand_argument_that_polars_refuses_refuses_the_call
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     import polars.selectors as cs
@@ -819,6 +851,57 @@
     df.select(pl.col("g").top_k_by("g", k=pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(cs.by_name("g").bottom_k_by("g", pl.col("ls").diff().null_count()))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.int_range(pl.col("s").abs().max()))  # E: "literal" has no result type at this frame's column types: `end` must be numeric for `int_range`, got String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.int_range(0, pl.col("ls").diff().null_count()))  # E: "literal" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.int_ranges(0, pl.col("ls").diff().null_count()))  # E: "literal" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: an_operand_argument_that_polars_refuses_refuses_the_call_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        ls: List[pl.String]
+        li: List[pl.Int64]
+        s: pl.String
+        i: pl.Int64
+        b: pl.Boolean
+        g: pl.Int64
+        f: pl.Float64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # An argument that is not a condition, a mask, a key or a partition
+    # is an operand: the call has an answer only where it has one.
+    reveal_type(df.select(pl.col("b").replace(True, pl.col("li").diff().is_null().first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("g").clip(pl.col("li").diff().null_count(), 5)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("g").clip(pl.col("i").abs().max(), 5)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").str.head(pl.col("i").abs().max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(cs.by_name("g").clip(pl.col("li").diff().null_count(), 5)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("g").top_k_by("g", pl.col("li").diff().null_count())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.int_range(0, pl.col("li").diff().null_count())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.int_ranges(0, pl.col("i").abs().max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+    df.select(pl.col("b").replace(True, pl.col("ls").diff().is_null().first()))  # E: "b" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("b").replace(pl.col("ls").diff().is_null().first(), True))  # E: "b" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").replace(1, pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip(pl.col("ls").diff().null_count(), 5))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip(0, pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").is_between(pl.col("s").abs().max(), 5))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").extend_constant(pl.col("ls").diff().null_count(), 1))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("f").fill_nan(pl.col("s").abs().max()))  # E: "f" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").head(pl.col("ls").diff().null_count()))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").shift(pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").shift(pl.col("s").abs().max(), fill_value=0))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("s").str.zfill(pl.col("ls").diff().null_count()))  # E: "s" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("s").str.head(pl.col("s").abs().max()))  # E: "s" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(cs.by_name("g").clip(pl.col("s").abs().max(), 5))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(cs.by_name("g").clip(0, pl.col("ls").diff().null_count()))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").top_k_by("g", pl.col("ls").diff().null_count()))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").bottom_k_by("g", pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").top_k_by("g", k=pl.col("s").abs().max()))  # E: "g" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(cs.by_name("g").bottom_k_by("g", pl.col("ls").diff().null_count()))  # E: "g" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.int_range(pl.col("s").abs().max()))  # E: "literal" has no result type at this frame's column types: abs does not accept String, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.int_range(0, pl.col("ls").diff().null_count()))  # E: "literal" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.int_ranges(0, pl.col("ls").diff().null_count()))  # E: "literal" has no result type at this frame's column types: cannot sub two list columns with non-numeric inner types, and polars raises InvalidOperationError  [unsupported-dtype-op]
 
@@ -1826,6 +1909,7 @@
     reveal_type(df.select(pl.col("i").cast(pl.Struct({"a": pl.Categorical}))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.UInt32]]]}, closed=True), None]"
 
 - case: is_in_replace_and_cumulative_eval_follow_their_argument
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from typing import Literal
 
@@ -1869,6 +1953,56 @@
     # receiver must compare with it.
     reveal_type(df.select(pl.col("i").replace(pl.col("st").first(), 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
     df.select(pl.col("b").replace(pl.col("st").first(), True))  # E: "b" has no result type at this frame's column types: could not evaluate comparison of Boolean and Struct({'b': Boolean}), and polars raises SchemaError  [unsupported-dtype-op]
+
+    reveal_type(df.select(pl.col("i").cumulative_eval(pl.element().mean())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").cumulative_eval(pl.element().len())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.UInt32}, closed=True), None]"
+    pl.col("i").cumulative_eval(pl.element() * 2)  # E: This call has no result at any frame: `cumulative_eval` is not allowed with non-scalar output, and polars raises InvalidOperationError  [invalid-call-shape]
+
+- case: is_in_replace_and_cumulative_eval_follow_their_argument_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        s: pl.String
+        b: pl.Boolean
+        l: List[pl.Int64]
+        ls: List[pl.String]
+        i8: pl.Int8
+        st: Struct[Column[Literal["b"], pl.Int8]]
+
+    df: TypedDataFrame[FrameSchema]
+
+    reveal_type(df.select(pl.col("i").is_in([1, 2])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").is_in(pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").is_in(pl.col("ls"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    # The receiver and the elements must meet.
+    df.select(pl.col("s").is_in([1]))  # E: "s" has no result type at this frame's column types: 'is_in' cannot check for List(Int64) values in String data, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("i").is_in(pl.col("ls")))  # E: "i" has no result type at this frame's column types: 'is_in' cannot check for List(String) values in Int64 data, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("b").is_in([1]))  # E: "b" has no result type at this frame's column types: 'is_in' cannot check for List(Int64) values in Boolean data, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+    reveal_type(df.select(pl.col("i8").replace(1, 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").replace({"a": "b"})))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    # A value that is an expression reads its columns, and the frame must hold them.
+    reveal_type(df.select(pl.col("i8").replace(pl.col("i"), 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i8': polars.datatypes.classes.Int8}, closed=True), None]"
+    df.select(pl.col("i8").replace(pl.col("zz"), 1))  # E: Unknown column "zz"  [unknown-column]
+    # A list, a tuple, a set or a dictionary of values that holds an expression raises.
+    reveal_type(df.select(pl.col("i").replace([1], pl.col("i").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    pl.col("i").replace([1], [pl.col("i").first()])  # E: This call has no result at any frame: `replace` does not support `old`/`new` values of object dtype, and polars raises InvalidOperationError  [invalid-call-shape]
+    pl.col("i").replace([pl.col("i").first()], [2])  # E: This call has no result at any frame: `replace` does not support `old`/`new` values of object dtype, and polars raises InvalidOperationError  [invalid-call-shape]
+    pl.col("i").replace((1,), (pl.lit(4),))  # E: This call has no result at any frame: `replace` does not support `old`/`new` values of object dtype, and polars raises InvalidOperationError  [invalid-call-shape]
+    pl.col("i").replace({1: pl.lit(4)})  # E: This call raises TypeError before any frame meets it: not yet implemented: Nested object types  [invalid-call-shape]
+    # The new values count one value or as many values as the old values.
+    reveal_type(df.select(pl.col("i").replace([1, 2], [3, 4])))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int64}, closed=True), None]"
+    pl.col("i").replace([1, 2], [3, 4, 5])  # E: This call has no result at any frame: `new` input for `replace` must have the same length as `old` or have length 1, and polars raises InvalidOperationError  [invalid-call-shape]
+    # A struct of old values cast to a number stays a struct, and the
+    # receiver must compare with it.
+    reveal_type(df.select(pl.col("i").replace(pl.col("st").first(), 1)))  # E: "i" has no result type at this frame's column types: cannot get ref Int64 from Struct({'b': Int64}), and polars panics  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': astrolabe.frame.Unchecked}, closed=True), None]"
+    df.select(pl.col("b").replace(pl.col("st").first(), True))  # E: "b" has no result type at this frame's column types: is_in cannot check Boolean values in List(Struct({'b': Boolean})) data, and polars raises InvalidOperationError  [unsupported-dtype-op]
 
     reveal_type(df.select(pl.col("i").cumulative_eval(pl.element().mean())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Float64}, closed=True), None]"
     reveal_type(df.select(pl.col("s").cumulative_eval(pl.element().len())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.UInt32}, closed=True), None]"
@@ -2362,6 +2496,7 @@
     df.select(o=pl.lit(1).replace(1, "a"))  # E: This call has no result at any frame: conversion from String to Int32 failed, and polars raises InvalidOperationError  [invalid-call-shape]
 
 - case: a_literal_fill_value_adapts_to_the_receiver
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2389,6 +2524,36 @@
         u: pl.UInt8
 
     appended: TypedDataFrame[AppendedSchema] = df.select(pl.col("u").append(pl.lit(1)))
+
+- case: a_literal_fill_value_adapts_to_the_receiver_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        t: pl.Datetime
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        filled: pl.UInt8
+        wide: pl.UInt16
+        shifted: pl.UInt8
+        stamp: pl.Datetime
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        filled=pl.col("u").fill_null(pl.lit(1)),
+        wide=pl.col("u").fill_null(300),
+        shifted=pl.col("u").shift(1, fill_value=pl.lit(1)),
+        stamp=pl.col("t").shift(1, fill_value=pl.lit(1)),
+    )
+
+    class AppendedSchema(Columns):
+        u: pl.UInt8
+
+    appended: TypedDataFrame[AppendedSchema] = df.select(pl.col("u").append(pl.lit(1)))  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'u': Int32}), None]", variable has type "TypedDataFrame[AppendedSchema, None]")  [assignment]
 
 - case: two_literals_in_fill_null_or_append_give_a_fixed_type_by_the_form
   main: |
@@ -2420,11 +2585,27 @@
     appended: TypedDataFrame[AppendedSchema] = df.select(pl.lit(1).append(pl.lit(1.5)))
 
 - case: an_append_of_two_int_literals_whose_types_differ_is_refused
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
 
     pl.lit(1).append(pl.lit(1099511627776))  # E: This call has no result at any frame: type Int64 is incompatible with expected type Int32, and polars raises SchemaError  [invalid-call-shape]
     pl.lit(1).append(9223372036854775808)  # E: This call has no result at any frame: type UInt64 is incompatible with expected type Int32, and polars raises SchemaError  [invalid-call-shape]
+
+- case: an_append_of_two_int_literals_whose_types_differ_runs_in_a_select_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    # Before polars 1.40.0, the kernel casts both literals to the supertype of their data, so a
+    # `select` runs. In `agg`, the list of each group takes the planned type, `Int32`.
+    reveal_type(df.select(pl.lit(1).append(pl.lit(1099511627776))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Int64}, closed=True), None]"
+    df.group_by("g").agg(pl.lit(1).append(pl.lit(1099511627776)))  # E: "literal" has no result type at this frame's column types: cannot build list with different dtypes, and polars raises SchemaError  [unsupported-dtype-op]
 
 - case: clip_with_a_bound_refuses_text_boolean_and_null_columns
   main: |
@@ -2573,6 +2754,7 @@
 # tree when it collects: the query never returns where the sliced value is
 # elementwise, and the slice leaves the tree otherwise.
 - case: a_slice_by_a_column_depends_on_the_kind_of_frame
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
@@ -2586,6 +2768,23 @@
     df.select(pl.col("a").slice(pl.col("o"), 2))  # E: "a" has no result type at this frame's column types: an offset of several values, and polars raises ComputeError  [unsupported-dtype-op]
     lf.select(pl.col("a").abs().slice(pl.col("o"), 2))  # E: "a" has no result type at this frame's column types: a place below the value reads the cycle of the offset or the length, and polars hangs  [unsupported-dtype-op]
     reveal_type(lf.select(pl.col("a").slice(pl.col("o"), 2)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+    reveal_type(df.select(pl.col("a").abs().slice(pl.col("o").first(), 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
+
+- case: a_slice_by_a_column_depends_on_the_kind_of_frame_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        a: pl.Int64
+        o: pl.Int8
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    df.select(pl.col("a").slice(pl.col("o"), 2))  # E: "a" has no result type at this frame's column types: an offset of several values, and polars raises ComputeError  [unsupported-dtype-op]
+    lf.select(pl.col("a").abs().slice(pl.col("o"), 2))  # E: "a" has no result type at this frame's column types: an offset of several values, and polars raises ComputeError  [unsupported-dtype-op]
+    reveal_type(lf.select(pl.col("a").slice(pl.col("o"), 2)))  # E: "a" has no result type at this frame's column types: an offset of several values, and polars raises ComputeError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'a': astrolabe.frame.Unchecked}, closed=True), None]"
     reveal_type(df.select(pl.col("a").abs().slice(pl.col("o").first(), 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'a': polars.datatypes.classes.Int64}, closed=True), None]"
 
 # `index_of` casts the element to the type of the column without loss, and
@@ -2816,6 +3015,7 @@
     df.group_by("g").agg(pl.col("t").ewm_std(alpha=0.5) - pl.col("t"))  # E: "t" has no result type at this frame's column types: arithmetic on dtypes Float64 and String is not allowed, and polars raises InvalidOperationError  [unsupported-dtype-op]
 
 - case: an_append_casts_only_an_input_that_plans_at_another_type
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2827,6 +3027,22 @@
     df: TypedDataFrame[Rows]
     # `sqrt` of a text plans `String` and computes `Float64`, so polars adds no cast to `String`.
     df.select(pl.col("t").sqrt().append(pl.col("t")))  # E: "t" has no result type at this frame's column types: type String is incompatible with expected type Float64, and polars raises SchemaError  [unsupported-dtype-op]
+    reveal_type(df.select(pl.col("x").cast(pl.Float64).append(pl.col("t"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.String}, closed=True), None]"
+
+- case: an_append_casts_only_an_input_that_plans_at_another_type_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        t: pl.String
+        x: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    # Before polars 1.40.0, polars adds no cast. The kernel casts both inputs to the supertype of
+    # the types of their data, so the `Float64` of `sqrt` of a text casts to `String`.
+    df.select(pl.col("t").sqrt().append(pl.col("t")))
     reveal_type(df.select(pl.col("x").cast(pl.Float64).append(pl.col("t"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': polars.datatypes.classes.String}, closed=True), None]"
 
 - case: a_null_that_the_code_decides_meets_one_row_in_rolling_corr

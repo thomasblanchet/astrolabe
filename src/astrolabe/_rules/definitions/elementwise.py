@@ -14,7 +14,7 @@ from typing import ClassVar
 
 from astrolabe._rules.definitions.cast_adapters import CastNode, FunctionCasting
 from astrolabe._rules.definitions.value_adapters import CastValue
-from astrolabe._rules.definitions.definition import Definition, NullRule
+from astrolabe._rules.definitions.definition import Definition, NullRule, ShapeSince
 from astrolabe._rules.definitions.kernel_adapters import (
     AllInputs,
     OneInput,
@@ -476,7 +476,13 @@ class Elementwise:
                 include_breaks=NodeOption.flag("function", "Cut", "include_breaks"),
             ),
         ),
-        options=Shape.function(FunctionOptions.elementwise().flag(FunctionFlag.PASS_NAME_TO_APPLY)),
+        options=ShapeSince(
+            Shape.function(FunctionOptions.elementwise().flag(FunctionFlag.PASS_NAME_TO_APPLY)),
+            "1.40.0",
+            Shape.function(
+                FunctionOptions.length_preserving().flag(FunctionFlag.PASS_NAME_TO_APPLY),
+            ),
+        ),
         casts=FunctionCasting(),
         kernel=OneInput(
             FromOptions(

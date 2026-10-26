@@ -1095,6 +1095,7 @@
     df.fill_null(b"x")  # E: "b" has no result type at this frame's column types: failed to determine supertype of Boolean and Binary, and polars raises SchemaError  [unsupported-dtype-op]
 
 - case: fill_null_with_matches_supertype_false_fills_one_kind
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -1110,7 +1111,26 @@
     reveal_type(df.fill_null(300, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int32, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.fill_null(1.5, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Float64, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
 
+- case: fill_null_with_matches_supertype_false_fills_one_kind_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        u: pl.UInt8
+        i: pl.Int64
+        f: pl.Float32
+
+    df: TypedDataFrame[FrameSchema]
+    # An int fills only Int64, and a float only Float64. Before polars 1.40.0, a Null column
+    # keeps its type.
+    reveal_type(df.fill_null(300, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.fill_null(1.5, matches_supertype=False))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8, 'i': polars.datatypes.classes.Int64, 'f': polars.datatypes.classes.Float32}, closed=True), None]"
+
 - case: fill_null_with_a_value_fills_its_own_kinds_and_null
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from datetime import date, time
 
@@ -1134,7 +1154,33 @@
     reveal_type(df.fill_null(date.today()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Date, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
     reveal_type(df.fill_null(time(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Time, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
 
+- case: fill_null_with_a_value_fills_its_own_kinds_and_null_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from datetime import date, time
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        b: pl.Boolean
+        s: pl.String
+        c: pl.Categorical
+        d: pl.Date
+        t: pl.Time
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+    # A filled column keeps its type. Before polars 1.40.0, a Null column keeps its type too.
+    reveal_type(df.fill_null("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(True))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(date(2020, 1, 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(date.today()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(time(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'b': polars.datatypes.classes.Boolean, 's': polars.datatypes.classes.String, 'c': polars.datatypes.classes.Categorical, 'd': polars.datatypes.classes.Date, 't': polars.datatypes.classes.Time, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+
 - case: fill_null_with_a_temporal_value_takes_the_coarser_unit
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from datetime import UTC, datetime, timedelta, timezone
     from typing import Literal
@@ -1165,7 +1211,40 @@
     reveal_type(zf.fill_null(datetime(2020, 1, 1, tzinfo=ZoneInfo("UTC"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']], 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
     zf.fill_null(datetime(2020, 1, 1, tzinfo=None))  # E: "dz" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ms', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
 
+- case: fill_null_with_a_temporal_value_takes_the_coarser_unit_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from datetime import UTC, datetime, timedelta, timezone
+    from typing import Literal
+    from zoneinfo import ZoneInfo
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+    from astrolabe.frame import Datetime, Duration
+
+    class Spans(Columns):
+        n: pl.Null
+        du: Duration[Literal["ns"]]
+        dm: Duration[Literal["ms"]]
+        dt: Datetime[Literal["ns"], None]
+
+    class Stamps(Columns):
+        n: pl.Null
+        dz: Datetime[Literal["ms"], Literal["UTC"]]
+
+    lf: TypedLazyFrame[Spans]
+    zf: TypedDataFrame[Stamps]
+    # A timedelta is a Duration('us'), and a naive datetime a Datetime('us').
+    reveal_type(lf.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'n': polars.datatypes.classes.Null, 'du': astrolabe.frame.Duration[Literal['us']], 'dm': astrolabe.frame.Duration[Literal['ms']], 'dt': astrolabe.frame.Datetime[Literal['ns'], None]}, closed=True), None]"
+    reveal_type(lf.fill_null(datetime(2020, 1, 1)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'n': polars.datatypes.classes.Null, 'du': astrolabe.frame.Duration[Literal['ns']], 'dm': astrolabe.frame.Duration[Literal['ms']], 'dt': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+    # The call states the time zone of the value, which a column must share.
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, tzinfo=UTC)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Stamps, {'n': polars.datatypes.classes.Null, 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, 0, 0, 0, 0, timezone.utc)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Stamps, {'n': polars.datatypes.classes.Null, 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    reveal_type(zf.fill_null(datetime(2020, 1, 1, tzinfo=ZoneInfo("UTC"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.Stamps, {'n': polars.datatypes.classes.Null, 'dz': astrolabe.frame.Datetime[Literal['ms'], Literal['UTC']]}, closed=True), None]"
+    zf.fill_null(datetime(2020, 1, 1, tzinfo=None))  # E: "dz" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='ms', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
+
 - case: fill_null_on_an_open_frame_retypes_each_kind_of_the_remainder
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from datetime import timedelta
 
@@ -1184,6 +1263,30 @@
     # depend on the column, so these kinds keep only their kind.
     reveal_type(wide.fill_null(300))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Int8]], polars.datatypes.classes.Int16], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], polars.datatypes.classes.Int32], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.UInt8]], polars.datatypes.classes.UInt16], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['u']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int8 | polars.datatypes.classes.Null | polars.datatypes.classes.UInt8]]]]]]]]]"
     reveal_type(wide.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Null]], astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]], polars.datatypes.classes.Duration], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.SelOr[astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]], astrolabe.remainder.OfType[polars.datatypes.classes.Null]]]]]]"
+    # The rules have no data type of the kind Extension, so its columns are Unchecked.
+    reveal_type(wide.fill_null(strategy="forward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]]]]"
+    reveal_type(wide.fill_null(pl.lit("x")))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: fill_null_on_an_open_frame_retypes_each_kind_of_the_remainder_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from datetime import timedelta
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    Rest = other_columns()
+
+    wide: TypedDataFrame[FrameSchema, Rest]
+    # Each kind of the remainder that the value changes takes its own type.
+    reveal_type(wide.fill_null("x"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), main.Rest]"
+    # The precision and the scale of a Decimal, and the unit of a Duration,
+    # depend on the column, so these kinds keep only their kind.
+    reveal_type(wide.fill_null(300))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt16}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Decimal]], polars.datatypes.classes.Decimal], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Int8]], polars.datatypes.classes.Int16], astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.UInt8]], polars.datatypes.classes.UInt16], astrolabe.remainder.Only[main.Rest, astrolabe.remainder.SelAnd[astrolabe.remainder.SelNot[astrolabe.remainder.OneOf[Literal['u']]], astrolabe.remainder.SelNot[astrolabe.remainder.OfType[polars.datatypes.classes.Decimal | polars.datatypes.classes.Int8 | polars.datatypes.classes.UInt8]]]]]]]]"
+    reveal_type(wide.fill_null(timedelta(1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]]], polars.datatypes.classes.Duration], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[astrolabe.frame.Duration[Literal['ms']] | astrolabe.frame.Duration[Literal['ns']] | astrolabe.frame.Duration[Literal['us']]]]]]"
     # The rules have no data type of the kind Extension, so its columns are Unchecked.
     reveal_type(wide.fill_null(strategy="forward"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'u': polars.datatypes.classes.UInt8}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]], astrolabe.frame.Unchecked], astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension]]]]"
     reveal_type(wide.fill_null(pl.lit("x")))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
@@ -1287,6 +1390,7 @@
         items.fill_null(strategy=which)  # E: "l" has no result type at this frame's column types: the fill strategy does not accept List where the column holds a null, and polars raises InvalidOperationError  [unsupported-dtype-op]
 
 - case: fill_null_falls_back_where_the_call_does_not_fix_the_answer
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     from datetime import UTC, date, datetime
     from decimal import Decimal
@@ -1354,6 +1458,81 @@
     reveal_type(wide.fill_null(pl.col("zz")))  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
     text: Literal["x"] = "x"
     reveal_type(df.fill_null(text))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.String, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    either: int | str = "x"
+    reveal_type(df.fill_null(either))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    value: Any = 1
+    reveal_type(df.fill_null(value))  # E: The result of "fill_null" has no known schema: an argument is not typed, so its columns and types are unknown  [implicitly-untyped]  # N: set allow_unproven = "asserted" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "asserted"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    df.fill_null(pl.col("zz"))  # E: Unknown column "zz"  [unknown-column]
+
+- case: fill_null_falls_back_where_the_call_does_not_fix_the_answer_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    from datetime import UTC, date, datetime
+    from decimal import Decimal
+    from enum import IntEnum
+    from typing import Any, Literal
+    from zoneinfo import ZoneInfo
+
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class FrameSchema(Columns):
+        n: pl.Null
+        u: pl.UInt8
+
+    class Flag(IntEnum):
+        A = 1
+        B = 300
+
+    Rest = other_columns()
+
+    df: TypedDataFrame[FrameSchema]
+    wide: TypedDataFrame[FrameSchema, Rest]
+    # A variable does not fix the value of a number. A column then takes the
+    # type that every value that the checker tries gives, else Unchecked.
+    count = 3
+    reveal_type(df.fill_null(count))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Null, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    share = 0.5
+    reveal_type(df.fill_null(share))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Null, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Polars reads an int subclass, such as an IntEnum member, by its value.
+    flag: Flag = Flag.B
+    reveal_type(df.fill_null(flag))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Null, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    # A variable does not fix a date from a datetime.
+    cutoff = date(2020, 1, 1)
+    reveal_type(df.fill_null(cutoff))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select("u").fill_null(cutoff))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # Before polars 1.40.0, a datetime leaves a Null column as it is, whatever its time zone.
+    reveal_type(df.fill_null(datetime.now()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # A variable, a zone in a variable and a key in a variable do not fix the zone either.
+    moment = datetime(2020, 1, 1)
+    zone = ZoneInfo("UTC")
+    key = "UTC"
+    reveal_type(df.fill_null(moment))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(datetime(2020, 1, 1, tzinfo=zone)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(datetime(2020, 1, 1, tzinfo=ZoneInfo(key))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.select("u").fill_null(datetime.now()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    # A Decimal value and a list value fill every column, and a plain
+    # expression fills each one with a data type that the checker does not know.
+    # Each strategy of a variable keeps each type here, and each one refuses `limit=`.
+    reveal_type(df.fill_null(Decimal("1.5")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Decimal[Literal[38], Literal[1]], 'u': astrolabe.frame.Decimal[Literal[38], Literal[1]]}, closed=True), None]"
+    reveal_type(df.fill_null([1]))  # E: "u" has no result type at this frame's column types: failed to determine supertype of UInt8 and List(Int64), and polars raises SchemaError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.List[polars.datatypes.classes.Int64], 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    def plain() -> pl.Expr:
+        return pl.col("u")
+
+    reveal_type(df.fill_null(plain()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked, 'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    strategy: Literal["min", "max"] = "min"
+    reveal_type(df.fill_null(strategy=strategy))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
+    reveal_type(df.fill_null(strategy=strategy, limit=1))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    exact: bool = True
+    reveal_type(df.fill_null(1, matches_supertype=exact))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # Polars refuses a Datetime column of another zone in the remainder and runs
+    # beside one of this zone, so the result depends on the caller.
+    reveal_type(wide.fill_null(datetime(2020, 1, 1, tzinfo=UTC)))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    # The remainder can hold a kind that the expression refuses at every data type.
+    reveal_type(wide.fill_null(pl.lit(1)))  # E: The result of "fill_null" has no known schema: the result depends on the undeclared columns the caller passes  [implicitly-untyped]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    reveal_type(wide.fill_null(pl.col("zz")))  # E: Column "zz" is not declared and cannot be proven to exist  [undeclared-column]  # N: set allow_unproven = "possible" in [tool.astrolabe] to allow this, or set [tool.astrolabe.allow_unproven_overrides] fill_null = "possible"  # N: Revealed type is "polars.dataframe.frame.DataFrame"
+    text: Literal["x"] = "x"
+    reveal_type(df.fill_null(text))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict(main.FrameSchema, {'n': polars.datatypes.classes.Null, 'u': polars.datatypes.classes.UInt8}, closed=True), None]"
     either: int | str = "x"
     reveal_type(df.fill_null(either))  # N: Revealed type is "polars.dataframe.frame.DataFrame"
     value: Any = 1

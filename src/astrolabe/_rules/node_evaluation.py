@@ -59,6 +59,7 @@ from astrolabe._rules.kernels.dispatch import Data, RunCast
 from astrolabe._rules.kernels.nodes import Mask
 from astrolabe._rules.options import Height, KernelLength, NodeKind, RowForm, Shape
 from astrolabe._rules.type_functions import ExprFields, Operand, ProjectionSchema
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -1166,6 +1167,48 @@ class NodeOutput:
     literal: Operand | None = None
 
 
+class AggImplode:
+    """Say whether the list that `agg` builds around a node is a node of the plan.
+
+    From polars 1.40.0, the conversion puts an `implode` node above each
+    expression of `agg` that is not one value, so that expression is not the
+    root of the cast pass. Before that release, only the schema shows the
+    list, and the expression stays the root.
+
+    Example:
+        >>> AggImplode()._schema_only()
+        False
+    """
+
+    @polars_releases
+    def is_node(self) -> bool:
+        """Say whether the list is a node of the plan: it is.
+
+        Returns:
+            Always `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     AggImplode().is_node()
+            True
+        """
+        return True
+
+    @is_node.before("1.40.0")
+    def _schema_only(self) -> bool:
+        """Say that the older releases show the list in the schema only.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> AggImplode()._schema_only()
+            False
+        """
+        return False
+
+
 class NodeEvaluation:
     """Give the four answers of a node whose inputs are leaves, from its definition.
 
@@ -1477,7 +1520,10 @@ class NodeEvaluation:
         The planner wraps the node in a list where its height is not one value.
         The node is then not the root, and the cast pass visits it twice. While
         polars plans, the second visit reads each node below at its type after
-        its own visits (`_visited`).
+        its own visits (`_visited`). Before polars 1.40.0, the conversion adds no
+        node for the list, so the node stays the root of the cast pass, and the
+        run builds a list only where the groups of the node hold more than one
+        value (`AggImplode`).
 
         Args:
             planner: The planner type of the node.
@@ -1494,10 +1540,11 @@ class NodeEvaluation:
         heights = [leaf.height() for leaf in self._leaves]
         wrapped = self._shape.wraps_in_agg(heights)
         planned = ProjectionSchema().agg(planner, scalar=not wrapped)
+        inner = wrapped and AggImplode().is_node()
         return self._context(
             planned,
-            lambda inputs: self._agg_steps(inputs, wrapped=wrapped),
-            lambda steps: self._run_agg(steps, wrapped=wrapped),
+            lambda inputs: self._agg_steps(inputs, wrapped=inner),
+            lambda steps: self._run_agg(steps, wrapped=inner),
             self._visited(),
         )
 
@@ -2099,7 +2146,8 @@ class NodeEvaluation:
 
         Args:
             steps: The steps of the cast pass on each input.
-            wrapped: Whether the planner wraps the node in a list.
+            wrapped: Whether the conversion wraps the node in an `implode`, so
+                that the node is not the root of the cast pass.
 
         Returns:
             The type of the column of `agg`.

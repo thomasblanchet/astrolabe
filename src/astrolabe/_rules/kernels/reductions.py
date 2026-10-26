@@ -410,8 +410,9 @@ class IndexOf:
 
     The cast pass casts the element to the type of the series. The kernel then
     checks that the element holds exactly one value, and that it has the type
-    of the series. Each check raises an `InvalidOperationError`. The place is
-    an index, `UInt32`, or a null.
+    of the series. Each check raises an `InvalidOperationError`. From polars
+    1.40.0, the conversion refuses an element of more than one row before the
+    kernel runs. The place is an index, `UInt32`, or a null.
 
     Example:
         >>> inputs = [Data(DType("Int8")), Data(DType("Int8"))]
@@ -444,8 +445,9 @@ class IndexOf:
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: needle of `index_of` ...
         """
         series, element = inputs[0], inputs[1]
-        if lengths and lengths[1] != 1:  # pragma: no cover -- the conversion checks it first
-            message = f"needle of `index_of` can only contain a single value, found {lengths[1]}"
+        if lengths and lengths[1] != 1:
+            count = lengths[1]
+            message = f"needle of `index_of` can only contain a single value, found {count} values"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         if not series.dtype.same(element.dtype):
             message = f"Cannot perform index_of with mismatching datatypes: {series.dtype!r}"
@@ -855,13 +857,14 @@ class GroupQuantile:
 
     The kernel reads its quantile over the whole frame, and checks it first:
     one row, and a number (`QuantileValue`), where a type that is not a
-    number raises a `SchemaError` and a null raises a `ComputeError`. A
-    literal series is one value, so it takes the quantile of a whole series
-    (`Quantile`). Otherwise each group gives its quantile, and a type that
-    has none gives a null of its type. A quantile outside of 0 and 1 gives a
-    null for each group, and an integer then keeps its type, where it gives
-    `Float64` otherwise. So the value of a quantile column decides the type
-    of an integer.
+    number raises a `SchemaError` and a null raises a `ComputeError`. Before
+    polars 1.40.0, it reads the quantile as a `select` does, with no check of
+    its type (`_extracted`). A literal series is one value, so it takes the
+    quantile of a whole series (`Quantile`). Otherwise each group gives its
+    quantile, and a type that has none gives a null of its type. A quantile
+    outside of 0 and 1 gives a null for each group, and an integer then keeps
+    its type, where it gives `Float64` otherwise. So the value of a quantile
+    column decides the type of an integer.
 
     Example:
         >>> from astrolabe._rules.type_functions import Operand
@@ -898,6 +901,10 @@ class GroupQuantile:
     ) -> DType:
         """Give the type of the output.
 
+        It raises `PolarsRefusal` where the quantile is not a number or is
+        null, or where a literal series meets a literal quantile outside of 0
+        and 1.
+
         Args:
             inputs: The data of the series and of the quantile.
             lengths: The number of rows of each input in a group.
@@ -907,8 +914,6 @@ class GroupQuantile:
             The type.
 
         Raises:
-            PolarsRefusal: The quantile is not a number or is null, or a
-                literal series meets a literal quantile outside of 0 and 1.
             UndecidedError: The series is an integer, and the quantile is
                 not a literal.
 
@@ -924,13 +929,7 @@ class GroupQuantile:
         series, quantile = inputs[0], inputs[1]
         reader = QuantileValue()
         reader.single(lengths)
-        if not Is.numeric(quantile.dtype):
-            message = (
-                f"expected expression of dtype 'numeric' for quantile, got '{quantile.dtype!r}'"
-            )
-            raise PolarsRefusal(ErrorClass.SCHEMA, message)
-        if quantile.nulls:
-            raise PolarsRefusal(ErrorClass.COMPUTE, reader.NULL)
+        self._number(quantile, computed)
         if computed and computed[0].literal:
             return Quantile().output([series, quantile], (), computed)
         value = reader.of(computed)
@@ -938,3 +937,48 @@ class GroupQuantile:
             question = "the quantile of an integer, whose type the value of the quantile decides"
             raise UndecidedError(Undecided.VALUES, question)
         return (self.OUTSIDE if reader.outside(value) else self.GROUPS).output(series)
+
+    @polars_releases
+    def _number(self, quantile: Data, computed: Sequence[Operand]) -> None:
+        """Check that the quantile is a number that is not null.
+
+        Args:
+            quantile: The data of the quantile.
+            computed: Each input as the run computes it, which the check does not read.
+
+        Raises:
+            PolarsRefusal: The quantile is not a number, or it is null.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     GroupQuantile()._number(Data(DType("Int8"), nulls=True), ())
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: could not extract number ...
+        """
+        del computed
+        if not Is.numeric(quantile.dtype):
+            message = (
+                f"expected expression of dtype 'numeric' for quantile, got '{quantile.dtype!r}'"
+            )
+            raise PolarsRefusal(ErrorClass.SCHEMA, message)
+        if quantile.nulls:
+            raise PolarsRefusal(ErrorClass.COMPUTE, QuantileValue.NULL)
+
+    @_number.before("1.40.0")
+    def _extracted(self, quantile: Data, computed: Sequence[Operand]) -> None:
+        """Check that the quantile gives a number, as a `select` reads it.
+
+        The older releases read the quantile with no check of its type
+        (`QuantileValue.extracted`).
+
+        Args:
+            quantile: The data of the quantile.
+            computed: Each input as the run computes it.
+
+        Example:
+            >>> GroupQuantile()._extracted(Data(DType("Boolean")), ())
+        """
+        QuantileValue().extracted(quantile, computed)

@@ -56,6 +56,7 @@ from astrolabe._rules.node_evaluation import (
 )
 from astrolabe._rules.operators import Operator
 from astrolabe._rules.options import Height, KernelLength, NodeKind, RowForm, Shape
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.tree import ExpressionTree, KeptName, WindowKeys
 from astrolabe._rules.type_functions import ExprFields, Operand
 
@@ -2074,6 +2075,7 @@ class TreeEvaluation:
         lifted = self._lifted(tree, answers)
         return LoneCount(self, self._frame.flags).counted(tree, lifted)
 
+    @polars_releases
     def _lifted(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
         """Give the answers, with the run of a `select` whose slices polars moves into the plan.
 
@@ -2100,11 +2102,14 @@ class TreeEvaluation:
             >>> tree = ExpressionTree().of(pl.col("x").head(2).over(pl.lit(0)))
             >>> TreeEvaluation(columns, GroupBy((3, 2))).answers(tree).run_select
             raises ShapeError
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> lone = TreeEvaluation(columns, GroupBy((3, 2), QueryFlags.lazy(lone=True)))
-            >>> lone.answers(tree).run_select
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     lone.answers(tree).run_select
             Int8
             >>> after_first = pl.col("x").head(2).over(pl.lit(0)).first()
-            >>> lone.answers(ExpressionTree().of(after_first)).run_select
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     lone.answers(ExpressionTree().of(after_first)).run_select
             Int8
         """
         try:
@@ -2115,6 +2120,31 @@ class TreeEvaluation:
             return answers
         moved = self._moved(*pushed.bounds).answers(pushed.tree)
         return replace(answers, run_select=moved.run_select)
+
+    @_lifted.before("1.40.0")
+    def _kept_slices(self, tree: TreeNode, answers: CellAnswers) -> CellAnswers:
+        """Give the answers as they are: the older releases move no slice of an expression.
+
+        Args:
+            tree: The root of the tree, which the answers already read.
+            answers: The answers of the tree.
+
+        Returns:
+            The same answers.
+
+        Example:
+            >>> import polars as pl
+            >>> from astrolabe._rules.execution import QueryFlags
+            >>> from astrolabe._rules.tree import ExpressionTree
+            >>> columns = {"x": ColumnLeaf(DType("Int8"), RowForm.PER_ROW)}
+            >>> tree = ExpressionTree().of(pl.col("x").head(2).over(pl.lit(0)))
+            >>> lone = TreeEvaluation(columns, GroupBy((3, 2), QueryFlags.lazy(lone=True)))
+            >>> answers = lone.answers(tree)
+            >>> lone._kept_slices(tree, answers) is answers
+            True
+        """
+        del tree
+        return answers
 
     def _moved(self, offset: int, length: int | None) -> TreeEvaluation:
         """Give the evaluation over the rows that a slice in the plan keeps.

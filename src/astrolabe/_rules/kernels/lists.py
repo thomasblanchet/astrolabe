@@ -963,6 +963,11 @@ class IsIn:
             >>> null = Data(DType("List", (DType("Int32"),)), nulls=True)
             >>> IsIn().output(wide, null, [5, 1])
             Boolean
+            >>> structs = Data(DType("List", (DType("Struct", ((("b", DType("Int8")),),)),)))
+            >>> IsIn().output(Data(DType("Boolean")), structs, [5, 1])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: is_in cannot check ...
         """
         if not Spread().fits(lengths, 0, 1):
             message = "the values and the collection have other lengths"
@@ -973,9 +978,7 @@ class IsIn:
             message = f"is_in cannot check {value.dtype!r} values in {collection.dtype!r} data"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         accepted = self.INNER.get(value.dtype.name)
-        if (  # pragma: no cover -- the cast pass casts the collection first
-            accepted is not None and collection.dtype.inner().name not in accepted
-        ):
+        if accepted is not None and collection.dtype.inner().name not in accepted:
             message = f"is_in cannot check {value.dtype!r} values in {collection.dtype!r} data"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         one_row = collection.one_row or (len(lengths) > 1 and lengths[1] == 1)
@@ -1267,8 +1270,10 @@ class Sampled:
 
     The kernel reads its first input as a list. A sample of a number of values
     casts the number to `UInt32` with a strict cast (`StrictCount`). A sample
-    of a fraction casts the fraction to `Float64`, and a fraction outside 0 to
-    1 raises a `ComputeError` where the sample takes each value once. The two
+    of a fraction casts the fraction to `Float64`, and from polars 1.40.0 a
+    fraction outside 0 to 1 raises a `ComputeError` where the sample takes
+    each value once. Before that release, a fraction above 1 asks for more
+    values than a list holds, which is a fact of the data. The two
     inputs have one length, or one of them has one row, or the kernel raises a
     `ShapeError`. The value of a literal is in the code, so a literal that does
     not fit raises at every run. A number larger than a list is a fact of the
@@ -1328,6 +1333,7 @@ class Sampled:
             raise PolarsRefusal(ErrorClass.SHAPE, message)
         return values.dtype
 
+    @polars_releases
     def _fraction(self, size: Operand | None) -> None:
         """Refuse a literal fraction outside 0 to 1, where the sample takes each value once.
 
@@ -1347,6 +1353,19 @@ class Sampled:
         if not 0.0 <= float(value) <= 1.0:
             message = f"fraction must be between 0.0 and 1.0, got: {value}"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
+
+    @_fraction.before("1.40.0")
+    def _unchecked(self, size: Operand | None) -> None:
+        """Check a fraction in the older releases: no check.
+
+        Args:
+            size: The fraction as the run computes it, or `None` where it is not known.
+
+        Example:
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> Sampled(fraction=True, replaces=False)._unchecked(Operand.of_value(3))
+        """
+        del size
 
 
 class Sliced:

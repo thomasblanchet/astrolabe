@@ -582,6 +582,7 @@
 
 
 - case: a_literal_operand_of_a_value_horizontal_adapts_to_the_column_beside_it
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -598,6 +599,30 @@
         first_non_null: pl.UInt8
 
     narrowed: TypedDataFrame[NarrowedSchema] = df.select(
+        largest=pl.max_horizontal(pl.col("u"), pl.lit(1)),
+        smallest=pl.min_horizontal(pl.col("u"), pl.lit(1)),
+        total=pl.sum_horizontal(pl.col("u"), pl.lit(1)),
+        first_non_null=pl.coalesce(pl.col("u"), pl.lit(1)),
+    )
+
+- case: a_literal_operand_of_a_value_horizontal_adapts_to_the_column_beside_it_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        largest: pl.UInt8
+        smallest: pl.UInt8
+        total: pl.UInt8
+        first_non_null: pl.UInt8
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'largest': Int32, 'smallest': Int32, 'total': Int32, 'first_non_null': UInt8}), None]", variable has type "TypedDataFrame[NarrowedSchema, None]")  [assignment]
         largest=pl.max_horizontal(pl.col("u"), pl.lit(1)),
         smallest=pl.min_horizontal(pl.col("u"), pl.lit(1)),
         total=pl.sum_horizontal(pl.col("u"), pl.lit(1)),
@@ -624,6 +649,7 @@
     )
 
 - case: a_value_horizontal_refuses_a_literal_beside_a_temporal_column
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, Unchecked
@@ -637,6 +663,22 @@
         t: Unchecked
 
     narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.max_horizontal("t", pl.lit(1)))  # E: "t" has no result type at this frame's column types: got invalid or ambiguous dtypes: Datetime(time_unit='us', time_zone=None), dyn int, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: a_value_horizontal_refuses_a_literal_beside_a_temporal_column_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        t: pl.Datetime
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        t: Unchecked
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(pl.max_horizontal("t", pl.lit(1)))  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'t': Int64}), None]", variable has type "TypedDataFrame[NarrowedSchema, None]")  [assignment]
 
 - case: literals_alone_at_a_join_point_give_a_fixed_type_by_the_form
   main: |
@@ -676,6 +718,7 @@
     pl.coalesce(pl.lit(1), pl.lit(300), pl.lit(9223372036854775808))  # E: This call has no result at any frame: cannot get ref Int32 from UInt64, and polars panics  [invalid-call-shape]
 
 - case: two_literals_before_a_column_keep_the_bucket_of_the_first
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -699,7 +742,33 @@
         after_null=pl.coalesce(pl.col("n"), pl.lit(300)) + pl.col("u"),
     )
 
+- case: two_literals_before_a_column_keep_the_bucket_of_the_first_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        u: pl.UInt8
+        n: pl.Null
+
+    df: TypedDataFrame[FrameSchema]
+
+    class NarrowedSchema(Columns):
+        largest: pl.UInt8
+        first_non_null: pl.UInt8
+        between: pl.UInt16
+        after_null: pl.Int32
+
+    narrowed: TypedDataFrame[NarrowedSchema] = df.select(  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'largest': Int32, 'first_non_null': UInt8, 'between': Int32, 'after_null': Int32}), None]", variable has type "TypedDataFrame[NarrowedSchema, None]")  [assignment]
+        largest=pl.max_horizontal(pl.lit(1), pl.lit(300), pl.col("u")),
+        first_non_null=pl.coalesce(pl.lit(1), pl.lit(300), pl.col("u")),
+        between=pl.max_horizontal(pl.lit(1), pl.col("u"), pl.lit(300)),
+        after_null=pl.coalesce(pl.col("n"), pl.lit(300)) + pl.col("u"),
+    )
+
 - case: a_number_variable_operand_of_a_join_answers_where_every_bucket_agrees
+  skip: __import__("tests.releases").releases.polars_before("1.40.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -718,6 +787,38 @@
     count: int = 2**40
     reveal_type(df.select(pl.max_horizontal(pl.col("f"), share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.select(pl.min_horizontal(count, pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("f"), count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(share, pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.sum_horizontal(pl.col("u"), share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Alone, or after a Null column, each value has a type of its own.
+    reveal_type(df.select(pl.sum_horizontal(pl.col("n"), share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(pl.col("n"), count, pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Float32}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+    reveal_type(df.select(pl.coalesce(share) + pl.col("u")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': astrolabe.frame.Unchecked}, closed=True), None]"
+    # Arithmetic of two literals of unknown values has no known type after a
+    # Null column.
+    reveal_type(df.select(pl.sum_horizontal(pl.col("n"), pl.lit(1) + pl.lit(1))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Int32}, closed=True), None]"
+
+- case: a_number_variable_operand_of_a_join_answers_where_every_bucket_agrees_before_polars_1_40
+  skip: not __import__("tests.releases").releases.polars_before("1.40.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        f: pl.Float32
+        u: pl.UInt8
+        n: pl.Null
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A float variable can hold any int or a float, and an int variable any
+    # int. The join answers where every value that the checker tries gives
+    # one data type.
+    share: float = 1
+    count: int = 2**40
+    reveal_type(df.select(pl.max_horizontal(pl.col("f"), share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.select(pl.min_horizontal(count, pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float64}, closed=True), None]"
     reveal_type(df.select(pl.coalesce(pl.col("f"), count)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'f': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.select(pl.coalesce(share, pl.col("f"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'literal': polars.datatypes.classes.Float32}, closed=True), None]"
     reveal_type(df.select(pl.sum_horizontal(pl.col("u"), share)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Unchecked}, closed=True), None]"

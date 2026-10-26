@@ -1387,7 +1387,8 @@ class FunctionClosures:
         of the bin. The type is an `Enum` of the labels, or with
         `include_breaks` a struct of the upper break and the label of each
         value. The labels are the labels of the call, or the intervals of the
-        breaks in the order of the call (`CutLabels`).
+        breaks in the order of the call (`CutBins`). Before polars 1.40.0,
+        the labels are `Categorical` (`CutBins.dtype`).
 
         Args:
             breaks: The breaks, in the order of the call.
@@ -1400,9 +1401,11 @@ class FunctionClosures:
             than the breaks, or where two labels are equal.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> closures = FunctionClosures()
             >>> cut = closures.cut([2.0, 0.0], None, left_closed=False, include_breaks=False)
-            >>> cut(DType("Int8"))
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     cut(DType("Int8"))
             Enum(categories=['(-inf, 2]', '(2, 0]', '(0, inf]'])
         """
         names = None if labels is None else tuple(labels)
@@ -1424,7 +1427,8 @@ class CutBins:
     The type function writes the intervals of the breaks in the order of the
     call, and the kernel in their sorted order (`sorted`). So with breaks that
     are not sorted, the planner type and the run type are two `Enum` types
-    with other categories.
+    with other categories. Before polars 1.40.0, the type is `Categorical`
+    whatever the labels (`dtype`).
 
     Example:
         >>> CutBins((0.0, 2.0), None, left_closed=False, include_breaks=False).names()
@@ -1493,6 +1497,7 @@ class CutBins:
             raise PolarsRefusal(ErrorClass.SHAPE, "provide len(breaks) + 1 labels")
         return self.labels
 
+    @polars_releases
     def dtype(self) -> DType:
         """Give the type of the output: an `Enum` of the labels, or a struct of a break and a label.
 
@@ -1503,10 +1508,14 @@ class CutBins:
             PolarsRefusal: Two labels are equal, so they do not make an `Enum`.
 
         Example:
-            >>> CutBins((0.0,), ("a", "b"), left_closed=False, include_breaks=True).dtype()
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> pair = CutBins((0.0,), ("a", "b"), left_closed=False, include_breaks=True)
+            >>> equal = CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=False)
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     pair.dtype()
             Struct({'breakpoint': Float64, 'category': Enum(categories=['a', 'b'])})
-            >>> CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=False).dtype()
-            ... # doctest: +ELLIPSIS
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     equal.dtype()  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: ComputeError: the categories of an Enum ...
@@ -1515,7 +1524,34 @@ class CutBins:
         if len(set(names)) != len(names):
             message = "the categories of an Enum must be unique"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
-        categories = DType("Enum", (names,))
+        return self._wrapped(DType("Enum", (names,)))
+
+    @dtype.before("1.40.0")
+    def _categorical(self) -> DType:
+        """Give the type of the output in the older releases: `Categorical`, whatever the labels.
+
+        Returns:
+            `Categorical`, or a struct of a break and a `Categorical`.
+
+        Example:
+            >>> CutBins((0.0,), ("a", "a"), left_closed=False, include_breaks=True)._categorical()
+            Struct({'breakpoint': Float64, 'category': Categorical})
+        """
+        return self._wrapped(DType("Categorical"))
+
+    def _wrapped(self, categories: DType) -> DType:
+        """Give the type of the labels, in a struct with the break where the call includes it.
+
+        Args:
+            categories: The type of the labels.
+
+        Returns:
+            The type of the output.
+
+        Example:
+            >>> CutBins((), None, left_closed=False, include_breaks=False)._wrapped(DType("Int8"))
+            Int8
+        """
         if not self.include_breaks:
             return categories
         return DType("Struct", ((("breakpoint", DType("Float64")), ("category", categories)),))
@@ -3760,7 +3796,8 @@ class ExprFields:
 
         Polars casts both inputs to their supertype when it converts the
         expression, before the node types them, so the planner reads that
-        supertype. Two inputs with no supertype refuse the plan.
+        supertype. Two inputs with no supertype refuse the plan. Before
+        polars 1.40.0, the node types its inputs itself (`_joined`).
 
         Args:
             values: The type of the first input.
@@ -3770,10 +3807,54 @@ class ExprFields:
             The supertype.
 
         Example:
-            >>> ExprFields().append(DType("Categorical"), DType("String"))
+            >>> ExprFields().append(DType("Int8"), DType("Int16"))
+            Int16
+        """
+        return self._joined(values, Supertype().require(values, other))
+
+    @polars_releases
+    def _joined(self, values: DType, joined: DType) -> DType:
+        """Give the type of `append` from the supertype of its inputs: that supertype.
+
+        Args:
+            values: The type of the first input.
+            joined: The supertype of the two inputs.
+
+        Returns:
+            The supertype.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     ExprFields()._joined(DType("Categorical"), DType("String"))
             String
         """
-        return Supertype().require(values, other)
+        del values
+        return joined
+
+    @_joined.before("1.40.0")
+    def _mapped(self, values: DType, joined: DType) -> DType:
+        """Give the type of `append` in the older releases, as the node maps its inputs to one type.
+
+        A literal type of the supertype takes the type that it takes alone,
+        and a `Categorical` beside text keeps its categories.
+
+        Args:
+            values: The type of the first input.
+            joined: The supertype of the two inputs.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> ExprFields()._mapped(DType("Categorical"), DType("String"))
+            Categorical
+            >>> ExprFields()._mapped(DType.dynamic_int(1), DType.dynamic_int(1))
+            Int32
+        """
+        if values.name == "Categorical" and joined.name == "String":
+            return values
+        return joined.materialized() if Is.unknown(joined) else joined
 
     def when(self, predicate: DType, truthy: DType, falsy: DType) -> DType:
         """Give the type of a `when` node from its three inputs: the type of `ternary`.
@@ -3964,21 +4045,55 @@ class AggFields:
 
         Returns:
             `UInt32` for a `Boolean`, `Int64` for a small integer, a decimal
-            of the largest precision, and the input type otherwise.
+            of the largest precision (`_decimal`), and the input type otherwise.
 
         Raises:
             PolarsRefusal: The input is text, binary data, a list, an array or a struct.
 
         Example:
-            >>> AggFields().sum(DType("Decimal", (10, 2)))
-            Decimal(precision=38, scale=2)
+            >>> AggFields().sum(DType("UInt8"))
+            Int64
         """
         if dtype.name in self.UNSUMMABLE:
             message = f"`sum` operation not supported for dtype `{dtype!r}`"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         if dtype.name == "Decimal":
-            return Decimals().widest(Parameter().integer(dtype, 1))
+            return self._decimal(dtype)
         return FieldsMapper(dtype).sum_dtype()
+
+    @polars_releases
+    def _decimal(self, dtype: DType) -> DType:
+        """Give the type of the sum of a decimal: the decimal of the largest precision at its scale.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The decimal of precision 38.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     AggFields()._decimal(DType("Decimal", (10, 2)))
+            Decimal(precision=38, scale=2)
+        """
+        return Decimals().widest(Parameter().integer(dtype, 1))
+
+    @_decimal.before("1.40.0")
+    def _kept(self, dtype: DType) -> DType:
+        """Give the type of the sum of a decimal in the older releases: the decimal itself.
+
+        Args:
+            dtype: The decimal.
+
+        Returns:
+            The same decimal.
+
+        Example:
+            >>> AggFields()._kept(DType("Decimal", (10, 2)))
+            Decimal(precision=10, scale=2)
+        """
+        return dtype
 
     def mean(self, dtype: DType) -> DType:
         """Give the type of `mean`, `median` and `std`.

@@ -7,7 +7,8 @@ types again. It reads the nulls of the value and the lengths of the two inputs:
 - A value of one row beside a longer fill gives the fill where the value is
   null. Otherwise it spreads the value to the length of the fill.
 - A value with no null comes back as it is.
-- A value of the type `Null` gives the fill.
+- A value of the type `Null` gives the fill. Before polars 1.40.0, it takes
+  the last path and stays `Null` (`FillNull._of_nulls`).
 - Any other value takes the fill in the place of each null, and keeps its own
   type. A `Categorical` value first casts a `String` fill to its own type.
 
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import DType, Is, Parameter
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from astrolabe._rules.kernels.dispatch import Data
@@ -67,8 +69,48 @@ class FillNull:
         if not value.nulls:
             return value.dtype
         if value.dtype.name == "Null":
-            return fill.dtype
+            return self._of_nulls(fill)
         return self._zipped(value.dtype, fill.dtype)
+
+    @polars_releases
+    def _of_nulls(self, fill: Data) -> DType:
+        """Give the type of the output for a value of the type `Null`: the type of the fill.
+
+        Args:
+            fill: The data of the fill.
+
+        Returns:
+            The type of the fill.
+
+        Example:
+            >>> from astrolabe._rules.kernels.dispatch import Data
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     FillNull()._of_nulls(Data(DType("Int16")))
+            Int16
+        """
+        return fill.dtype
+
+    @_of_nulls.before("1.40.0")
+    def _kept_null(self, fill: Data) -> DType:
+        """Give the type of the output for a value of the type `Null` in the older releases: `Null`.
+
+        These releases take the fill in the place of each null as data of the
+        type of the value, so the output stays `Null`.
+
+        Args:
+            fill: The data of the fill, which the output does not read.
+
+        Returns:
+            `Null`.
+
+        Example:
+            >>> from astrolabe._rules.kernels.dispatch import Data
+            >>> FillNull()._kept_null(Data(DType("Int16")))
+            Null
+        """
+        del fill
+        return DType("Null")
 
     TEMPORAL: ClassVar[frozenset[str]] = frozenset({"Date", "Datetime", "Duration", "Time"})
     CHECKED: ClassVar[frozenset[str]] = frozenset({"Decimal", "Struct", "Categorical", "Enum"})

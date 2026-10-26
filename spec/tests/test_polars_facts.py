@@ -1116,12 +1116,13 @@ class TestOperationDomains:
         """A value whose type does not match is simply not filled.
 
         So this is not a supertype join, and it needs no promise: an
-        `Int64` column filled with text stays `Int64`. A `Null` column
-        takes the type of the value.
+        `Int64` column filled with text stays `Int64`. From polars 1.40.0, a
+        `Null` column takes the type of the value.
         """
+        nulls = TestFrameFill.NULLS
         for name, series in {**self.SCALAR, **self.NESTED}.items():
             filled = pl.DataFrame({name: series}).fill_null("z")
-            expected = "String" if name == "Null" else str(series.dtype)
+            expected = "String" if name in nulls else str(series.dtype)
             assert str(filled.schema[name]) == expected
 
 
@@ -1131,12 +1132,12 @@ class TestFrameFill:
     polars reads the type of the value to pick the filled columns: a
     number fills the numeric kinds of its list, a `str` fills `String`
     and `Categorical`, a `bool`, `date`, `time`, `timedelta` or
-    `datetime` fills its own kind, and each also fills `Null`. The
-    filled columns run `fill_null` as an expression, so a number joins
-    each column with its bucket (`D-44`). An expression, or a value of
-    any other type, fills every column through
-    `select(pl.all().fill_null(value))`. A column of a kind that the
-    value does not pick keeps its type and its nulls.
+    `datetime` fills its own kind, and from polars 1.40.0 each also fills
+    `Null` (`NULLS`). The filled columns run `fill_null` as an expression,
+    so a number joins each column with its bucket (`D-44`). An expression,
+    or a value of any other type, fills every column through
+    `select(pl.all().fill_null(value))`. A column of a kind that the value
+    does not pick keeps its type and its nulls.
     """
 
     # One column of each kind, with a value and a null, so a strategy
@@ -1175,6 +1176,13 @@ class TestFrameFill:
         "Array": pl.Series([[1], None], dtype=pl.Array(pl.Int8, 1)),
         "Struct": pl.Series([{"a": 1}, None], dtype=pl.Struct({"a": pl.Int8})),
     }
+
+    # The kind `Null`, where the installed release fills it beside the kinds of a value.
+    NULLS: ClassVar[frozenset[str]] = (
+        frozenset({"Null"})
+        if PolarsRelease.installed() >= PolarsRelease.parse("1.40.0")
+        else frozenset()
+    )
 
     # The kinds that a Python int or float fills, `Null` aside. `UInt128`
     # and `Float16` are numeric kinds that polars leaves out.
@@ -1272,15 +1280,30 @@ class TestFrameFill:
         assert column is not None, (name, value)
         return str(column.dtype), column.null_count() == 0
 
+    def null_fill(self, rendering: str) -> tuple[str, bool]:
+        """Give what a fill gives a `Null` column: the type of the value where the release fills it.
+
+        Args:
+            rendering: The type that the value gives a `Null` column that it fills.
+
+        Returns:
+            The rendering of the type after the fill, and whether polars filled the nulls.
+
+        Example:
+            >>> TestFrameFill().null_fill("Date") in {("Date", True), ("Null", False)}
+            True
+        """
+        return (rendering, True) if self.NULLS else ("Null", False)
+
     def test_a_number_fills_its_listed_kinds_and_null(self) -> None:
         """A number fills the numeric kinds of its list, and `Null`, and no other kind."""
         for name, value in product(self.COLUMNS, self.NUMBERS.values()):
             _, done = self.filled(name, value)
-            assert done == (name in self.NUMBER_KINDS | {"Null"}), (name, value)
+            assert done == (name in self.NUMBER_KINDS | self.NULLS), (name, value)
 
     def test_a_number_joins_each_filled_column_with_its_value(self) -> None:
         """Each filled column answers what the rules give for `pl.col(...).fill_null(value)`."""
-        kinds = sorted(self.NUMBER_KINDS - {"Decimal"} | {"Null"})
+        kinds = sorted(self.NUMBER_KINDS - {"Decimal"} | self.NULLS)
         for name, (bucket, value) in product(kinds, self.NUMBERS.items()):
             tree = ExpressionTree().of(pl.col("x").fill_null(value))
             leaf = ColumnLeaf(DType(name), RowForm.PER_ROW)
@@ -1305,10 +1328,10 @@ class TestFrameFill:
             kind = "Int64" if isinstance(value, int) else "Float64"
             column = self.run(name, {"value": value, "matches_supertype": False})
             assert column is not None
-            assert (column.null_count() == 0) == (name in {kind, "Null"}), (name, value)
+            assert (column.null_count() == 0) == (name in {kind} | self.NULLS), (name, value)
             expected = (
                 self.filled(name, value)[0]
-                if name in {kind, "Null"}
+                if name in {kind} | self.NULLS
                 else str(self.COLUMNS[name].dtype)
             )
             assert str(column.dtype) == expected, (name, value)
@@ -1318,15 +1341,18 @@ class TestFrameFill:
         for value, kinds, null in self.OWN_KINDS.values():
             for name, series in self.COLUMNS.items():
                 rendering, done = self.filled(name, value)
-                assert done == (name in kinds | {"Null"}), (name, value)
-                assert rendering == (null if name == "Null" else str(series.dtype)), (name, value)
+                assert done == (name in kinds | self.NULLS), (name, value)
+                assert rendering == (null if name in self.NULLS else str(series.dtype)), (
+                    name,
+                    value,
+                )
 
     def test_a_timedelta_fills_each_duration_at_the_coarser_unit(self) -> None:
         """A `timedelta` is a `Duration('us')`, and each filled column takes the coarser unit."""
         span = timedelta(2)
         assert self.filled("Duration", span) == ("Duration(time_unit='us')", True)
         assert self.filled("Duration_ms", span) == ("Duration(time_unit='ms')", True)
-        assert self.filled("Null", span) == ("Duration(time_unit='us')", True)
+        assert self.filled("Null", span) == self.null_fill("Duration(time_unit='us')")
         assert self.filled("Datetime", span) == ("Datetime(time_unit='ns', time_zone=None)", False)
 
     def test_a_datetime_fills_each_datetime_of_its_zone(self) -> None:
@@ -1334,10 +1360,12 @@ class TestFrameFill:
         naive = datetime(2021, 1, 1)
         aware = datetime(2021, 1, 1, tzinfo=UTC)
         assert self.filled("Datetime", naive) == ("Datetime(time_unit='us', time_zone=None)", True)
-        assert self.filled("Null", naive) == ("Datetime(time_unit='us', time_zone=None)", True)
+        naive_null = self.null_fill("Datetime(time_unit='us', time_zone=None)")
+        assert self.filled("Null", naive) == naive_null
         utc = "Datetime(time_unit='ms', time_zone='UTC')"
         assert self.filled("Datetime_utc", aware) == (utc, True)
-        assert self.filled("Null", aware) == ("Datetime(time_unit='us', time_zone='UTC')", True)
+        aware_null = self.null_fill("Datetime(time_unit='us', time_zone='UTC')")
+        assert self.filled("Null", aware) == aware_null
         assert self.filled("Date", naive) == ("Date", False)
 
     def test_a_datetime_of_another_zone_raises(self) -> None:
