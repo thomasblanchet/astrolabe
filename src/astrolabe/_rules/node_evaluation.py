@@ -34,8 +34,8 @@ from astrolabe._rules.cast_pass import (
     StepOperand,
     VisitTurn,
 )
-from astrolabe._rules.casts import CastKernel, SeriesCast
-from astrolabe._rules.dtypes import DType
+from astrolabe._rules.casts import CastKernel, SeriesCast, StructShapes
+from astrolabe._rules.dtypes import DType, Is
 from astrolabe._rules.definitions.kernel_adapters import KernelContext, OwnLength
 from astrolabe._rules.definitions.node_options import NodeIdentity
 from astrolabe._rules.execution import (
@@ -59,6 +59,7 @@ from astrolabe._rules.kernels.dispatch import Data, RunCast
 from astrolabe._rules.kernels.nodes import Mask
 from astrolabe._rules.options import Height, KernelLength, NodeKind, RowForm, Shape
 from astrolabe._rules.type_functions import ExprFields, Operand, ProjectionSchema
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -970,7 +971,9 @@ class StepRun:
 
         The value becomes null. A cast to a struct of one field puts the value
         in the field, so the field holds the null, and the struct value is not
-        null. A column keeps its data: its values are not in the code.
+        null. A column keeps its data: its values are not in the code. A
+        literal that becomes a list literal is the one value of the list
+        (`InlineImplode`), so it keeps its value where it fits the inner type.
 
         Args:
             data: The data after the cast.
@@ -984,8 +987,13 @@ class StepRun:
             >>> struct = DType("Struct", ((("a", DType("Int8")),),))
             >>> StepRun()._lost(Data(struct), Operand.of_value(300), struct)
             Data(dtype=Struct({'a': Int8}), nulls=False, one_row=False, field_nulls=True)
+            >>> listed = DType("List", (DType("Int32"),))
+            >>> StepRun()._lost(Data(listed), Operand.of_value(1), listed)
+            Data(dtype=List(Int32), nulls=False, one_row=False)
         """
-        if not operand.literal or CastFold().keeps(operand, dtype):
+        listed = dtype.name == "List" and operand.dtype.name not in Is.LISTS
+        kept = dtype.inner() if listed else dtype
+        if not operand.literal or CastFold().keeps(operand, kept):
             return data
         if dtype.name == "Struct":
             return replace(data, field_nulls=True)
@@ -995,11 +1003,12 @@ class StepRun:
         """Refuse a strict cast that loses a value at every run.
 
         A strict cast of a column raises on a value that does not fit, and the
-        values of a column are a fact of the data. Two cases do not depend on
-        the data. The value of a literal is in the code, so the cast meets it
-        at every run (`SeriesCast`). And a cast that drops every value at one
+        values of a column are a fact of the data. Three cases do not depend
+        on the data. The value of a literal is in the code, so the cast meets
+        it at every run (`SeriesCast`). A cast that drops every value at one
         place of the type, as a cast to `Null` does, raises on every series
-        that holds a value (`CastKernel.drops_every_value`).
+        that holds a value (`CastKernel.drops_every_value`). And from polars
+        2.0.0, so does a cast to a struct of other fields (`StructShapes`).
 
         Args:
             data: The data before the step.
@@ -1028,7 +1037,11 @@ class StepRun:
             return
         if operand.literal:
             SeriesCast(data.dtype, step.dtype, strict=True).output([operand.value])
-        elif not data.nulls and CastKernel().drops_every_value(data.dtype, step.dtype):
+            return
+        if data.nulls:
+            return
+        StructShapes().check(data.dtype, step.dtype, strict=True)
+        if CastKernel().drops_every_value(data.dtype, step.dtype):
             message = f"a strict cast of {data.dtype!r} to {step.dtype!r} drops every value"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
 
@@ -1166,6 +1179,48 @@ class NodeOutput:
     literal: Operand | None = None
 
 
+class AggImplode:
+    """Say whether the list that `agg` builds around a node is a node of the plan.
+
+    From polars 1.40.0, the conversion puts an `implode` node above each
+    expression of `agg` that is not one value, so that expression is not the
+    root of the cast pass. Before that release, only the schema shows the
+    list, and the expression stays the root.
+
+    Example:
+        >>> AggImplode()._schema_only()
+        False
+    """
+
+    @polars_releases
+    def is_node(self) -> bool:
+        """Say whether the list is a node of the plan: it is.
+
+        Returns:
+            Always `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     AggImplode().is_node()
+            True
+        """
+        return True
+
+    @is_node.before("1.40.0")
+    def _schema_only(self) -> bool:
+        """Say that the older releases show the list in the schema only.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> AggImplode()._schema_only()
+            False
+        """
+        return False
+
+
 class NodeEvaluation:
     """Give the four answers of a node whose inputs are leaves, from its definition.
 
@@ -1182,7 +1237,10 @@ class NodeEvaluation:
     Example:
         >>> from astrolabe._rules.definitions.length_preserving import LengthPreserving
         >>> leaf = ColumnLeaf(DType("Decimal", (10, 2)), RowForm.PER_ROW)
-        >>> answers = NodeEvaluation(LengthPreserving.CUM_SUM, [leaf], GroupBy((3, 2))).answers()
+        >>> evaluation = NodeEvaluation(LengthPreserving.CUM_SUM, [leaf], GroupBy((3, 2)))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     answers = evaluation.answers()
         >>> answers.run_select, answers.run_agg
         (Decimal(precision=38, scale=2), List(Decimal(precision=10, scale=2)))
     """
@@ -1477,7 +1535,10 @@ class NodeEvaluation:
         The planner wraps the node in a list where its height is not one value.
         The node is then not the root, and the cast pass visits it twice. While
         polars plans, the second visit reads each node below at its type after
-        its own visits (`_visited`).
+        its own visits (`_visited`). Before polars 1.40.0, the conversion adds no
+        node for the list, so the node stays the root of the cast pass, and the
+        run builds a list only where the groups of the node hold more than one
+        value (`AggImplode`).
 
         Args:
             planner: The planner type of the node.
@@ -1494,10 +1555,11 @@ class NodeEvaluation:
         heights = [leaf.height() for leaf in self._leaves]
         wrapped = self._shape.wraps_in_agg(heights)
         planned = ProjectionSchema().agg(planner, scalar=not wrapped)
+        inner = wrapped and AggImplode().is_node()
         return self._context(
             planned,
-            lambda inputs: self._agg_steps(inputs, wrapped=wrapped),
-            lambda steps: self._run_agg(steps, wrapped=wrapped),
+            lambda inputs: self._agg_steps(inputs, wrapped=inner),
+            lambda steps: self._run_agg(steps, wrapped=inner),
             self._visited(),
         )
 
@@ -2099,7 +2161,8 @@ class NodeEvaluation:
 
         Args:
             steps: The steps of the cast pass on each input.
-            wrapped: Whether the planner wraps the node in a list.
+            wrapped: Whether the conversion wraps the node in an `implode`, so
+                that the node is not the root of the cast pass.
 
         Returns:
             The type of the column of `agg`.

@@ -149,7 +149,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="err_invalid_call_shape" />
 
-**Cause.** The form of the arguments makes the call fail at run time for any data, for example `.explode()` with no columns. A method of a typed frame that the installed release of Polars does not have, such as `gather` before Polars 1.41.0, fails in the same way.
+**Cause.** The form of the arguments makes the call fail at run time for any data, for example `.explode()` with no columns. A method of a typed frame that the installed release of Polars does not have, such as `gather` before Polars 1.41.0, fails in the same way. So does an argument of a parameter that the installed release does not have, such as `maintain_order` of `merge_sorted` before Polars 1.40.0.
 
 **Fix.** Correct the arguments as the message says.
 

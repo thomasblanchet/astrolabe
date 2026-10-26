@@ -28,6 +28,7 @@ from astrolabe._rules.kernels.dispatch import (
     Same,
 )
 from astrolabe._rules.releases import polars_releases
+from astrolabe._rules.supertype import Supertype
 from astrolabe._rules.type_functions import FunctionClosures, LengthClosures
 
 if TYPE_CHECKING:
@@ -443,6 +444,10 @@ class Appended:
     the inner types of lists, arrays and structs by the same rule, or be a
     `Decimal` beside a `Decimal`. Every other pair raises a `SchemaError`.
 
+    Before polars 1.40.0, the conversion puts no cast. The kernel casts the
+    data of both inputs to the supertype of their types in the run, with a
+    cast that is not strict, and then appends them (`_run_supertype`).
+
     Example:
         >>> Appended().output([Data(DType("Int32")), Data(DType("UInt32"))], DType("Int64"))
         Int64
@@ -450,6 +455,7 @@ class Appended:
 
     NESTED: ClassVar[frozenset[str]] = frozenset({"List", "Array"})
 
+    @polars_releases
     def output(
         self,
         inputs: Sequence[Data],
@@ -458,7 +464,8 @@ class Appended:
     ) -> DType:
         """Give the type of the output.
 
-        It raises `PolarsRefusal` where a cast has no kernel.
+        It raises `PolarsRefusal` where a cast has no kernel, or where a later
+        input does not append to the first input.
 
         Args:
             inputs: The data of the two inputs.
@@ -468,28 +475,76 @@ class Appended:
         Returns:
             The type of the first input after its cast.
 
-        Raises:
-            PolarsRefusal: A later input does not append to the first input.
-
         Example:
-            >>> Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output([Data(DType("Int8")), Data(DType("Int32"))], DType("Int16"))
             Int16
             >>> unknown = DType("Unknown", ("any",))
-            >>> Appended().output([Data(DType("Time")), Data(DType("Int32"))], unknown)
-            ... # doctest: +ELLIPSIS
+            >>> times = [Data(DType("Time")), Data(DType("Int32"))]
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(times, unknown)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...
             >>> from astrolabe._rules.type_functions import Operand
             >>> big, one = Operand.of_value(2**40), Operand.of_value(1)
             >>> inputs = [Data(DType("Int64")), Data(DType("Int32"))]
-            >>> Appended().output(inputs, DType.dynamic_int(2**40), [big, one])
-            ... # doctest: +ELLIPSIS
+            >>> wide = DType.dynamic_int(2**40)
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     Appended().output(inputs, wide, [big, one])  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: type Int32 is incompatible ...
         """
         types = [self._cast(data, planned, computed, place) for place, data in enumerate(inputs)]
+        return self._appended(types)
+
+    @output.before("1.40.0")
+    def _run_supertype(
+        self,
+        inputs: Sequence[Data],
+        planned: DType,
+        computed: Sequence[Operand] = (),
+    ) -> DType:
+        """Give the type of the output in the older releases, from the supertype of the run types.
+
+        It raises `PolarsRefusal` where the types have no supertype, or where
+        a cast has no kernel.
+
+        Args:
+            inputs: The data of the two inputs.
+            planned: The supertype at the planner types, which the kernel does not read.
+            computed: Each input as the run computes it, which the kernel does not read.
+
+        Returns:
+            The supertype, the type of the first input after its cast.
+
+        Example:
+            >>> inputs = [Data(DType("Date")), Data(DType("Int32"))]
+            >>> Appended()._run_supertype(inputs, DType("Int32"))
+            Int32
+        """
+        del planned, computed
+        supertype = Supertype().require(inputs[0].dtype, inputs[1].dtype)
+        return self._appended([RunCast().of(data, supertype).dtype for data in inputs])
+
+    def _appended(self, types: Sequence[DType]) -> DType:
+        """Append each later input to the first input.
+
+        Args:
+            types: The type of each input after its cast.
+
+        Returns:
+            The type of the first input.
+
+        Raises:
+            PolarsRefusal: A later input does not append to the first input.
+
+        Example:
+            >>> Appended()._appended([DType("Int8"), DType("Null")])
+            Int8
+        """
         first = types[0]
         for other in types[1:]:
             if not self._appends(first, other):

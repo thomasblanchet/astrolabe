@@ -1687,7 +1687,31 @@
     df: Frame
     result: TypedDataFrame[FrameSchema] = df.group_by("k").agg(pl.col("v").sum())
 
-- case: agg_reducer_receiver_duration_var_errors
+- case: agg_reducer_receiver_duration_var_gives_a_null_duration
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Duration, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.String
+        v: Duration[Literal["us"]]
+
+    # In the .agg() context var() keeps a Duration, and gives a null
+    # for each group.
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+
+    class ResultSchema(Columns):
+        k: pl.String
+        v: Duration[Literal["us"]]
+
+    result: TypedDataFrame[ResultSchema] = df.group_by("k").agg(pl.col("v").var())
+
+- case: agg_reducer_receiver_duration_var_errors_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -1947,6 +1971,25 @@
         reveal_type(df.group_by("k").len())  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'len': polars.datatypes.classes.UInt32}, closed=True), None]"
 
 - case: a_counting_shorthand_takes_the_name_that_the_call_gives
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Frame(Columns):
+        k: pl.String
+        v: pl.Int64
+
+    # `.len(name=...)` runs `.agg(pl.len().alias(name))`, so the count
+    # column takes that name. `.count()` names it `count`.
+    df: TypedDataFrame[Frame]
+    reveal_type(df.group_by("k").len(name="n"))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'n': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.group_by("k").len(name=None))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.String, 'len': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.group_by("k").count())  # E: "TypedGroupBy[tuple[Column[Literal['k'], String]], tuple[Column[Literal['k'], String], Column[Literal['v'], Int64]], None]" has no attribute "count"  [attr-defined] # N: Revealed type is "Any"
+    reveal_type(df.group_by("k").len(name="k"))  # E: len would produce duplicate column "k"  [duplicate-column] # N: Revealed type is "polars.dataframe.frame.DataFrame"
+
+- case: a_counting_shorthand_takes_the_name_that_the_call_gives_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2023,7 +2066,25 @@
 # An eager `group_by().agg()` runs no pass of the optimizer, and a lazy
 # `agg` simplifies the expressions: `l & True` is `l` there, and the
 # negation of a literal folds into a literal.
-- case: an_eager_agg_runs_no_optimizer
+- case: an_eager_agg_simplifies_as_a_lazy_agg
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, List, TypedDataFrame, TypedLazyFrame
+
+    class Lists(Columns):
+        g: pl.Int64
+        l: List[pl.Int16]
+
+    df: TypedDataFrame[Lists]
+    lf: TypedLazyFrame[Lists]
+    df.group_by("g").agg(pl.col("l") & True)
+    reveal_type(lf.group_by("g").agg(pl.col("l") & True))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'l': astrolabe.frame.List[astrolabe.frame.List[polars.datatypes.classes.Int16]]}, closed=True), None]"
+    reveal_type(df.group_by("g").agg(-pl.lit(2**31)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'literal': polars.datatypes.classes.Int32}, closed=True), None]"
+    reveal_type(lf.group_by("g").agg(-pl.lit(2**31)))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'literal': astrolabe.frame.Planned[polars.datatypes.classes.Int32, polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: an_eager_agg_runs_no_optimizer_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, List, TypedDataFrame, TypedLazyFrame
@@ -2099,7 +2160,22 @@
     reveal_type(df.group_by("g").agg(pl.col("x").first().cumulative_eval(pl.element().sum())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
     reveal_type(lf.group_by("g").agg(pl.col("x").first().cumulative_eval(pl.element().sum())))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.Planned[astrolabe.frame.List[polars.datatypes.classes.Int64], polars.datatypes.classes.Int64]}, closed=True), None]"
 
-- case: sort_by_over_a_rebuilt_list_by_one_value_for_each_group_panics
+- case: sort_by_over_a_rebuilt_list_by_one_value_for_each_group_raises
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        g: pl.Int64
+        x: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    df.group_by("g").agg(pl.col("x").cum_sum().sort_by(pl.col("x").first()))  # E: "x" has no result type at this frame's column types: expressions in 'sort_by' must have matching group lengths, and polars raises ShapeError  [unsupported-dtype-op]
+    reveal_type(df.group_by("g").agg(pl.col("x").cum_sum().sort_by(pl.col("x"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64, 'x': astrolabe.frame.List[polars.datatypes.classes.Int64]}, closed=True), None]"
+
+- case: sort_by_over_a_rebuilt_list_by_one_value_for_each_group_panics_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2138,6 +2214,26 @@
 # A dynamic group-by gives its keys, the bounds of each window where the call asks for them,
 # its index column, then the aggregations. Over a `Date` index, the bounds are `Datetime`.
 - case: a_dynamic_group_by_gives_the_bounds_then_the_index
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, TypedLazyFrame
+
+    class Rows(Columns):
+        d: pl.Date
+        i: pl.Int32
+        x: pl.Float64
+
+    df: TypedDataFrame[Rows]
+    lf: TypedLazyFrame[Rows]
+    reveal_type(df.group_by_dynamic("d", every="2d", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'_lower_boundary': astrolabe.frame.Datetime[Literal['us'], None], '_upper_boundary': astrolabe.frame.Datetime[Literal['us'], None], 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(lf.group_by_dynamic("d", every="2d", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'_lower_boundary': astrolabe.frame.Datetime[Literal['us'], None], '_upper_boundary': astrolabe.frame.Datetime[Literal['us'], None], 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(df.group_by_dynamic("i", every="2i", period="3i").agg(pl.col("x").rolling_mean(2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Int32, 'x': astrolabe.frame.List[polars.datatypes.classes.Float64]}, closed=True), None]"
+    reveal_type(df.group_by_dynamic("i", every="2i", include_boundaries=True).agg(pl.col("x").sum()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'_lower_boundary': polars.datatypes.classes.Int32, '_upper_boundary': polars.datatypes.classes.Int32, 'i': polars.datatypes.classes.Int32, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+    reveal_type(lf.rolling("i", period="2i").sum())  # N: Revealed type is "astrolabe.frame.TypedLazyFrame[TypedDict({'i': polars.datatypes.classes.Int32, 'd': polars.datatypes.classes.Date, 'x': polars.datatypes.classes.Float64}, closed=True), None]"
+
+- case: a_dynamic_group_by_gives_the_bounds_then_the_index_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, TypedLazyFrame

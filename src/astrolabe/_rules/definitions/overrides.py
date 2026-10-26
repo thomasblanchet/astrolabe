@@ -198,14 +198,18 @@ class CountOfNullLiteral:
 
 @dataclass(frozen=True)
 class NullsGiveFirstInput:
-    """Give the kernel of `sum_horizontal`, which gives its first input back over `Null` inputs.
+    """Give the kernel of `sum_horizontal`, which leaves out its inputs of the type `Null`.
 
-    Where every input reaches the kernel as the type `Null`, the kernel of
-    `sum_horizontal` adds nothing and gives its first input back. The output
-    then has the rows of the first input, and not the rows of the longest
-    input that the rule of the node gives. A null literal first gives one
-    row: a `select` beside a column of more rows raises, and `agg` raises
-    where the groups hold more rows.
+    The kernel of `sum_horizontal` adds only the inputs that reach it with
+    another type than `Null`. Where every input reaches it as the type
+    `Null`, it adds nothing and gives its first input back. The output then
+    has the rows of the first input, and not the rows of the longest input
+    that the rule of the node gives. A null literal first gives one row: a
+    `select` beside a column of more rows raises, and `agg` raises where the
+    groups hold more rows. From polars 1.40.0, the cast pass casts an input
+    of the type `Null` beside another type, so only inputs that are all
+    `Null` reach the kernel as `Null`. Before that release, a literal beside
+    a column of the type `Null` gives the one row of the literal.
 
     Example:
         >>> from astrolabe._rules.definitions.kernel_adapters import AllInputs
@@ -220,10 +224,11 @@ class NullsGiveFirstInput:
     OVERRIDE: ClassVar[Override] = Override(
         node="sum_horizontal over inputs of the type Null only",
         reason=(
-            "Where every input has the type Null, the kernel of sum_horizontal"
-            " returns its first input as it is. The output takes the rows of the"
-            " first input, where every other elementwise function takes the rows"
-            " of its longest input."
+            "The kernel of sum_horizontal leaves out the inputs of the type Null."
+            " Where every input has the type Null, it returns its first input as"
+            " it is. The output takes the rows of the inputs that it adds, or of"
+            " the first input, where every other elementwise function takes the"
+            " rows of its longest input."
         ),
         probe=(
             "pl.DataFrame({'g': [1, 1], 'n': [None, None]}).group_by('g')"
@@ -258,14 +263,16 @@ class NullsGiveFirstInput:
         return self.kernel.output(inputs, context)
 
     def output_length(self, inputs: Sequence[Data], lengths: Sequence[int]) -> int | None:
-        """Give the rows of the output where every input is of the type `Null`.
+        """Give the rows of the output where an input is of the type `Null`.
 
         Args:
             inputs: The data of each input, after the cast pass.
             lengths: The rows of each input.
 
         Returns:
-            The rows of the first input, or `None` where an input has another type.
+            The rows of the first input where every input is `Null`, the rows of
+            the longest input that is not `Null` where some are, and `None`
+            where no input is `Null`.
 
         Example:
             >>> from astrolabe._rules.definitions.kernel_adapters import AllInputs
@@ -273,11 +280,23 @@ class NullsGiveFirstInput:
             >>> from astrolabe._rules.kernels.dispatch import Data
             >>> from astrolabe._rules.kernels.horizontal import HorizontalSum
             >>> kernel = NullsGiveFirstInput(AllInputs(HorizontalSum(), own_lengths=False))
-            >>> kernel.output_length([Data(DType("Null")), Data(DType("Int8"))], (1, 3)) is None
+            >>> kernel.output_length([Data(DType("Null")), Data(DType("Int8"))], (3, 1))
+            1
+            >>> kernel.output_length([Data(DType("Int8")), Data(DType("Int8"))], (3, 1)) is None
+            True
+            >>> kernel.output_length([Data(DType("Null"))], ()) is None
             True
         """
-        nulls = all(data.dtype.name == "Null" for data in inputs)
-        return lengths[0] if nulls and lengths else None
+        if not lengths:
+            return None
+        added = [
+            length
+            for data, length in zip(inputs, lengths, strict=True)
+            if data.dtype.name != "Null"
+        ]
+        if not added:
+            return lengths[0]
+        return max(added) if len(added) < len(inputs) else None
 
     def fallible(self, inputs: Sequence[Data]) -> bool:
         """Say whether the kernel of the vocabulary can fail on one value.

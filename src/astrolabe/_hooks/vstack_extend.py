@@ -7,7 +7,8 @@ same order, with the same data types. A different data type raises
 `ShapeError`. The typed frame declares each method to return the type of
 its receiver, which is right for a call that succeeds. This module checks
 that the call can succeed. Before polars 1.41.0, `merge_sorted` also panics
-over a column that holds a `List` or an `Array` (`MergedKinds`).
+over a column that holds a `List` or an `Array` (`MergedKinds`), and before
+polars 1.40.0 it has no parameter `maintain_order` (`MergeOrder`).
 """
 
 from __future__ import annotations
@@ -21,7 +22,11 @@ from astrolabe._hooks.domain.dtype_promotion import DTypePromotion
 from astrolabe._hooks.domain.frame import Frame
 from astrolabe._hooks.domain.schema_equality import SchemaEquality
 from astrolabe._hooks.encoding.schema_renderings import SchemaRenderings
-from astrolabe._hooks.errors import SchemaMismatchError, UnsupportedDtypeOperationError
+from astrolabe._hooks.errors import (
+    InvalidCallShapeError,
+    SchemaMismatchError,
+    UnsupportedDtypeOperationError,
+)
 from astrolabe._hooks.propagate import not_none, propagates
 from astrolabe._rules.dtypes import DType, Rendering, RenderingError
 from astrolabe._rules.releases import polars_releases
@@ -68,6 +73,58 @@ class _VstackExtendPlan:
         other = not_none(Frame.from_proper_type(other_type))
         right_columns = not_none(other.columns)
         return cls(left_columns, right_columns)
+
+
+class MergeOrder:
+    """Report an argument of `maintain_order` to `merge_sorted`, which polars has from 1.40.0.
+
+    The typed frames declare the parameter of the later releases, and pass
+    it on only where it is `True`. Before polars 1.40.0, `merge_sorted` has
+    no such parameter, and polars raises `TypeError` at such a call. An
+    argument that is not the literal `False` can be `True`.
+
+    Example:
+        >>> ctx = new_fail_context()
+        >>> MergeOrder()._refuse(ctx, passed=False)
+        >>> ctx.api.messages
+        []
+    """
+
+    @polars_releases
+    def check(self, ctx: MethodContext, *, passed: bool) -> None:
+        """Report nothing: the installed release has the parameter.
+
+        Args:
+            ctx: The context that mypy gives for the call.
+            passed: Whether the argument for `maintain_order` can be `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> ctx = new_fail_context()
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     MergeOrder().check(ctx, passed=True)
+            >>> ctx.api.messages
+            []
+        """
+        del ctx, passed
+
+    @check.before("1.40.0")
+    def _refuse(self, ctx: MethodContext, *, passed: bool) -> None:
+        """Report an argument for `maintain_order`, which polars refuses with `TypeError`.
+
+        Args:
+            ctx: The context that mypy gives for the call.
+            passed: Whether the argument for `maintain_order` can be `True`.
+
+        Example:
+            >>> ctx = new_fail_context()
+            >>> MergeOrder()._refuse(ctx, passed=True)
+            >>> ctx.api.messages[0].endswith("merge_sorted from release 1.40.0")
+            True
+        """
+        if passed:
+            method, parameter = "merge_sorted", "maintain_order"
+            InvalidCallShapeError.absent_parameter(method, parameter, "1.40.0").fail(ctx)
 
 
 class MergedKinds:
@@ -217,6 +274,9 @@ class VstackExtendHook:
         Returns:
             The declared return type, always unchanged.
         """
+        if self._merges:
+            order = CallArgs(ctx).literal_bool("maintain_order", default=False)
+            MergeOrder().check(ctx, passed=order is not False)
         plan = _VstackExtendPlan.from_context(ctx)
         if plan is None:
             return ctx.default_return_type

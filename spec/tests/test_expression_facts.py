@@ -286,9 +286,12 @@ class TestNameNamespace:
     ]
 
     def test_the_namespace_holds_exactly_these_members(self) -> None:
-        """The census's ten `name` rows are the namespace's ten members."""
+        """The census's `name` rows are the namespace's members, two more from polars 2.0.0."""
         found = [n for n in dir(pl.col("x").name) if not n.startswith("_")]
-        assert sorted(found) == self.MEMBERS
+        added = ["strip_prefix", "strip_suffix"]
+        newer = PolarsRelease.installed() >= PolarsRelease.parse("2.0.0")
+        members = sorted([*self.MEMBERS, *added]) if newer else self.MEMBERS
+        assert sorted(found) == members
 
 
 class TestOpaquePython:
@@ -493,34 +496,69 @@ class TestEngines:
     HANG: ClassVar[str] = (
         "import polars as pl\n"
         "frame = pl.LazyFrame({'a': [1, -2, 3], 'o': pl.Series([0, 1, 0], dtype=pl.Int8)})\n"
-        "frame.select(pl.col('a').abs().slice(pl.col('o'), 2)).collect()\n"
+        "frame.select(pl.col('a').abs().slice(pl.col('o'), 2)).collect(engine='in-memory')\n"
     )
 
-    def test_an_eager_agg_runs_no_optimizer(self) -> None:
+    @pytest.mark.skipif(
+        PolarsRelease.installed() >= PolarsRelease.parse("2.0.0"),
+        reason="polars 2.0.0 makes an eager agg simplify its expressions",
+    )
+    def test_an_eager_agg_runs_no_optimizer_before_2_0(self) -> None:
         """`l & True` raises in an eager `agg`, where a lazy `agg` simplifies it to `l`."""
         with pytest.raises(pl.exceptions.InvalidOperationError):
             self.LISTS.group_by("g").agg(pl.col("l") & True)
-        lazy = self.LISTS.lazy().group_by("g").agg(pl.col("l") & True).collect()
+        lazy = self.LISTS.lazy().group_by("g").agg(pl.col("l") & True).collect(engine="in-memory")
         assert lazy.schema["l"] == pl.List(pl.List(pl.Int16))
 
-    def test_an_eager_agg_negates_the_literal_that_a_lazy_agg_folds(self) -> None:
+    @pytest.mark.skipif(
+        PolarsRelease.installed() >= PolarsRelease.parse("2.0.0"),
+        reason="polars 2.0.0 makes an eager agg simplify its expressions",
+    )
+    def test_an_eager_agg_negates_the_literal_that_a_lazy_agg_folds_before_2_0(self) -> None:
         """The negation of `2**31` gives `Int64` in an eager `agg` and `Int32` in a lazy one."""
         eager = self.LISTS.group_by("g").agg(-pl.lit(2**31))
-        lazy = self.LISTS.lazy().group_by("g").agg(-pl.lit(2**31)).collect()
+        lazy = self.LISTS.lazy().group_by("g").agg(-pl.lit(2**31)).collect(engine="in-memory")
         assert eager.schema["literal"] == pl.Int64
         assert lazy.schema["literal"] == pl.Int32
+
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("2.0.0"),
+        reason="polars 2.0.0 makes an eager agg simplify its expressions",
+    )
+    def test_an_eager_agg_simplifies_as_a_lazy_agg(self) -> None:
+        """An eager `agg` simplifies `l & True` to `l`, and folds the negation of `2**31`."""
+        eager = self.LISTS.group_by("g").agg(pl.col("l") & True, -pl.lit(2**31))
+        assert eager.schema["l"] == pl.List(pl.List(pl.Int16))
+        assert eager.schema["literal"] == pl.Int32
 
     def test_an_eager_slice_refuses_an_offset_that_is_a_column(self) -> None:
         """An eager frame reads the offset of a slice as one value."""
         with pytest.raises(pl.exceptions.ComputeError):
             self.ROWS.select(pl.col("a").slice(pl.col("o"), 2))
 
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
     def test_a_lazy_slice_by_a_column_leaves_the_tree_over_a_column(self) -> None:
         """The slice pushdown deletes the slice, and the column comes back whole."""
-        out = self.ROWS.lazy().select(pl.col("a").slice(pl.col("o"), 2)).collect()
+        out = self.ROWS.lazy().select(pl.col("a").slice(pl.col("o"), 2)).collect(engine="in-memory")
         assert out.schema["a"] == pl.Int64
         assert out.height == self.ROWS.height
 
+    @pytest.mark.skipif(
+        PolarsRelease.installed() >= PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
+    def test_a_lazy_slice_by_a_column_raises_as_an_eager_one_before_1_40(self) -> None:
+        """The older releases keep the slice, whose offset of more than one row raises."""
+        with pytest.raises(pl.exceptions.ComputeError):
+            self.ROWS.lazy().select(pl.col("a").slice(pl.col("o"), 2)).collect(engine="in-memory")
+
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+        reason="polars 1.40.0 makes an offset that is not a literal a place of a slice",
+    )
     def test_a_lazy_slice_by_a_column_hangs_over_an_elementwise_value(self) -> None:
         """The slice pushdown makes a cycle below `abs`, and the query never returns."""
         with pytest.raises(subprocess.TimeoutExpired):
@@ -599,7 +637,15 @@ class TestRowsDecideAType:
 
 
 class TestStoredType:
-    """A lazy frame plans each step at the stored type of a column, and runs on its data."""
+    """A lazy frame plans each step at the stored type of a column, and runs on its data.
+
+    Before polars 2.0.0, the product of an `Int8` and a `Decimal(10, 2)` is
+    planned as `Decimal(10, 2)` and runs as `Decimal(38, 2)`. From that
+    release, the planner gives `Decimal(38, 2)` too, so the stored type and
+    the type of the data agree.
+    """
+
+    OLDER: ClassVar[bool] = PolarsRelease.installed() < PolarsRelease.parse("2.0.0")
 
     FRAME: ClassVar[pl.DataFrame] = pl.DataFrame({
         "i8": pl.Series([1, None], dtype=pl.Int8),
@@ -616,25 +662,36 @@ class TestStoredType:
 
     def test_the_frame_stores_the_planner_type(self) -> None:
         """`collect_schema()` gives the planner type of `d`, and `collect()` gives its run type."""
-        assert self.planned().collect_schema()["d"] == pl.Decimal(10, 2)
-        assert self.planned().collect().schema["d"] == pl.Decimal(38, 2)
+        stored = pl.Decimal(10, 2) if self.OLDER else pl.Decimal(38, 2)
+        assert self.planned().collect_schema()["d"] == stored
+        assert self.planned().collect(engine="in-memory").schema["d"] == pl.Decimal(38, 2)
 
     def test_a_later_step_plans_at_the_stored_type(self) -> None:
         """A fill of `i8` by `d` casts to the stored type, and an eager fill to the run type."""
         filled = pl.col("i8").fill_null(pl.col("d")).alias("o")
-        assert self.planned().select(filled).collect().schema["o"] == pl.Decimal(10, 2)
+        stored = pl.Decimal(10, 2) if self.OLDER else pl.Decimal(38, 2)
+        assert self.planned().select(filled).collect(engine="in-memory").schema["o"] == stored
         eager = self.FRAME.with_columns(d=pl.col("i8") * pl.col("dec"))
         assert eager.select(filled).schema["o"] == pl.Decimal(38, 2)
 
     def test_a_join_checks_its_keys_at_both_types(self) -> None:
-        """The plan compares the stored types of the keys, and the run the types of their data."""
+        """The plan compares the stored types of the keys, and the run the types of their data.
+
+        From polars 2.0.0, both are `Decimal(38, 2)`, so the plan refuses the
+        narrow key, and the wide key runs.
+        """
         narrow = pl.LazyFrame({"d": pl.Series([Decimal("1.5")], dtype=pl.Decimal(10, 2))})
         wide = pl.LazyFrame({"d": pl.Series([Decimal("1.5")], dtype=pl.Decimal(38, 2))})
+        refused, kept = (wide, narrow) if self.OLDER else (narrow, wide)
         with pytest.raises(pl.exceptions.SchemaError):
-            self.planned().join(wide, on="d").collect_schema()
-        assert self.planned().join(narrow, on="d").collect_schema()["d"] == pl.Decimal(10, 2)
-        with pytest.raises(pl.exceptions.ComputeError):
-            self.planned().join(narrow, on="d").collect()
+            self.planned().join(refused, on="d").collect_schema()
+        assert self.planned().join(kept, on="d").collect_schema()["d"] == kept.collect_schema()["d"]
+        join = self.planned().join(kept, on="d")
+        if self.OLDER:
+            with pytest.raises(pl.exceptions.ComputeError):
+                join.collect(engine="in-memory")
+        else:
+            assert join.collect(engine="in-memory").schema["d"] == pl.Decimal(38, 2)
 
 
 class TestLengthsTheValuesDecide:
@@ -866,10 +923,24 @@ class TestSortByOverARebuiltList:
 
     FRAME: ClassVar[pl.DataFrame] = pl.DataFrame({"g": [1, 1, 1, 2, 2], "x": [1, 2, 3, 4, 5]})
 
-    def test_a_key_of_one_value_for_each_group_panics(self) -> None:
+    @pytest.mark.skipif(
+        PolarsRelease.installed() >= PolarsRelease.parse("2.0.0"),
+        reason="polars 2.0.0 checks the group lengths of the key beside a rebuilt list",
+    )
+    def test_a_key_of_one_value_for_each_group_panics_before_2_0(self) -> None:
         """The key gives no list, and polars panics."""
         sorted_ = pl.col("x").cum_sum().sort_by(pl.col("x").first())
         with pytest.raises(pl.exceptions.PanicException):
+            self.FRAME.group_by("g").agg(sorted_)
+
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("2.0.0"),
+        reason="polars 2.0.0 checks the group lengths of the key beside a rebuilt list",
+    )
+    def test_a_key_of_one_value_for_each_group_has_other_group_lengths(self) -> None:
+        """The key has one row in each group, where the list has more, and polars refuses it."""
+        sorted_ = pl.col("x").cum_sum().sort_by(pl.col("x").first())
+        with pytest.raises(pl.exceptions.ShapeError):
             self.FRAME.group_by("g").agg(sorted_)
 
     def test_a_key_of_one_value_per_row_runs(self) -> None:

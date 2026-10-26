@@ -28,6 +28,11 @@ and a NaN as the first float (`LiveFrames`). Where the rules refuse, one
 sample is enough, because a type error refuses every sample. A cell where
 the rules say that the run ends the process or never returns does not run
 here. The tests of the kernels run those cells in a subprocess.
+
+A defect of polars leaves out a few cells. From polars 2.0.0, the floor
+division of a `Decimal` in `agg` reads groups of another length with no check
+and gives wrong values (`POLARS_ISSUES.md`), where the rules refuse. So the
+sample of `//` leaves out a `Decimal` beside an input of another length.
 """
 
 from __future__ import annotations
@@ -58,7 +63,8 @@ from astrolabe._rules.definitions.structs import Structs
 from astrolabe._rules.definitions.temporal import Temporal
 from astrolabe._rules.definitions.node_options import NodeOptions
 from astrolabe._rules.dtypes import DType
-from astrolabe._rules.node_evaluation import LiteralLeaf, NodeEvaluation, Unchecked
+from astrolabe._rules.node_evaluation import LiteralLeaf, NodeEvaluation, Refused, Unchecked
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.tree import NonFinite
 
 
@@ -234,7 +240,7 @@ class Nodes:
         ),
         "truncate 2": CellCheck(Elementwise.TRUNCATE, lambda x: x.truncate(2)),
         "round_sig_figs 0": CellCheck(Elementwise.ROUND_SIG_FIGS, lambda x: x.round_sig_figs(0)),
-        "hash with seeds": CellCheck(Elementwise.HASH, lambda x: x.hash(1, 2, 3, 4)),
+        "hash with a seed": CellCheck(Elementwise.HASH, lambda x: x.hash(1)),
         "set_sorted descending": CellCheck(
             Elementwise.SET_SORTED,
             lambda x: x.set_sorted(descending=True),
@@ -318,12 +324,39 @@ class Nodes:
         Example:
             >>> cells = Nodes.operator_cells()
             >>> len(cells), cells[0][0]
-            (8000, 'sub')
+            (7984, 'sub')
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
         for name, (_, typical) in cls.OPERATORS.items():
-            cells.extend((name, cell) for cell in NodeSample().cells(2, typical))
+            sample = NodeSample().cells(2, typical)
+            cells.extend((name, cell) for cell in sample if not cls._unchecked(name, cell))
         return cells
+
+    @classmethod
+    def _unchecked(cls, name: str, cell: tuple[Input, ...]) -> bool:
+        """Say whether a cell is a floor division of a `Decimal` beside an input of another length.
+
+        From polars 2.0.0, such a floor division in `agg` gives wrong values
+        and no error (`POLARS_ISSUES.md`).
+
+        Args:
+            name: The name of the operator.
+            cell: The cell.
+
+        Returns:
+            Whether the sample leaves out the cell.
+
+        Example:
+            >>> decimal = Inputs().labelled("Decimal(precision=10, scale=2)/per row")
+            >>> other = Inputs().labelled("Int64/other length")
+            >>> cell = (decimal, other)
+            >>> Nodes._unchecked("floordiv", cell), Nodes._unchecked("mod", cell)
+            (True, False)
+        """
+        labels = [entry.label for entry in cell]
+        decimal = any(label.startswith("Decimal") for label in labels)
+        other = any(label.endswith("/other length") for label in labels)
+        return name == "floordiv" and decimal and other
 
     FLOAT: ClassVar[Input] = Inputs().labelled("Float32/per row")
     BASE: ClassVar[Input] = Inputs().labelled("lit float/direct")
@@ -409,16 +442,22 @@ def test_cut_over_a_break_that_the_tree_does_not_hold_is_unchecked(breaks: list[
     """The rules give `Unchecked` for `cut` with no labels and a break that is NaN or infinite.
 
     The JSON form of the tree writes each such break as null, so the rules do
-    not know the interval of the break, and polars gives its label.
+    not know the interval of the break, and polars gives its label. Before
+    polars 1.40.0, the type is `Categorical` whatever the labels, and the
+    kernel refuses the break, so the rules know the answers.
     """
     node = pl.col("c10").cut(breaks)
     definition = Elementwise.CUT.at(NodeOptions(json.loads(node.meta.serialize(format="json"))))
     leaf = Inputs().labelled("Float64/per row").leaf
     answers = NodeEvaluation(definition, [leaf], CellCheck.GROUPS).answers()
-    unchecked = [answers.planner_select, answers.planner_agg, answers.run_select, answers.run_agg]
-    assert all(isinstance(answer, Unchecked) for answer in unchecked), unchecked
     planned = PolarsCell(node.alias("o")).planner(agg=False)
     assert isinstance(planned, DType)
+    if PolarsRelease.installed() < PolarsRelease.parse("1.40.0"):
+        assert answers.planner_select == planned
+        assert isinstance(answers.run_select, Refused)
+        return
+    unchecked = [answers.planner_select, answers.planner_agg, answers.run_select, answers.run_agg]
+    assert all(isinstance(answer, Unchecked) for answer in unchecked), unchecked
 
 
 def test_cut_over_a_nan_break_that_the_code_holds_gives_the_answers_of_polars() -> None:
