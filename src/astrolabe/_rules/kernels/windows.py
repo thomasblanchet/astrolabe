@@ -844,6 +844,8 @@ class QuantileCut:
             >>> text, empty = Data(DType("String")), Data(DType("Float64"), nulls=True)
             >>> qcut._counts_before_the_cast(Data(DType("Null"), nulls=True), empty)
             True
+            >>> qcut._counts_before_the_cast(text, Data(DType("Float64")))
+            False
             >>> qcut._counts_before_the_cast(text, empty)
             Traceback (most recent call last):
             ...
