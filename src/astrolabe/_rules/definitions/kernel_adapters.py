@@ -420,7 +420,9 @@ class TwoInputs:
         >>> from astrolabe._rules.dtypes import DType
         >>> from astrolabe._rules.kernels.dispatch import Data
         >>> context = KernelContext(grouped=False, scalars=(False, False))
-        >>> TwoInputs(FillNull()).output([Data(DType("Null")), Data(DType("Int8"))], context)
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     TwoInputs(FillNull()).output([Data(DType("Null")), Data(DType("Int8"))], context)
         Int8
     """
 
@@ -1505,7 +1507,10 @@ class PlannedInputs:
         >>> from astrolabe._rules.kernels.dispatch import Data
         >>> from astrolabe._rules.kernels.lengths import Appended
         >>> context = KernelContext(grouped=False, scalars=(False, True), planned=DType("Int16"))
-        >>> PlannedInputs(Appended()).output([Data(DType("Int8")), Data(DType("Int32"))], context)
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> inputs = [Data(DType("Int8")), Data(DType("Int32"))]
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     PlannedInputs(Appended()).output(inputs, context)
         Int16
     """
 

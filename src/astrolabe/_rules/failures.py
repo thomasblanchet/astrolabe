@@ -19,6 +19,12 @@ whose data type the checker does not know.
 from __future__ import annotations
 
 import enum
+from typing import TYPE_CHECKING
+
+from astrolabe._rules.releases import polars_releases
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class Stop(enum.Enum):
@@ -105,6 +111,83 @@ class PolarsRefusal(Exception):
         self.message = message
         kind = self.stop.value if self.error is None else self.error.value
         super().__init__(f"{kind}: {message}")
+
+
+class UnequalLengths:
+    """Give the refusal of polars for inputs whose lengths do not broadcast.
+
+    Two lengths broadcast where they are equal, or where one of them is one
+    row. From polars 1.44.0, a binary operation on two columns and many
+    kernels check the lengths of their inputs with one shared check, which
+    raises `ShapeError`. Before that release, each of them raised its own
+    `InvalidOperationError`, so the code that checks the lengths gives the
+    message of the older releases.
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.0"):
+        ...     print(UnequalLengths().refusal([3, 1, 2], "older"))
+        ShapeError: can't compute broadcast length, found incompatible lengths 2 and 3
+    """
+
+    def check(self, lengths: Sequence[int], older: str) -> None:
+        """Refuse the lengths of the inputs where two of them do not broadcast.
+
+        It raises the `PolarsRefusal` of `refusal` where two inputs have other
+        lengths, and neither has one row.
+
+        Args:
+            lengths: The number of rows of each input, or none where they are not known.
+            older: The message of the releases before the shared check.
+
+        Example:
+            >>> UnequalLengths().check([5, 1, 5], "older")
+        """
+        if len({length for length in lengths if length != 1}) > 1:
+            raise self.refusal(lengths, older)
+
+    @polars_releases
+    def refusal(self, lengths: Sequence[int], older: str) -> PolarsRefusal:
+        """Give the refusal of the shared check of the lengths.
+
+        Args:
+            lengths: The number of rows of each input, two of which do not broadcast.
+            older: The message of the releases before the shared check.
+
+        Returns:
+            The refusal.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     UnequalLengths().refusal([5, 2], "older").error
+            <ErrorClass.SHAPE: 'ShapeError'>
+        """
+        del older
+        long = [length for length in lengths if length != 1]
+        other = next(length for length in long if length != long[0])
+        message = (
+            f"can't compute broadcast length, found incompatible lengths {other} and {long[0]}"
+        )
+        return PolarsRefusal(ErrorClass.SHAPE, message)
+
+    @refusal.before("1.44.0")
+    def _own_refusal(self, lengths: Sequence[int], older: str) -> PolarsRefusal:
+        """Give the refusal of the check of one operation, as the older releases raise it.
+
+        Args:
+            lengths: The number of rows of each input.
+            older: The message of the check.
+
+        Returns:
+            The refusal.
+
+        Example:
+            >>> print(UnequalLengths()._own_refusal([5, 2], "different lengths"))
+            InvalidOperationError: different lengths
+        """
+        del lengths
+        return PolarsRefusal(ErrorClass.INVALID_OPERATION, older)
 
 
 class Undecided(enum.Enum):

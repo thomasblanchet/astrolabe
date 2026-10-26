@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from astrolabe._hooks.checked import checked_cast
 from astrolabe._rules.dtypes import Decimals, DType, IntegerRange, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, Undecided, UndecidedError
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import LosslessUpcast
 
 if TYPE_CHECKING:
@@ -393,8 +394,8 @@ class ArrowCast:
 
         The arms are in the order of polars. A struct comes first, then a list
         or an array beside a list or an array, and then a list of `UInt8` to
-        `Binary`. `Binary` and a flat value wrapped in a list come last, in
-        that order. The other arms cast flat types.
+        `Binary`. `Binary` and, before polars 2.0.0, a flat value wrapped in a list
+        come last, in that order. The other arms cast flat types.
 
         Args:
             source: The physical type that the cast reads.
@@ -404,7 +405,9 @@ class ArrowCast:
             Whether the kernel has an arm for the pair.
 
         Example:
-            >>> ArrowCast().exists(DType("Boolean"), DType("List", (DType("String"),)))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     ArrowCast().exists(DType("Boolean"), DType("List", (DType("String"),)))
             True
         """
         if source == target or "Null" in {source.name, target.name}:
@@ -440,6 +443,43 @@ class ArrowCast:
             return target.name == "Binary" and source.inner().name == "UInt8"
         if source.name == "Binary":
             return target.name == "String" or target == DType("List", (DType("UInt8"),))
+        return self._wraps(source, target)
+
+    @polars_releases
+    def _wraps(self, source: DType, target: DType) -> bool:
+        """Say whether a flat value wraps in a list of one: it does not.
+
+        Args:
+            source: The physical type that the cast reads.
+            target: The list type.
+
+        Returns:
+            `False`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ArrowCast().exists(DType("Int8"), DType("List", (DType("Int8"),)))
+            False
+        """
+        del source, target
+        return False
+
+    @_wraps.before("2.0.0")
+    def _wraps_by_inner(self, source: DType, target: DType) -> bool:
+        """Say whether a flat value wraps in a list in the older releases: where it casts inside.
+
+        Args:
+            source: The physical type that the cast reads.
+            target: The list type.
+
+        Returns:
+            Whether the value casts to the inner type.
+
+        Example:
+            >>> ArrowCast()._wraps_by_inner(DType("Int8"), DType("List", (DType("Int16"),)))
+            True
+        """
         return self.exists(source, target.inner())
 
     def _structs(self, source: DType, target: DType) -> bool:
@@ -1351,7 +1391,9 @@ class CastKernel:
             The type.
 
         Example:
-            >>> CastKernel().output(DType("Int8"), DType("List", (DType("Date"),)))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     CastKernel().output(DType("Int8"), DType("List", (DType("Date"),)))
             List(Int32)
         """
         if self.clones(source, target):
@@ -1600,8 +1642,49 @@ class _FlatCast:
             message = f"cannot cast {source!r} to {target.name}"
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         if target.name in Is.CATEGORIES:
-            return target
+            return self._categories(source, target)
         return self.inner_output(source, target)
+
+    @polars_releases
+    def _categories(self, source: DType, target: DType) -> DType:
+        """Refuse the cast of a number to categories: polars casts them with `cat.to`.
+
+        Args:
+            source: The number type.
+            target: The `Categorical` or `Enum` type.
+
+        Raises:
+            PolarsRefusal: The cast is not supported.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _FlatCast(CastKernel())._categories(DType("UInt32"), DType("Categorical"))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: casting from UInt32 to ...
+        """
+        message = f"casting from {source!r} to {target.name} is not supported"
+        raise PolarsRefusal(ErrorClass.COMPUTE, message)
+
+    @_categories.before("2.0.0")
+    def _ids(self, source: DType, target: DType) -> DType:
+        """Give the cast of a number to categories in the older releases: through their ids.
+
+        Args:
+            source: The number type.
+            target: The `Categorical` or `Enum` type.
+
+        Returns:
+            The target.
+
+        Example:
+            >>> _FlatCast(CastKernel())._ids(DType("UInt32"), DType("Categorical"))
+            Categorical
+        """
+        del source
+        return target
 
     def inner_output(self, source: DType, target: DType) -> DType:
         """Give the type of the arrow cast of the physical types.
@@ -1743,6 +1826,7 @@ class _TextCast:
     """
 
     DIRECT: ClassVar[frozenset[str]] = Is.CATEGORIES | {"Decimal", "Date", "Datetime"}
+    TEMPORAL: ClassVar[frozenset[str]] = frozenset({"Date", "Datetime", "Time"})
 
     def __init__(self, flat: _FlatCast) -> None:
         """Keep the strategy of flat types, for the casts that go the same way.
@@ -1772,6 +1856,54 @@ class _TextCast:
         Example:
             >>> _TextCast(_FlatCast(CastKernel())).output(DType("String"), DType("Enum", (("a",),)))
             Enum(categories=['a'])
+        """
+        if target.name in self.TEMPORAL:
+            return self._temporal(source, target)
+        if target.name in self.DIRECT:
+            return target
+        return self._flat.output(source, target)
+
+    @polars_releases
+    def _temporal(self, source: DType, target: DType) -> DType:
+        """Refuse the cast of text to a date, a `Datetime` or a `Time`, which polars parses.
+
+        Args:
+            source: `String`.
+            target: The temporal type.
+
+        Raises:
+            PolarsRefusal: The cast is not supported.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> text = _TextCast(_FlatCast(CastKernel()))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     text._temporal(DType("String"), DType("Date"))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: casting from ...
+        """
+        del source
+        message = f"casting from string to {target.name.lower()} is not supported"
+        raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+
+    @_temporal.before("2.0.0")
+    def _parsed(self, source: DType, target: DType) -> DType:
+        """Give the cast of text to a temporal type in the older releases.
+
+        A date and a `Datetime` parse each text, and a `Time` goes the way of
+        a flat type.
+
+        Args:
+            source: `String`.
+            target: The temporal type.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> _TextCast(_FlatCast(CastKernel()))._parsed(DType("String"), DType("Time"))
+            Time
         """
         if target.name in self.DIRECT:
             return target
@@ -2462,12 +2594,14 @@ class _DecimalCast:
 class _CategoricalCast:
     """Cast a `Categorical` or an `Enum`.
 
-    Categories cast to text, to an `Enum`, to a `Categorical`, and to an
-    integer through their ids. A category that an `Enum` target lacks
+    Categories cast to text, to an `Enum`, to a `Categorical`, and, before
+    polars 2.0.0, to an integer through their ids. A category that an `Enum` target lacks
     becomes null. They do not cast to a float.
 
     Example:
-        >>> _CategoricalCast().output(DType("Enum", (("a",),)), DType("UInt8"))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     _CategoricalCast().output(DType("Enum", (("a",),)), DType("UInt8"))
         UInt8
     """
 
@@ -2495,10 +2629,49 @@ class _CategoricalCast:
         """
         if source.same(target):
             return source
-        if target.name in self.TARGETS or Is.integer(target):
+        if target.name in self.TARGETS:
             return target
+        if Is.integer(target):
+            return self._integer(target)
         message = f"cannot cast categorical types to {target!r}"
         raise PolarsRefusal(ErrorClass.COMPUTE, message)
+
+    @polars_releases
+    def _integer(self, target: DType) -> DType:
+        """Refuse the cast of categories to an integer: polars gives their ids with `cat.physical`.
+
+        Args:
+            target: The integer type.
+
+        Raises:
+            PolarsRefusal: The cast is not supported.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     _CategoricalCast()._integer(DType("UInt32"))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ComputeError: cannot cast categorical ...
+        """
+        message = f"cannot cast categorical types to {target!r}"
+        raise PolarsRefusal(ErrorClass.COMPUTE, message)
+
+    @_integer.before("2.0.0")
+    def _ids(self, target: DType) -> DType:
+        """Give the cast of categories to an integer in the older releases: their ids.
+
+        Args:
+            target: The integer type.
+
+        Returns:
+            The integer type.
+
+        Example:
+            >>> _CategoricalCast()._ids(DType("UInt32"))
+            UInt32
+        """
+        return target
 
     def outcome(self, value: object, source: DType, target: DType) -> Outcome:
         """Give the outcome of one value.
@@ -2591,6 +2764,7 @@ class SeriesCast:
             return shortcut
         descended = self._descended(values)
         if descended is not None:
+            StructShapes().check(self._source, self._target, strict=self._strict)
             return descended
         self._check_widths(values)
         output = self._kernel.output(self._source, self._target)
@@ -2666,6 +2840,10 @@ class SeriesCast:
         Returns:
             The type, or `None` where the cast does not cast an inner series (`CastKernel.inner`).
 
+        A strict cast of a struct to a type that is not nested casts each field
+        with no strictness first, so a field that the kernel refuses raises
+        before a field that loses a value.
+
         Example:
             >>> listed = DType("List", (DType("Binary"),))
             >>> cast = SeriesCast(listed, DType("List", (DType("Date"),)), strict=True)
@@ -2676,6 +2854,8 @@ class SeriesCast:
         if pairs is None:
             return None
         if self._source.name == "Struct":
+            if self._strict and not Is.nested(self._target):
+                SeriesCast(self._source, self._target, strict=False).output(values)
             fields = [
                 (name, self._cast(field, other, values, name)) for name, field, other in pairs
             ]
@@ -2753,6 +2933,85 @@ class SeriesCast:
         return Outcome.worst(kernel.outcome(value, source, target) for value in values)
 
 
+class StructShapes:
+    """Check that a strict cast to a struct keeps the fields of the source, as polars 2.0.0 does.
+
+    From polars 2.0.0, a strict cast to a struct, also inside a list or an
+    array, needs as many fields as the source has, with the same names in
+    the same order, or it raises an `InvalidOperationError`. Before that
+    release, polars takes such a cast as deprecated, and checks no value of it
+    (`_unchecked`).
+
+    Example:
+        >>> StructShapes()._unchecked(DType("Int8"), DType("Int8"), strict=True)
+    """
+
+    @polars_releases
+    def check(self, source: DType, target: DType, *, strict: bool) -> None:
+        """Refuse a strict cast to a struct of other fields than the source.
+
+        Args:
+            source: The type of the series.
+            target: The type of the cast.
+            strict: Whether the cast is strict.
+
+        Raises:
+            PolarsRefusal: The fields differ.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> one, other = (DType("Struct", (((name, DType("Int8")),),)) for name in "ab")
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     StructShapes().check(one, other, strict=True)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cast from ...
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     same = StructShapes().check(one, one, strict=True)
+            ...     loose = StructShapes().check(one, other, strict=False)
+            >>> same, loose
+            (None, None)
+        """
+        if strict and self._differ(source, target):
+            message = f"cast from {source!r} to {target!r} failed: the fields of the structs differ"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+
+    @check.before("2.0.0")
+    def _unchecked(self, source: DType, target: DType, *, strict: bool) -> None:
+        """Check nothing, as the older releases do.
+
+        Args:
+            source: The type of the series.
+            target: The type of the cast.
+            strict: Whether the cast is strict.
+        """
+        del source, target, strict
+
+    def _differ(self, source: DType, target: DType) -> bool:
+        """Say whether the struct of a target differs from the struct of the source, at any depth.
+
+        Args:
+            source: The type of the series.
+            target: The type of the cast.
+
+        Returns:
+            Whether a struct of the target has other fields.
+
+        Example:
+            >>> listed = DType("List", (DType("Struct", ((("a", DType("Int8")),),)),))
+            >>> StructShapes()._differ(listed, DType("List", (DType("Struct", ((),)),)))
+            True
+        """
+        if source.name == target.name == "Struct":
+            pairs = list(zip(source.fields(), target.fields(), strict=False))
+            if len(source.fields()) != len(target.fields()):
+                return True
+            return any(a[0] != b[0] or self._differ(a[1], b[1]) for a, b in pairs)
+        if source.name in Is.LISTS and target.name in Is.LISTS:
+            return self._differ(source.inner(), target.inner())
+        return False
+
+
 class CastAbility:
     """Say whether polars marks a cast as possible before it tries the cast.
 
@@ -2787,7 +3046,9 @@ class CastAbility:
             True
             >>> CastAbility().of(DType("Date"), DType("Time")) is None
             True
-            >>> CastAbility().of(DType("Categorical"), DType("String"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     CastAbility().of(DType("Categorical"), DType("String"))
             True
             >>> CastAbility().of(DType("Boolean"), DType("Int8"))
             True
@@ -2813,13 +3074,12 @@ class CastAbility:
             target: The type of the cast.
 
         Returns:
-            `False` beside `Binary`, `True` beside `String`, and `None` otherwise.
+            `False` beside `Binary`, the answer of `_text` beside `String`,
+            and `None` otherwise.
 
         Example:
             >>> CastAbility()._categories(DType("Categorical"), DType("Binary"))
             False
-            >>> CastAbility()._categories(DType("String"), DType("Categorical"))
-            True
             >>> CastAbility()._categories(DType("Categorical"), DType("Date")) is None
             True
         """
@@ -2827,7 +3087,35 @@ class CastAbility:
         if other.name == "Binary":
             return False
         if other.name == "String":
-            return True
+            return self._text()
+        return None
+
+    @polars_releases
+    def _text(self) -> bool | None:
+        """Give the answer for a category beside `String`: `True`.
+
+        Returns:
+            `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     CastAbility()._categories(DType("String"), DType("Categorical"))
+            True
+        """
+        return True
+
+    @_text.before("1.40.0")
+    def _no_text_entry(self) -> bool | None:
+        """Give the answer of the older releases for a category beside `String`: no entry.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> CastAbility()._no_text_entry() is None
+            True
+        """
         return None
 
     def _boolean(self, source: DType, target: DType) -> bool:

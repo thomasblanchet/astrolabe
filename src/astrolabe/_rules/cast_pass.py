@@ -35,8 +35,9 @@ from astrolabe._rules.casts import (
 from astrolabe._rules.dtypes import DType, Is, Parameter, TimeUnit
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
 from astrolabe._rules.operators import NumericOp, Operator
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import LosslessUpcast, Supertype, SupertypeFlag
-from astrolabe._rules.type_functions import Operand
+from astrolabe._rules.type_functions import Operand, StructBesideNumber
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -204,6 +205,24 @@ class NewRoot:
             is_null
         """
         return self.kind.value if self.value is None else f"{self.kind.value}({self.value})"
+
+
+class VisitTurn(enum.Enum):
+    """Name one visit of the cast pass to a node, by the time that it reads the inputs of the node.
+
+    The pass reaches the inputs of the root before the root, so the root has
+    one visit, which reads its inputs after their own visits (`ROOT`). The
+    pass reaches every other node before its inputs (`FIRST`), and once more
+    after them (`SECOND`).
+
+    Example:
+        >>> VisitTurn.ROOT.value
+        'root'
+    """
+
+    ROOT = "root"
+    FIRST = "first"
+    SECOND = "second"
 
 
 @dataclass(frozen=True)
@@ -441,9 +460,9 @@ class CastColumnsPolicy:
     """Say whether a strict cast needs to run, by the policy that a lazy query gives it.
 
     The cast pass reads every strict cast with this policy. The policy allows
-    an integer upcast that keeps every value, any cast between floats, any
-    change of the unit or the zone of a `Datetime`, and a cast of `Null` to any
-    type. It does not allow a cast of an integer to a float. A struct target
+    an integer upcast that keeps every value, any cast between floats, a
+    change of the unit or the zone of a `Datetime` (`_datetimes`), and a cast
+    of `Null` to any type. It does not allow a cast of an integer to a float. A struct target
     allows missing fields and ignores extra fields. A list and an array check
     their inner types. Where the policy does not allow a cast, polars gives a
     schema error, so the policy raises `PolarsRefusal`. The cast pass ignores
@@ -576,11 +595,58 @@ class CastColumnsPolicy:
             allowed = upcast is not None and upcast.same(target)
         else:
             floats = Is.float(target) and Is.float(incoming)
-            allowed = floats or target.name == incoming.name == "Datetime"
+            moments = target.name == incoming.name == "Datetime"
+            allowed = floats or (moments and self._datetimes(target, incoming))
         if allowed:
             return True
         message = f"data type mismatch: incoming: {incoming!r} != target: {target!r}"
         raise PolarsRefusal(ErrorClass.SCHEMA, message)
+
+    @polars_releases
+    def _datetimes(self, target: DType, incoming: DType) -> bool:
+        """Say whether the policy allows a cast of one `Datetime` to another: always.
+
+        Args:
+            target: The target `Datetime`.
+            incoming: The `Datetime` of the input.
+
+        Returns:
+            Always `True`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> fine, coarse = DType("Datetime", ("ns", None)), DType("Datetime", ("ms", None))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     CastColumnsPolicy()._datetimes(fine, coarse)
+            True
+        """
+        del target, incoming
+        return True
+
+    @_datetimes.before("1.43.0")
+    def _datetime_downcasts(self, target: DType, incoming: DType) -> bool:
+        """Say whether the policy of the older releases allows the cast, to a coarser unit only.
+
+        The older releases have no option of the policy for an upcast of the
+        unit, so a cast to a finer unit does not pass. A change of the zone
+        passes in every release.
+
+        Args:
+            target: The target `Datetime`.
+            incoming: The `Datetime` of the input.
+
+        Returns:
+            Whether the target has the unit of the input, or a coarser one.
+
+        Example:
+            >>> fine, coarse = DType("Datetime", ("ns", None)), DType("Datetime", ("ms", None))
+            >>> policy = CastColumnsPolicy()
+            >>> policy._datetime_downcasts(coarse, fine), policy._datetime_downcasts(fine, coarse)
+            (True, False)
+        """
+        target_ticks = TimeUnit.PER_SECOND[str(Parameter().text(target, 0))]
+        incoming_ticks = TimeUnit.PER_SECOND[str(Parameter().text(incoming, 0))]
+        return target_ticks <= incoming_ticks
 
 
 class CastNodeVisit:
@@ -592,7 +658,8 @@ class CastNodeVisit:
     is not strict otherwise. Where the policy does not allow it, the cast stays
     strict. Then a cast of a literal to a known type folds into the literal,
     with the option that the cast had before the policy. A failed fold raises
-    `PolarsRefusal`.
+    `PolarsRefusal`. From polars 1.44.1, a cast to the planner type
+    `Unknown(Any)` goes away, because the engine runs it as no cast at all.
 
     Example:
         >>> int8 = Operand.column(DType("Int8"))
@@ -602,8 +669,12 @@ class CastNodeVisit:
         literal(Int8)
     """
 
+    @polars_releases
     def visit(self, operand: Operand, target: DType, option: CastOption) -> Step | None:
         """Give the step that the cast node becomes.
+
+        A cast to the planner type `Unknown(Any)` goes away. Every other cast
+        follows the rule of the older releases (`_keeps_cast_to_any`).
 
         Args:
             operand: The input of the cast.
@@ -618,6 +689,41 @@ class CastNodeVisit:
             >>> int8 = Operand.column(DType("Int8"))
             >>> CastNodeVisit().visit(int8, DType("Int8"), CastOption.STRICT) is None
             True
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.1"):
+            ...     CastNodeVisit().visit(int8, DType.unknown("any"), CastOption.STRICT) is None
+            True
+            >>> with PolarsRelease.pretend("1.44.1"):
+            ...     CastNodeVisit().visit(int8, DType("Int16"), CastOption.STRICT)
+            cast(Int16, overflowing)
+        """
+        if Is.unknown_any(target):
+            return None
+        return self._keeps_cast_to_any(operand, target, option)
+
+    @visit.before("1.44.1")
+    def _keeps_cast_to_any(
+        self,
+        operand: Operand,
+        target: DType,
+        option: CastOption,
+    ) -> Step | None:
+        """Give the step that the cast node becomes, where a cast to `Unknown(Any)` stays a cast.
+
+        Args:
+            operand: The input of the cast.
+            target: The target of the cast.
+            option: The option of the cast.
+
+        Returns:
+            The cast with its new option, the literal of its new type, or
+            `None` where the cast goes away.
+
+        Example:
+            >>> int8 = Operand.column(DType("Int8"))
+            >>> any_type = DType.unknown("any")
+            >>> CastNodeVisit()._keeps_cast_to_any(int8, any_type, CastOption.STRICT)
+            cast(Unknown, strict)
         """
         settled = self._option(operand.dtype, target, option)
         if settled is None:
@@ -919,8 +1025,10 @@ class ComparisonLiteral:
 
         A temporal input compares `<=` with the last value of the coarser
         unit of the literal, and `==` becomes `is_between`. Both need a
-        literal of a coarser unit than the input. The other operators take
-        the literal cast to the type of the input.
+        literal of a coarser unit than the input. From polars 2.0.0, `!=`,
+        `eq_missing` and `ne_missing` with such a literal keep no rewrite
+        (`_unrewritten`). The other operators take the literal cast to the
+        type of the input.
 
         Args:
             lhs: The type of the other input.
@@ -934,12 +1042,49 @@ class ComparisonLiteral:
             >>> moment = DType("Datetime", ("ns", None))
             >>> ComparisonLiteral()._replaced(moment, Operator.EQ, DType("Datetime", ("ms", None)))
             is_between
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> coarse = DType("Datetime", ("ms", None))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     ComparisonLiteral()._replaced(moment, Operator.NOT_EQ, coarse) is None
+            True
         """
-        if not Is.temporal(lhs) or op not in {Operator.LT_EQ, Operator.EQ}:
+        if not Is.temporal(lhs):
+            return lhs
+        if op in self._unrewritten() and self._has_upper_bound(scalar, lhs):
+            return None
+        if op not in {Operator.LT_EQ, Operator.EQ}:
             return lhs
         if not self._has_upper_bound(scalar, lhs):
             return None
         return lhs if op is Operator.LT_EQ else NewRoot(RootKind.IS_BETWEEN)
+
+    @polars_releases
+    def _unrewritten(self) -> frozenset[Operator]:
+        """Give the operators that keep no rewrite beside a literal of a coarser unit.
+
+        Returns:
+            `!=`, `eq_missing` and `ne_missing`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     Operator.NOT_EQ in ComparisonLiteral()._unrewritten()
+            True
+        """
+        return frozenset({Operator.NOT_EQ, Operator.EQ_VALIDITY, Operator.NOT_EQ_VALIDITY})
+
+    @_unrewritten.before("2.0.0")
+    def _all_rewritten(self) -> frozenset[Operator]:
+        """Give no operator, as the older releases rewrite each of them.
+
+        Returns:
+            No operator.
+
+        Example:
+            >>> ComparisonLiteral()._all_rewritten()
+            frozenset()
+        """
+        return frozenset()
 
     def _has_upper_bound(self, scalar: DType, lhs: DType) -> bool:
         """Say whether the literal has a coarser unit than the input.
@@ -1198,7 +1343,8 @@ class CoercedBinopDtype:
             right: The right input.
 
         Returns:
-            The type, or `None` where there is none or it is a planner type `Unknown`.
+            The type, or `None` where there is none or the pass casts to no
+            planner type `Unknown` of that kind (`_casts_to`).
 
         Example:
             >>> text, enum = DType("String"), DType("Enum", (("a",),))
@@ -1213,15 +1359,52 @@ class CoercedBinopDtype:
         names = {ltype.name, rtype.name}
         if "String" in names and names & Is.CATEGORIES:
             joined = DType("String")
+        return self._casts_to(joined)
+
+    @polars_releases
+    def _casts_to(self, joined: DType) -> DType | None:
+        """Give the supertype where the pass casts to it: never to a planner type `Unknown`.
+
+        Args:
+            joined: The supertype.
+
+        Returns:
+            The supertype, or `None` where it is a planner type `Unknown`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     CoercedBinopDtype()._casts_to(DType.unknown("float")) is None
+            True
+        """
         return None if Is.unknown(joined) else joined
+
+    @_casts_to.before("1.43.0")
+    def _casts_to_literal_types(self, joined: DType) -> DType | None:
+        """Give the supertype where the pass casts to it, as the older releases do.
+
+        The older releases cast to the planner type `Unknown` of an integer or a
+        float literal, and to no planner type `Unknown(Any)`.
+
+        Args:
+            joined: The supertype.
+
+        Returns:
+            The supertype, or `None` where it is `Unknown(Any)`.
+
+        Example:
+            >>> CoercedBinopDtype()._casts_to_literal_types(DType.unknown("float")).args
+            ('float', None)
+        """
+        return None if Is.unknown_any(joined) else joined
 
 
 class BinaryCasts:
     """Give the changes of one visit of the cast pass to a binary operator.
 
     A literal type beside the planner type `Unknown` of an input takes the type
-    that it takes alone. An integer literal type beside a float literal type
-    casts to the float literal type. A comparison with a literal first tries
+    that it takes alone. From polars 1.43.2, an integer literal type beside a
+    float literal type casts to the float literal type. A comparison with a literal first tries
     the rewrite of `ComparisonLiteral`. Two inputs of one type stay. In arithmetic, a number
     beside a struct casts to a struct of the first field, and a list or an
     array casts only where its leaf is a planner type `Unknown`. Every other
@@ -1270,9 +1453,11 @@ class BinaryCasts:
         ltype, rtype = left.dtype, right.dtype
         if ltype.same(rtype):
             return Visit.unchanged(2)
-        arithmetic = self._arithmetic(op, ltype, rtype) if op.is_arithmetic() else None
-        if arithmetic is not None:
-            return arithmetic
+        arms = self._decimals(op, ltype, rtype)
+        if arms is None and op.is_arithmetic():
+            arms = self._arithmetic(op, ltype, rtype)
+        if arms is not None:
+            return arms
         joined = CoercedBinopDtype().of(op, left, right)
         if joined is None:
             return Visit.unchanged(2)
@@ -1294,10 +1479,104 @@ class BinaryCasts:
             True
         """
         if self._struct_beside_number(left, right):
-            return self._struct(left, right)
+            return self._struct(op, left, right)
         if {left.name, right.name} & Is.LISTS:
             return self._nested(op, left, right)
         return None
+
+    DECIMAL_OPS: ClassVar[frozenset[Operator]] = frozenset({
+        Operator.PLUS,
+        Operator.MINUS,
+        Operator.MULTIPLY,
+        Operator.TRUE_DIVIDE,
+        Operator.RUST_DIVIDE,
+        Operator.FLOOR_DIVIDE,
+        Operator.MODULUS,
+    })
+
+    @polars_releases
+    def _decimals(self, op: Operator, left: DType, right: DType) -> Visit | None:
+        """Give the changes of an operator on decimals and integers.
+
+        The kernels take decimals of other scales, so the pass casts no
+        decimal. It casts an integer to `Decimal(38, 0)`, strictly for a
+        128-bit integer, which can overflow it.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            The changes, or `None` where the pair is not decimals with integers.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> decimal = DType("Decimal", (5, 2))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     BinaryCasts()._decimals(Operator.PLUS, DType("Int128"), decimal)
+            Visit(steps=((cast(Decimal(precision=38, scale=0), strict),), ()), root=None)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     BinaryCasts()._decimals(Operator.AND, DType("Int8"), decimal) is None
+            True
+        """
+        if not (op.is_comparison() or op in self.DECIMAL_OPS):
+            return None
+        names = {left.name, right.name}
+        if "Decimal" not in names or not all(self._decimal_side(dtype) for dtype in (left, right)):
+            return None
+        return Visit((self._to_decimal(left), self._to_decimal(right)))
+
+    @_decimals.before("2.0.0")
+    def _decimals_by_supertype(self, op: Operator, left: DType, right: DType) -> Visit | None:
+        """Give no changes here: the older releases cast decimals to their supertype.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            `None`.
+
+        Example:
+            >>> BinaryCasts()._decimals_by_supertype(Operator.PLUS, DType("Int8"), DType("Int8"))
+        """
+        del op, left, right
+        return None
+
+    def _decimal_side(self, dtype: DType) -> bool:
+        """Say whether a type is a `Decimal` or an integer, an integer literal included.
+
+        Args:
+            dtype: The type.
+
+        Returns:
+            Whether it is one.
+
+        Example:
+            >>> BinaryCasts()._decimal_side(DType.dynamic_int(1))
+            True
+        """
+        return dtype.name == "Decimal" or Is.integer(dtype)
+
+    def _to_decimal(self, dtype: DType) -> tuple[Step, ...]:
+        """Give the cast of an integer to `Decimal(38, 0)`, and no cast of a decimal.
+
+        Args:
+            dtype: The type.
+
+        Returns:
+            The steps.
+
+        Example:
+            >>> BinaryCasts()._to_decimal(DType("Int8"))
+            (cast(Decimal(precision=38, scale=0), non_strict),)
+        """
+        if dtype.name == "Decimal":
+            return ()
+        option = CastOption.STRICT if dtype.name in {"Int128", "UInt128"} else CastOption.NON_STRICT
+        return (Step.cast(DType("Decimal", (38, 0)), option),)
 
     def _cast(self, dtype: DType, joined: DType) -> tuple[Step, ...]:
         """Give the cast of one input to the joined type, where its type differs.
@@ -1362,6 +1641,7 @@ class BinaryCasts:
         """
         return Is.unknown(dtype) and not Is.unknown_any(dtype)
 
+    @polars_releases
     def _beside_float(self, left: DType, right: DType) -> Visit | None:
         """Give the cast of an integer literal type beside a float literal type.
 
@@ -1378,20 +1658,41 @@ class BinaryCasts:
             The changes, or `None` where the pair goes on to the other rules.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> dynamic, floats = DType.dynamic_int(7), DType.unknown("float")
-            >>> visit = BinaryCasts()._beside_float(floats, dynamic)
+            >>> with PolarsRelease.pretend("1.43.2"):
+            ...     visit = BinaryCasts()._beside_float(floats, dynamic)
+            ...     beside = BinaryCasts()._beside_float(dynamic, floats)
+            ...     same = BinaryCasts()._beside_float(dynamic, dynamic)
             >>> visit.steps  # the right side casts to the float literal type
             ((), (cast(Unknown, non_strict),))
-            >>> visit.steps[1][0].dtype.same(floats)
-            True
-            >>> BinaryCasts()._beside_float(dynamic, dynamic) is None
-            True
+            >>> visit.steps[1][0].dtype.same(floats), beside.steps[1], same is None
+            (True, (), True)
         """
         cast = (Step.cast(DType.unknown("float"), CastOption.NON_STRICT),)
         if Is.dynamic_int(left) and self._dynamic_float(right):
             return Visit((cast, ()))
         if self._dynamic_float(left) and Is.dynamic_int(right):
             return Visit(((), cast))
+        return None
+
+    @_beside_float.before("1.43.2")
+    def _no_cast_beside_float(self, left: DType, right: DType) -> Visit | None:
+        """Leave the pair to the other rules, as the older releases do.
+
+        Args:
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            Always `None`.
+
+        Example:
+            >>> dynamic, floats = DType.dynamic_int(7), DType.unknown("float")
+            >>> BinaryCasts()._no_cast_beside_float(floats, dynamic) is None
+            True
+        """
+        del left, right
         return None
 
     def _dynamic_float(self, dtype: DType) -> bool:
@@ -1481,10 +1782,42 @@ class BinaryCasts:
         forward = left.name == "Struct" and Is.primitive_numeric(right)
         return forward or (right.name == "Struct" and Is.primitive_numeric(left))
 
-    def _struct(self, left: DType, right: DType) -> Visit:
-        """Cast the number to a struct of the first field of the struct.
+    @polars_releases
+    def _struct(self, op: Operator, left: DType, right: DType) -> Visit:
+        """Cast the struct to its fields joined with the number (`StructBesideNumber`).
 
         Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            The changes: none where the struct already has the joined fields.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> struct = DType("Struct", ((("a", DType("Int8")),),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     BinaryCasts()._struct(Operator.PLUS, struct, DType("Int16"))
+            Visit(steps=((cast(Struct({'a': Int16}), non_strict),), ()), root=None)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     BinaryCasts()._struct(Operator.EQ, struct, DType("Int16")).steps
+            ((), ())
+        """
+        joined = StructBesideNumber().joined(op, left, right)
+        index = 0 if left.name == "Struct" else 1
+        struct = (left, right)[index]
+        if joined is None or joined.same(struct):
+            return Visit.unchanged(2)
+        cast = (Step.cast(joined, CastOption.NON_STRICT),)
+        return Visit((cast, ()) if index == 0 else ((), cast))
+
+    @_struct.before("2.0.0")
+    def _first_field(self, op: Operator, left: DType, right: DType) -> Visit:
+        """Cast the number to a struct of the first field of the struct, as the older releases do.
+
+        Args:
+            op: The operator.
             left: The left type.
             right: The right type.
 
@@ -1493,11 +1826,13 @@ class BinaryCasts:
 
         Example:
             >>> struct = DType("Struct", ((("a", DType("Int8")), ("b", DType("Date"))),))
-            >>> BinaryCasts()._struct(struct, DType("Float32"))
+            >>> BinaryCasts()._first_field(Operator.PLUS, struct, DType("Float32"))
             Visit(steps=((), (cast(Struct({'a': Int8}), non_strict),)), root=None)
-            >>> BinaryCasts()._struct(DType("Struct", ((),)), DType("Float32")).steps
+            >>> empty = DType("Struct", ((),))
+            >>> BinaryCasts()._first_field(Operator.PLUS, empty, DType("Float32")).steps
             ((), ())
         """
+        del op
         struct, index = (left, 1) if left.name == "Struct" else (right, 0)
         fields = struct.fields()
         if not fields:
@@ -1505,11 +1840,12 @@ class BinaryCasts:
         cast = (Step.cast(DType("Struct", (fields[:1],)), CastOption.NON_STRICT),)
         return Visit(((), cast) if index == 1 else (cast, ()))
 
+    @polars_releases
     def _nested(self, op: Operator, left: DType, right: DType) -> Visit:
         """Cast a list or an array whose leaf is a planner type `Unknown`.
 
         The pass maps the operator to its list operation, and casts nothing
-        where the leaves have no join.
+        where the leaves have no join. Polars has this rule from 1.43.0.
 
         Args:
             op: The operator.
@@ -1520,8 +1856,10 @@ class BinaryCasts:
             The changes: each input with a leaf `Unknown` casts its leaf to the joined leaf.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> listed = DType("List", (DType.dynamic_int(1),))
-            >>> BinaryCasts()._nested(Operator.PLUS, listed, DType("Int8"))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     BinaryCasts()._nested(Operator.PLUS, listed, DType("Int8"))
             Visit(steps=((cast(List(Int8), non_strict),), ()), root=None)
         """
         list_op = self.LIST_OPS.get(op)
@@ -1538,6 +1876,26 @@ class BinaryCasts:
             cast = Step.cast(dtype.with_leaf(leaf), CastOption.NON_STRICT)
             steps.append((cast,) if Is.unknown(dtype.leaf()) else ())
         return Visit((steps[0], steps[1]))
+
+    @_nested.before("1.43.0")
+    def _no_nested_cast(self, op: Operator, left: DType, right: DType) -> Visit:
+        """Cast no list and no array, as the older releases do.
+
+        Args:
+            op: The operator.
+            left: The left type.
+            right: The right type.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> listed = DType("List", (DType.dynamic_int(1),))
+            >>> BinaryCasts()._no_nested_cast(Operator.PLUS, listed, DType("Int8")).steps
+            ((), ())
+        """
+        del op, left, right
+        return Visit.unchanged(2)
 
 
 class TernaryCasts:
@@ -1619,8 +1977,10 @@ class EwmCasts:
     the cast pass, and no casting rule in their options. The rule casts an
     input that is not a float to `Float64`, with a cast that is not strict. A
     float, a float literal included, stays. The rule applies at each visit,
-    and a second visit finds a float. The rule also refuses a weight `alpha`
-    outside of 0 to 1, which the Python API of polars never builds.
+    and a second visit finds a float. From polars 1.44.0, the rule refuses a
+    `Struct`, whose cast to a number gives a `Struct` again. The rule also
+    refuses a weight `alpha` outside of 0 to 1, which the Python API of
+    polars never builds.
 
     Example:
         >>> EwmCasts().visit([Operand.column(DType("Int8"))])
@@ -1631,6 +1991,7 @@ class EwmCasts:
 
     TARGET: ClassVar[DType] = DType("Float64")
 
+    @polars_releases
     def visit(self, operands: Sequence[Operand]) -> Visit:
         """Give the steps of the one input.
 
@@ -1640,9 +2001,42 @@ class EwmCasts:
         Returns:
             The visit.
 
+        Raises:
+            PolarsRefusal: The input is a `Struct`.
+
         Example:
             >>> EwmCasts().visit([Operand.column(DType("Float16"))]).steps
             ((),)
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> nested = Operand.column(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     EwmCasts().visit([Operand.column(DType("Int8"))]).steps
+            ((cast(Float64, non_strict),),)
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     EwmCasts().visit([nested])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `ewm` operation ...
+        """
+        dtype = operands[0].dtype
+        if dtype.name == "Struct":
+            message = f"`ewm` operation not supported for dtype `{dtype!r}`"
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        return self._casts_any_input(operands)
+
+    @visit.before("1.44.0")
+    def _casts_any_input(self, operands: Sequence[Operand]) -> Visit:
+        """Give the steps of the one input, where the rule casts a `Struct` as it casts any type.
+
+        Args:
+            operands: The one input.
+
+        Returns:
+            The visit.
+
+        Example:
+            >>> EwmCasts()._casts_any_input([Operand.column(DType("Int8"))]).steps
+            ((cast(Float64, non_strict),),)
         """
         if Is.float(operands[0].dtype):
             return Visit.unchanged(1)
@@ -1969,6 +2363,7 @@ class IsInRound:
 
     For `SUPERTYPE`, `dtype` is the target of the values and `nested` the
     target of the collection. For a cast of one side, `dtype` is its target.
+    `final` says that the pass makes no more round after this one.
 
     Example:
         >>> IsInRound(IsInChange.SELF_CAST, DType("Enum", (("a",),)), strict=True)
@@ -1979,9 +2374,10 @@ class IsInRound:
     dtype: DType | None = None
     nested: DType | None = None
     strict: bool = False
+    final: bool = False
 
     def __repr__(self) -> str:
-        """Give the change, its targets and its option.
+        """Give the change, its targets and its options.
 
         Returns:
             The text.
@@ -1989,27 +2385,26 @@ class IsInRound:
         Example:
             >>> IsInRound(IsInChange.IMPLODE)
             implode()
+            >>> IsInRound(IsInChange.SELF_CAST, DType("Int8"), final=True)
+            self_cast(Int8, final)
         """
         parts = [repr(dtype) for dtype in (self.dtype, self.nested) if dtype is not None]
-        if self.strict:
-            parts.append("strict")
+        parts.extend(name for name in ("strict", "final") if getattr(self, name))
         return f"{self.change.value}({', '.join(parts)})"
 
 
 class IsInResolution:
     """Give the change that the cast pass of `is_in` asks for, from the types of the two inputs.
 
-    The value side has one level of nesting less than the collection side, a
-    level being one `List` or `Array`. Two sides of the same level make
-    `is_in`, but not `contains`, implode the collection. Two equal types need
-    nothing. Text beside categories casts one side. A `Decimal` value takes a
-    collection of numbers. Units of time must not get coarser. Numbers take
-    their lossless join, or their supertype. The other pairs refuse the plan
-    with `PolarsRefusal`.
+    Two sides of the same level of nesting make `is_in`, but not `contains`,
+    implode the collection, a level being one `List` or `Array`. The rest
+    depends on the release (`_needle`).
 
     Example:
         >>> resolution = IsInResolution("is_in", contains=False)
-        >>> resolution.resolve(DType("Int8"), DType("List", (DType("UInt8"),)))
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     resolution.resolve(DType("Int8"), DType("List", (DType("UInt8"),)))
         supertype(Int16, List(Int16))
     """
 
@@ -2047,17 +2442,101 @@ class IsInResolution:
         Returns:
             The change, or `None` where the two sides agree.
 
-        Raises:
-            PolarsRefusal: The levels of nesting do not fit.
+        It raises `PolarsRefusal` where the two sides do not fit (`_needle`).
 
         Example:
             >>> IsInResolution("is_in", contains=False).resolve(DType("Int8"), DType("Int8"))
             implode()
         """
-        value_level, collection_level = self._level(value), self._level(collection)
-        if not self._contains and value_level == collection_level:
+        if not self._contains and self._level(value) == self._level(collection):
             return IsInRound(IsInChange.IMPLODE)
-        if value_level + 1 != collection_level:
+        return self._needle(value, collection)
+
+    @polars_releases
+    def _needle(self, value: DType, collection: DType) -> IsInRound | None:
+        """Give the change that lets the kernel compare the values with the inner values.
+
+        The collection must be a list or an array. The values take the type
+        that they take alone, and two equal types need nothing. Null values
+        cast to the inner type, and a collection whose inner values can only
+        be null casts to the type of the values (`_null_shape`). Numbers of
+        one kind cast the values, and numbers of two kinds refuse the plan
+        (`_numbers`). Decimals, temporal types and text follow `_others`.
+
+        Args:
+            value: The type of the values to look for.
+            collection: The type of the collection.
+
+        Returns:
+            The change, or `None` where the two sides agree.
+
+        Raises:
+            PolarsRefusal: The collection is not a list or an array.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> listed = DType("List", (DType("Int16"),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsInResolution("is_in", contains=False)._needle(DType("Int8"), listed)
+            self_cast(Int16)
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> nested = DType("List", (DType("List", (DType("Null"),)),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     same = resolution._needle(DType("Int16"), listed)
+            ...     nulls = resolution._needle(DType("Null"), listed)
+            ...     shaped = resolution._needle(DType("List", (DType("Int8"),)), nested)
+            >>> same, nulls, shaped
+            (None, self_cast(Int16), other_cast(List(List(Int8))))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     resolution._needle(DType("Int8"), DType("Int8"))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: 'is_in' cannot check ...
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     resolution._needle(DType("String"), listed)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: 'is_in' cannot check ...
+        """
+        if collection.name not in Is.LISTS:
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, self._refusal(value, collection))
+        needle, inner = value.materialized(), collection.inner()
+        if needle.same(inner):
+            return None
+        if needle.name == "Null":
+            return IsInRound(IsInChange.SELF_CAST, inner)
+        if self._null_shape(inner, needle):
+            return IsInRound(IsInChange.OTHER_CAST, self._wrapped(collection, needle))
+        if Is.primitive_numeric(needle) and Is.primitive_numeric(inner):
+            return self._numbers(needle, inner, collection)
+        return self._others(needle, inner, collection)
+
+    @_needle.before("2.0.0")
+    def _needle_by_levels(self, value: DType, collection: DType) -> IsInRound | None:
+        """Give the change of the older releases, which casts both sides to a join.
+
+        The value side has one level of nesting less than the collection side.
+        Two equal types need nothing. Text beside categories casts one side. A
+        `Decimal` value takes a collection of numbers. Units of time must not
+        get coarser. Numbers take their lossless join, or their supertype. The
+        other pairs refuse the plan with `PolarsRefusal`.
+
+        Args:
+            value: The type of the values to look for.
+            collection: The type of the collection.
+
+        Returns:
+            The change, or `None` where the two sides agree.
+
+        Raises:
+            PolarsRefusal: The levels of nesting do not fit.
+
+        Example:
+            >>> listed = DType("List", (DType("UInt8"),))
+            >>> IsInResolution("is_in", contains=False)._needle_by_levels(DType("Int8"), listed)
+            supertype(Int16, List(Int16))
+        """
+        if self._level(value) + 1 != self._level(collection):
             message = self._refusal(value, collection)
             raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
         inner = collection.inner()
@@ -2065,6 +2544,177 @@ class IsInResolution:
             return None
         text = self._text(value, collection, inner)
         return text if text is not None else self._rest(value, collection, inner)
+
+    def _null_shape(self, element: DType, needle: DType) -> bool:
+        """Say whether the inner values can only be null where the values hold values.
+
+        Args:
+            element: The inner type of the collection.
+            needle: The type of the values.
+
+        Returns:
+            Whether it is so: `Null`, or a list, an array or a struct of the
+            shape of the values, with `Null` at its leaves.
+
+        Example:
+            >>> nulls, listed = DType("List", (DType("Null"),)), DType("List", (DType("Int8"),))
+            >>> IsInResolution("is_in", contains=False)._null_shape(nulls, listed)
+            True
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> arrays = DType("Array", (DType("Null"), 2)), DType("Array", (DType("Int8"), 2))
+            >>> text = DType("String")
+            >>> resolution._null_shape(*arrays), resolution._null_shape(text, DType("Int8"))
+            (True, False)
+            >>> one = DType("Struct", ((("a", DType("Null")),),))
+            >>> two = DType("Struct", ((("a", DType("Null")), ("b", DType("Null"))),))
+            >>> struct = DType("Struct", ((("a", DType("Int8")),),))
+            >>> resolution._null_shape(one, struct), resolution._null_shape(two, struct)
+            (True, False)
+        """
+        if element.name == "Null":
+            return True
+        if element.name != needle.name or element.name not in {*Is.LISTS, "Struct"}:
+            return False
+        if element.name == "List":
+            return self._null_shape(element.inner(), needle.inner())
+        if element.name == "Array":
+            same = element.args[1] == needle.args[1]
+            return same and self._null_shape(element.inner(), needle.inner())
+        pairs = list(zip(element.fields(), needle.fields(), strict=False))
+        if len(element.fields()) != len(needle.fields()):
+            return False
+        return all(a[0] == b[0] and self._null_shape(a[1], b[1]) for a, b in pairs)
+
+    def _numbers(self, needle: DType, inner: DType, collection: DType) -> IsInRound | None:
+        """Give the change of two numbers.
+
+        Two integers or two floats cast the values to the inner type. The cast
+        runs in the plan where the inner type is the lossless join of the two,
+        and as the kernel runs otherwise (`_guarded`). An integer beside a float
+        refuses the plan.
+
+        Args:
+            needle: The type of the values.
+            inner: The inner type of the collection.
+            collection: The type of the collection.
+
+        Returns:
+            The change.
+
+        Raises:
+            PolarsRefusal: The numbers are of two kinds.
+
+        Example:
+            >>> listed = DType("List", (DType("Int8"),))
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> resolution._numbers(DType("Int16"), DType("Int8"), listed)
+            self_cast(Int8, final)
+            >>> floats = DType("List", (DType("Float64"),))
+            >>> resolution._numbers(DType("Int8"), floats.inner(), floats)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: 'is_in' cannot check ...
+        """
+        integers = Is.integer(needle) and Is.integer(inner)
+        if not (integers or (Is.float(needle) and Is.float(inner))):
+            Supertype().require(needle, inner)
+            message = self._refusal(needle, collection)
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        joined = LosslessUpcast().of(needle, inner)
+        if joined is not None and joined.same(inner):
+            return IsInRound(IsInChange.SELF_CAST, inner)
+        return self._guarded(inner)
+
+    def _others(self, needle: DType, inner: DType, collection: DType) -> IsInRound | None:
+        """Give the change of two types that are not both numbers.
+
+        Two decimals agree, an integer beside a decimal casts to
+        `Decimal(38, 0)`, and a decimal beside an integer casts to the integer,
+        as the kernel runs (`_guarded`). Two datetimes must both have a zone or
+        both have none: another unit casts the values to the unit of the
+        collection, as the kernel runs. A `Duration` of another unit does the
+        same. Text beside categories agrees. Every other pair refuses the plan.
+
+        Args:
+            needle: The type of the values.
+            inner: The inner type of the collection.
+            collection: The type of the collection.
+
+        Returns:
+            The change, or `None` where the two sides agree.
+
+        Raises:
+            PolarsRefusal: The pair has no change.
+
+        Example:
+            >>> listed = DType("List", (DType("Decimal", (10, 2)),))
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> resolution._others(DType("Int8"), listed.inner(), listed)
+            self_cast(Decimal(precision=38, scale=0), final)
+            >>> decimal = DType("Decimal", (5, 2))
+            >>> resolution._others(decimal, listed.inner(), listed) is None
+            True
+            >>> integers = DType("List", (DType("Int8"),))
+            >>> resolution._others(decimal, integers.inner(), integers)
+            self_cast(Int8, final)
+            >>> spans = DType("List", (DType("Duration", ("us",)),))
+            >>> resolution._others(DType("Duration", ("ms",)), spans.inner(), spans)
+            self_cast(Duration(time_unit='us'), final)
+            >>> moments = DType("List", (DType("Datetime", ("us", None)),))
+            >>> moment = DType("Datetime", ("us", None))
+            >>> resolution._others(moment, moments.inner(), moments) is None
+            True
+            >>> resolution._others(DType("Datetime", ("ms", None)), moments.inner(), moments)
+            self_cast(Datetime(time_unit='us', time_zone=None), final)
+            >>> zoned = DType("Datetime", ("us", "UTC"))
+            >>> resolution._others(zoned, moments.inner(), moments)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: 'is_in' cannot check ...
+        """
+        names = (needle.name, inner.name)
+        if names == ("Decimal", "Decimal") or {*names} in self.TEXT_PAIRS:
+            return None
+        if names[1] == "Decimal" and Is.integer(needle):
+            return self._guarded(DType("Decimal", (38, 0)))
+        if names[0] == "Decimal" and Is.integer(inner):
+            return self._guarded(inner)
+        if names == ("Duration", "Duration"):
+            return self._guarded(inner)
+        zoned = names == ("Datetime", "Datetime") and (needle.args[1] is None) == (
+            inner.args[1] is None
+        )
+        if not zoned:
+            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, self._refusal(needle, collection))
+        if needle.args[0] == inner.args[0]:
+            return None
+        return self._guarded(DType("Datetime", (inner.args[0], needle.args[1])))
+
+    TEXT_PAIRS: ClassVar[tuple[set[str], ...]] = (
+        {"String", "Enum"},
+        {"String", "Categorical"},
+    )
+
+    def _guarded(self, dtype: DType) -> IsInRound:
+        """Give the cast of the values that runs with the kernel, the last round of the pass.
+
+        The pass leaves the node with the target of the cast, and the kernel
+        casts the values first. A value that the cast changes matches nothing,
+        so the type of the output does not change. Polars makes no more round
+        on such a node. The cast to the type of an integer literal keeps the
+        values as they are (`CastKernel.clones`).
+
+        Args:
+            dtype: The target of the cast.
+
+        Returns:
+            The change.
+
+        Example:
+            >>> IsInResolution("is_in", contains=False)._guarded(DType.dynamic_int(1))
+            self_cast(Unknown(int, 1), final)
+        """
+        return IsInRound(IsInChange.SELF_CAST, dtype, final=True)
 
     def _level(self, dtype: DType) -> int:
         """Give the number of `List` and `Array` levels of a type.
@@ -2086,8 +2736,9 @@ class IsInResolution:
             dtype = dtype.inner()
         return level
 
+    @polars_releases
     def _refusal(self, value: DType, collection: DType) -> str:
-        """Give the message of the refusal of a pair.
+        """Give the message of the refusal of a pair, which names the values first, as polars does.
 
         Args:
             value: The type of the values.
@@ -2097,7 +2748,28 @@ class IsInResolution:
             The message.
 
         Example:
-            >>> IsInResolution("is_in", contains=False)._refusal(DType("Int8"), DType("Date"))
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     resolution._refusal(DType("Int8"), DType("Date"))
+            "'is_in' cannot check for Int8 values in Date data"
+        """
+        return f"'{self._op}' cannot check for {value!r} values in {collection!r} data"
+
+    @_refusal.before("2.0.0")
+    def _refusal_collection_first(self, value: DType, collection: DType) -> str:
+        """Give the message of the older releases, which name the collection first.
+
+        Args:
+            value: The type of the values.
+            collection: The type of the collection.
+
+        Returns:
+            The message.
+
+        Example:
+            >>> resolution = IsInResolution("is_in", contains=False)
+            >>> resolution._refusal_collection_first(DType("Int8"), DType("Date"))
             "'is_in' cannot check for Date values in Int8 data"
         """
         return f"'{self._op}' cannot check for {collection!r} values in {value!r} data"
@@ -2249,7 +2921,9 @@ class IsInCasts:
 
         Example:
             >>> listed = Operand.column(DType("List", (DType("Int8"),)))
-            >>> IsInCasts.list_contains().visit([listed, Operand.of_value(300)]).steps[1]
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     IsInCasts.list_contains().visit([listed, Operand.of_value(300)]).steps[1]
             (literal(Int16),)
         """
         return cls("list.contains", contains=True)
@@ -2257,16 +2931,13 @@ class IsInCasts:
     def visit(self, operands: Sequence[Operand]) -> Visit:
         """Give the changes of the visit, round after round.
 
+        It raises `PolarsRefusal` where a round refuses the plan (`_rounds`).
+
         Args:
             operands: The two inputs.
 
         Returns:
             The steps of the two inputs.
-
-        It raises `PolarsRefusal` where a round refuses the plan.
-
-        Raises:
-            PolarsRefusal: A round changes nothing, so the planner hangs.
 
         Example:
             >>> IsInCasts.is_in().visit([Operand.of_value(None), Operand.of_value(1)])
@@ -2275,16 +2946,122 @@ class IsInCasts:
             ...
             astrolabe._rules.failures.PolarsRefusal: hangs: ...
         """
+        return self._rounds(operands)[0]
+
+    def needle_cast(self, operands: Sequence[Operand]) -> DType | None:
+        """Give the cast of the values that the node holds for its kernel, after the visit.
+
+        Polars keeps the target of a last round in the function, and the
+        kernel casts the values to it before it runs (`IsInRound.final`).
+
+        It raises `PolarsRefusal` where a round refuses the plan (`_rounds`).
+
+        Args:
+            operands: The two inputs.
+
+        Returns:
+            The target, or `None` where no last round casts the values.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> listed = Operand.column(DType("List", (DType("Int8"),)))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     IsInCasts.is_in().needle_cast([Operand.column(DType("Int16")), listed])
+            Int8
+        """
+        return self._rounds(operands)[1]
+
+    def _rounds(self, operands: Sequence[Operand]) -> tuple[Visit, DType | None]:
+        """Run the rounds of the visit until the two sides agree, or a last round.
+
+        Args:
+            operands: The two inputs.
+
+        Returns:
+            The steps of the two inputs, and the target of the cast of a last
+            round, or `None`.
+
+        It raises `PolarsRefusal` where a round refuses the plan.
+
+        Raises:
+            PolarsRefusal: A round changes nothing, so the planner hangs.
+
+        Example:
+            >>> inputs = [Operand.column(DType("Int8"))] * 2
+            >>> IsInCasts.is_in()._rounds(inputs)
+            (Visit(steps=((), (implode(List(Int8)),)), root=None), None)
+        """
         rounds = _IsInRounds(operands)
         while True:
             value = rounds.current[self._value_index]
             collection = rounds.current[self._collection_index]
             change = self._resolution.resolve(value.dtype, collection.dtype)
             if change is None:
-                return rounds.visit()
+                return rounds.visit(), None
+            if change.final:
+                return self._last(rounds, change, value)
             if not rounds.apply(self._round(change, rounds.current)):
                 message = "the cast pass repeats with no end"
                 raise PolarsRefusal(Stop.HANGS, message)
+
+    def _last(
+        self,
+        rounds: _IsInRounds,
+        change: IsInRound,
+        needle: Operand,
+    ) -> tuple[Visit, DType | None]:
+        """Run a last round, whose cast the node holds for its kernel.
+
+        The round casts the values only where their type differs from the
+        target, so it ends the visit even where it changes no type.
+
+        It raises `PolarsRefusal` where polars panics on the cast (`_check_guard`).
+
+        Args:
+            rounds: The inputs and the steps so far.
+            change: The last round.
+            needle: The values before the round.
+
+        Returns:
+            The steps of the two inputs, and the cast that the node holds.
+
+        Example:
+            >>> rounds = _IsInRounds([Operand.column(DType("Int16"))] * 2)
+            >>> guard = IsInRound(IsInChange.SELF_CAST, DType("Int8"), final=True)
+            >>> IsInCasts.is_in()._last(rounds, guard, rounds.current[0])[1]
+            Int8
+            >>> fresh = _IsInRounds([Operand.column(DType("Int16"))] * 2)
+            >>> same = IsInRound(IsInChange.SELF_CAST, DType("Int16"), final=True)
+            >>> IsInCasts.is_in()._last(fresh, same, fresh.current[0])[1]
+            Int16
+        """
+        self._check_guard(change, needle)
+        if change.dtype is not None and not needle.dtype.same(change.dtype):
+            rounds.apply(self._round(change, rounds.current))
+        return rounds.visit(), self._held(needle, change.dtype)
+
+    def _held(self, needle: Operand, dtype: DType | None) -> DType | None:
+        """Give the cast that the node holds after a last round.
+
+        Where the values are a literal that the cast keeps, the pass puts the
+        cast value in place of the literal, and the node holds no cast.
+
+        Args:
+            needle: The values before the last round.
+            dtype: The target of the last round.
+
+        Returns:
+            The target, or `None` where the node holds no cast.
+
+        Example:
+            >>> IsInCasts.is_in()._held(Operand.of_value(1), DType("Int8")) is None
+            True
+            >>> IsInCasts.is_in()._held(Operand.of_value(300), DType("Int8"))
+            Int8
+        """
+        if dtype is None or (needle.literal and CastFold().keeps(needle, dtype)):
+            return None
+        return dtype
 
     def _round(self, change: IsInRound, current: Sequence[Operand]) -> dict[int, tuple[Step, ...]]:
         """Give the steps of one round, by input.
@@ -2306,12 +3083,44 @@ class IsInCasts:
         if change.change is IsInChange.IMPLODE:
             return {1: (Step.implode(current[1].dtype),)}
         if change.change is IsInChange.SELF_CAST:
+            self._check_guard(change, current[value])
             return {value: self._cast(current[value], change.dtype, option)}
         if change.change is IsInChange.OTHER_CAST:
             return {collection: self._cast(current[collection], change.dtype, option)}
         value_steps = self._cast(current[value], change.dtype, CastOption.NON_STRICT)
         collection_steps = self._cast(current[collection], change.nested, CastOption.NON_STRICT)
         return {value: value_steps, collection: collection_steps}
+
+    def _check_guard(self, change: IsInRound, needle: Operand) -> None:
+        """Refuse the cast of a literal value to the type of a literal, as the kernel will run it.
+
+        The pass reads such a cast at once, to put the cast value in place of
+        the literal. It builds a series of the type of the literal for that,
+        and polars panics there.
+
+        Args:
+            change: The change of the round.
+            needle: The values to look for.
+
+        Raises:
+            PolarsRefusal: The cast is a last round to the type of a literal,
+                of a literal value.
+
+        Example:
+            >>> guard = IsInRound(IsInChange.SELF_CAST, DType.dynamic_int(2), final=True)
+            >>> IsInCasts.is_in()._check_guard(guard, Operand.of_value(1))  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: panics: constructing a Series ...
+        """
+        if (
+            change.final
+            and needle.literal
+            and change.dtype is not None
+            and Is.unknown(change.dtype)
+        ):
+            message = f"constructing a Series with data type {change.dtype!r} is not supported"
+            raise PolarsRefusal(Stop.PANICS, message)
 
     def _cast(self, operand: Operand, target: DType | None, option: CastOption) -> tuple[Step, ...]:
         """Cast one side, as `CastExprIr` does.
@@ -2548,24 +3357,30 @@ class PadLengthCasts:
 class TextInputCasts:
     """Cast each input of `concat_str` that is not text to `String`.
 
-    The cast pass of polars has a rule of its own for `concat_str`. An input
-    of `String`, or of the text literal type, stays. Every other input casts
-    to `String` (`CastExprIr`): the pass refuses a cast that cannot run,
-    folds a literal with a cast that is not strict, and puts a strict cast
-    above any other input. The cast of an input then runs before the kernel,
-    so a value that does not cast refuses before the kernel checks the
-    lengths. The rule runs at each visit, and an input of `String` stays.
+    From polars 1.43.2, the cast pass of polars has a rule of its own for
+    `concat_str`. An input of `String`, or of the text literal type, stays.
+    Every other input casts to `String` (`CastExprIr`): the pass refuses a
+    cast that cannot run, folds a literal with a cast that is not strict, and
+    puts a strict cast above any other input. The cast of an input then runs
+    before the kernel, so a value that does not cast refuses before the
+    kernel checks the lengths. The rule runs at each visit, and an input of
+    `String` stays. Older releases have no such rule, and the kernel casts
+    each input itself.
 
     Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
         >>> text = Operand.column(DType("String"))
-        >>> TextInputCasts().visit([text, Operand.column(DType("Int8"))])
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     TextInputCasts().visit([text, Operand.column(DType("Int8"))])
         Visit(steps=((), (cast(String, strict),)), root=None)
-        >>> TextInputCasts().visit([Operand.of_value(3), text]).steps[0]
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     TextInputCasts().visit([Operand.of_value(3), text]).steps[0]
         (literal(String),)
     """
 
     TARGET: ClassVar[DType] = DType("String")
 
+    @polars_releases
     def visit(self, operands: Sequence[Operand]) -> Visit:
         """Give the changes of the visit.
 
@@ -2580,8 +3395,10 @@ class TextInputCasts:
             The steps of each input.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> date = Operand.column(DType("Date"))
-            >>> TextInputCasts().visit([Operand.of_value("a"), date]).steps
+            >>> with PolarsRelease.pretend("1.43.2"):
+            ...     TextInputCasts().visit([Operand.of_value("a"), date]).steps
             ((), (cast(String, strict),))
         """
         steps: list[tuple[Step, ...]] = []
@@ -2591,6 +3408,75 @@ class TextInputCasts:
             steps.append(cast)
         return Visit(tuple(steps))
 
+    @visit.before("1.43.2")
+    def _no_casts(self, operands: Sequence[Operand]) -> Visit:
+        """Give the visit of the older releases, which changes no input.
+
+        Args:
+            operands: The inputs of the function.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> TextInputCasts()._no_casts([Operand.column(DType("Int8"))]).steps
+            ((),)
+        """
+        return Visit.unchanged(len(operands))
+
+
+class FlatInput:
+    """Read a flat input where a function takes a list, as `list.gather` and `str.contains_any` do.
+
+    From polars 2.0.0, the cast pass refuses such an input with an
+    `InvalidOperationError`: the code must `implode` it. Before that release,
+    the pass puts it in a list with an `implode` itself (`_imploded`).
+
+    Example:
+        >>> FlatInput()._imploded(DType("Int8"), "the indices")
+        (implode(List(Int8)),)
+    """
+
+    @polars_releases
+    def implode(self, dtype: DType, what: str) -> tuple[Step, ...]:
+        """Refuse the flat input.
+
+        Args:
+            dtype: The type of the input.
+            what: The input, for the message.
+
+        Raises:
+            PolarsRefusal: The input is not a list.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     FlatInput().implode(DType("Int8"), "the indices")  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: the indices must ...
+        """
+        message = f"{what} must be a list, not a flat {dtype!r}: use `implode`"
+        raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+
+    @implode.before("2.0.0")
+    def _imploded(self, dtype: DType, what: str) -> tuple[Step, ...]:
+        """Give the `implode` that puts the input in a list, as the older releases do.
+
+        Args:
+            dtype: The type of the input.
+            what: The input.
+
+        Returns:
+            The step.
+
+        Example:
+            >>> FlatInput()._imploded(DType("String"), "the patterns")
+            (implode(List(String)),)
+        """
+        del what
+        return (Step.implode(dtype),)
+
 
 class PatternListCasts:
     """Put the patterns of `str.contains_any` and of its relatives in a list, as the cast pass does.
@@ -2599,14 +3485,17 @@ class PatternListCasts:
     `str.replace_many` read their patterns, and the replacements of
     `str.replace_many`, as a list. The cast pass of polars has a rule of its
     own for them. Where such an input is not a `List`, the pass puts it in a
-    list with an `implode`, and visits the node again. Where every such input
+    list with an `implode`, and visits the node again, before polars 2.0.0.
+    From that release, it refuses such an input (`FlatInput`). Where every such input
     is a `List`, the pass checks that the text is a `String`, and that each
     list holds `String` values. Another type refuses the plan with an
     `InvalidOperationError`.
 
     Example:
         >>> text = Operand.column(DType("String"))
-        >>> PatternListCasts((1,)).visit([text, Operand.of_value("a")])
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     PatternListCasts((1,)).visit([text, Operand.of_value("a")])
         Visit(steps=((), (implode(List(String)),)), root=None)
         >>> PatternListCasts((1,)).visit([text, Operand.of_value(1)])  # doctest: +ELLIPSIS
         Traceback (most recent call last):
@@ -2659,7 +3548,7 @@ class PatternListCasts:
         dtypes = [operand.dtype for operand in operands]
         for place in self._places:
             if dtypes[place].name != "List":
-                steps[place] = (Step.implode(dtypes[place]),)
+                steps[place] = FlatInput().implode(dtypes[place], "the patterns")
                 dtypes[place] = DType("List", (dtypes[place],))
         inners = [dtypes[place].inner() for place in self._places]
         if not Is.string(dtypes[0]) or not all(Is.string(inner) for inner in inners):
@@ -2721,7 +3610,7 @@ class IntRangeCasts:
     """Cast the bounds of `int_range` to the integer type of the call, as the cast pass does.
 
     The type of the call must be an integer, and each bound must be a
-    number or `Null`. Where both bounds have the type of the call, they
+    number or `Null` (`_numbers`). Where both bounds have the type of the call, they
     stay. Otherwise each bound casts to it with a strict cast (`CastExprIr`),
     so a literal bound that does not fit refuses the plan. `int_ranges` has
     the same rule for its three inputs, with `Int64` as the target.
@@ -2751,12 +3640,13 @@ class IntRangeCasts:
             The steps of each input.
 
         Raises:
-            PolarsRefusal: The type of the call is not an integer, or a bound is
-                not a number.
+            PolarsRefusal: The type of the call is not an integer.
 
         Example:
-            >>> IntRangeCasts(DType("Int64")).visit([Operand.of_value("a"), Operand.of_value(3)])
-            ... # doctest: +ELLIPSIS
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> bounds = [Operand.of_value("a"), Operand.of_value(3)]
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     IntRangeCasts(DType("Int64")).visit(bounds)  # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: `start` must be ...
@@ -2765,14 +3655,44 @@ class IntRangeCasts:
             message = f"non-integer `dtype` passed to `int_range`: {self.dtype!r}"
             raise PolarsRefusal(ErrorClass.COMPUTE, message)
         bounds = operands[: len(self.names)]
-        for name, operand in zip(self.names, bounds, strict=True):
-            if not Is.numeric(operand.dtype) and operand.dtype.name != "Null":
-                message = f"`{name}` must be numeric for `int_range`, got {operand.dtype!r}"
-                raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._numbers(bounds)
         if all(operand.dtype.same(self.dtype) for operand in bounds):
             return Visit.unchanged(len(operands))
         steps = [CastExprIr().steps(operand, self.dtype, CastOption.STRICT) for operand in bounds]
         return Visit(tuple(steps))
+
+    @polars_releases
+    def _numbers(self, bounds: Sequence[Operand]) -> None:
+        """Refuse a bound that is not a number or `Null`.
+
+        Args:
+            bounds: The bounds.
+
+        Raises:
+            PolarsRefusal: A bound is not a number.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> bounds = [Operand.of_value(0), Operand.of_value(3)]
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     IntRangeCasts(DType("Int64"))._numbers(bounds)
+        """
+        for name, operand in zip(self.names, bounds, strict=True):
+            if not Is.numeric(operand.dtype) and operand.dtype.name != "Null":
+                message = f"`{name}` must be numeric for `int_range`, got {operand.dtype!r}"
+                raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+
+    @_numbers.before("1.40.0")
+    def _any_bounds(self, bounds: Sequence[Operand]) -> None:
+        """Refuse no bound, as the older releases do: the strict cast of each bound decides.
+
+        Args:
+            bounds: The bounds.
+
+        Example:
+            >>> IntRangeCasts(DType("Int64"))._any_bounds([Operand.of_value("a")])
+        """
+        del bounds
 
 
 @dataclass(frozen=True)
@@ -2916,11 +3836,12 @@ class IsBetweenCasts:
     bound that holds at every row that is not null drops out, and the node
     compares the input with the other bound only (`BinaryCasts`). Where both
     hold, the node compares the input with the lower bound. A bound that
-    fails at every row puts its rewrite in place of the node. Otherwise
-    each bound meets the input as a comparison does (`CoercedBinopDtype`),
-    and the three inputs cast to the supertype of the two types that this
-    gives. Where a comparison casts nothing, or the two types have no
-    supertype, the node stays as it is, and its run compares the types.
+    fails at every row puts its rewrite in place of the node. Otherwise,
+    from polars 1.43.0, each bound meets the input as a comparison does
+    (`CoercedBinopDtype`), and the three inputs cast to the supertype of the
+    two types that this gives. Where a comparison casts nothing, or the two
+    types have no supertype, the node stays as it is, and its run compares
+    the types. Older releases cast nothing more than the literal bounds.
 
     Example:
         >>> uint8 = Operand.column(DType("UInt8"))
@@ -3062,6 +3983,7 @@ class IsBetweenCasts:
         steps[place + 1] += compared.steps[1]
         return Visit(tuple(steps))
 
+    @polars_releases
     def _joined(
         self,
         needle: Operand,
@@ -3080,9 +4002,15 @@ class IsBetweenCasts:
             supertype gives nothing.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> int8, uint8 = Operand.column(DType("Int8")), Operand.column(DType("UInt8"))
-            >>> IsBetweenCasts("Both")._joined(int8, [uint8, int8], [(), (), ()]).steps
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     IsBetweenCasts("Both")._joined(int8, [uint8, int8], [(), (), ()]).steps
             ((cast(Int16, strict),), (cast(Int16, strict),), (cast(Int16, strict),))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     text = Operand.column(DType("String"))
+            ...     IsBetweenCasts("Both")._joined(int8, [text, int8], [(), (), ()]).steps
+            ((), (), ())
         """
         lower_op, upper_op = self.OPERATORS[self.closed]
         lower = CoercedBinopDtype().of(lower_op, needle, bounds[0])
@@ -3099,6 +4027,31 @@ class IsBetweenCasts:
         for place, operand in enumerate(inputs):
             cast = CastExprIr().steps(operand, joined, CastOption.NON_STRICT)
             steps[place] += cast
+        return Visit(tuple(steps))
+
+    @_joined.before("1.43.0")
+    def _rewrites_only(
+        self,
+        needle: Operand,
+        bounds: Sequence[Operand],
+        steps: list[tuple[Step, ...]],
+    ) -> Visit:
+        """Give the visit where both bounds stay, as the older releases give it: the rewrites only.
+
+        Args:
+            needle: The input.
+            bounds: The two bounds, after the rewrites of the literals.
+            steps: The steps of the rewrites of the literals.
+
+        Returns:
+            The steps of the rewrites.
+
+        Example:
+            >>> int8, uint8 = Operand.column(DType("Int8")), Operand.column(DType("UInt8"))
+            >>> IsBetweenCasts("Both")._rewrites_only(int8, [uint8, int8], [(), (), ()]).steps
+            ((), (), ())
+        """
+        del needle, bounds
         return Visit(tuple(steps))
 
 
@@ -3270,14 +4223,17 @@ class GatherIndexCasts:
     `list.gather` reads its second input as a list of indices for each row.
     The cast pass of polars has a rule of its own for it. Where the indices are
     not a `List`, the pass puts them in a list with an `implode`, and visits
-    the node again. Where they are a `List`, its values must be integers, or
+    the node again, before polars 2.0.0. From that release, it refuses them
+    (`FlatInput`). Where they are a `List`, its values must be integers, or
     the pass refuses the plan with an `InvalidOperationError`. So indices that
     are not integers refuse the plan, in a list or not. The rule runs at each
     visit, and indices that are a list of integers stay.
 
     Example:
         >>> lists = Operand.column(DType("List", (DType("Int8"),)))
-        >>> GatherIndexCasts().visit([lists, Operand.column(DType("Int8"))])
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.2"):
+        ...     GatherIndexCasts().visit([lists, Operand.column(DType("Int8"))])
         Visit(steps=((), (implode(List(Int8)),)), root=None)
         >>> texts = Operand.column(DType("List", (DType("String"),)))
         >>> GatherIndexCasts().visit([lists, texts])  # doctest: +ELLIPSIS
@@ -3303,13 +4259,15 @@ class GatherIndexCasts:
             >>> indices = Operand.column(DType("List", (DType("UInt32"),)))
             >>> GatherIndexCasts().visit([lists, indices]).steps
             ((), ())
-            >>> GatherIndexCasts().visit([lists, Operand.of_value(1)]).steps
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.2"):
+            ...     GatherIndexCasts().visit([lists, Operand.of_value(1)]).steps
             ((), (implode(List(Unknown(int, 1))),))
         """
         indices = operands[1].dtype
         steps: tuple[Step, ...] = ()
         if indices.name != "List":
-            steps = (Step.implode(indices),)
+            steps = FlatInput().implode(indices, "the indices of `list.gather`")
             indices = DType("List", (indices.materialized(),))
         if not Is.integer(indices.inner()):
             listed = f"{operands[0].dtype!r}, {indices!r}"

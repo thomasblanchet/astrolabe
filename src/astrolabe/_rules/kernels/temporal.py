@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import DType, Is, Parameter, TimeUnit
-from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop, UnequalLengths
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.dispatch import Data, RunCast
 from astrolabe._rules.operators import NumericOp
 
@@ -343,12 +344,14 @@ class TemporalParts:
     the month, the day, the hour, the minute and the second to `Int8`, and
     the ambiguity to text. It then reads each part at that type, and refuses
     a part that the cast leaves at another type, as a struct. It multiplies
-    the microsecond by 1000 first, and the arithmetic of a struct panics. A
-    part shorter
-    than the longest repeats its first value. The kernel of `pl.duration`
-    reads parts that the cast pass already cast, and adds them with the
-    arithmetic of series, which refuses two lengths of more than one row
-    that differ.
+    the microsecond by 1000 first, and the arithmetic of a struct panics. The
+    kernel of `pl.duration` reads parts that the cast pass already cast, and
+    adds them with the arithmetic of series, which refuses two lengths of more
+    than one row that differ.
+
+    From polars 1.44.0, both kernels refuse parts of two such lengths before
+    they cast a part. In older releases, a part of `pl.datetime` that is
+    shorter than the longest repeats its first value.
 
     Example:
         >>> parts = TemporalParts.datetime(DType("Datetime", ("us", None)))
@@ -367,6 +370,7 @@ class TemporalParts:
         DType("String"),
     )
     MICROSECOND: ClassVar[int] = 6
+    ARITHMETIC: ClassVar[str] = "cannot do arithmetic operation on series of different lengths"
     dtype: DType
     targets: tuple[DType, ...] = ()
     arithmetic: bool = False
@@ -414,8 +418,8 @@ class TemporalParts:
             The type of the options.
 
         Raises:
-            PolarsRefusal: A part has no cast to its target, the cast leaves it
-                at another type, or two parts of `pl.duration` have other lengths.
+            PolarsRefusal: A part has no cast to its target, or the cast leaves
+                it at another type.
 
         Example:
             >>> parts = TemporalParts.datetime(DType("Datetime", ("us", None)))
@@ -424,16 +428,15 @@ class TemporalParts:
             Traceback (most recent call last):
             ...
             astrolabe._rules.failures.PolarsRefusal: SchemaError: invalid series dtype: ...
-            >>> TemporalParts.duration(DType("Duration", ("us",))).output([], [3, 5])
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     TemporalParts.duration(DType("Duration", ("us",))).output([], [3, 5])
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...
-            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cannot do arithmetic ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: can't compute broadcast length, ...
         """
-        long = {length for length in lengths if length != 1}
-        if self.arithmetic and len(long) > 1:
-            message = "cannot do arithmetic operation on series of different lengths"
-            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        self._check_lengths(lengths)
         for place, (data, target) in enumerate(zip(inputs, self.targets, strict=False)):
             cast = RunCast().of(data, target).dtype
             if cast != target and place == self.MICROSECOND:
@@ -442,3 +445,35 @@ class TemporalParts:
                 message = f"invalid series dtype: expected `{target!r}`, got `{cast!r}`"
                 raise PolarsRefusal(ErrorClass.SCHEMA, message)
         return self.dtype
+
+    @polars_releases
+    def _check_lengths(self, lengths: Sequence[int]) -> None:
+        """Refuse parts of two lengths of more than one row that differ, before any cast.
+
+        Args:
+            lengths: The rows of each part, or none where they are not known.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> parts = TemporalParts.datetime(DType("Datetime", ("us", None)))
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     parts._check_lengths([5, 2])  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: ShapeError: can't compute broadcast length, ...
+        """
+        UnequalLengths().check(lengths, self.ARITHMETIC)
+
+    @_check_lengths.before("1.44.0")
+    def _check_arithmetic_lengths(self, lengths: Sequence[int]) -> None:
+        """Refuse such lengths in the arithmetic of `pl.duration` only, as the older releases do.
+
+        Args:
+            lengths: The rows of each part, or none where they are not known.
+
+        Example:
+            >>> parts = TemporalParts.datetime(DType("Datetime", ("us", None)))
+            >>> parts._check_arithmetic_lengths([5, 2])
+        """
+        if self.arithmetic:
+            UnequalLengths().check(lengths, self.ARITHMETIC)

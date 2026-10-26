@@ -34,10 +34,12 @@ from astrolabe._rules.kernels.dispatch import (
     Dispatch,
     Fixed,
     Kinds,
+    Recast,
     Refuse,
     RunCast,
     ToPhysical,
 )
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -1075,12 +1077,56 @@ class TextKernels:
         )
         return TextKernel("str.to_integer", steps, gives)
 
+    @polars_releases
     def to_category(self, target: DType) -> Dispatch:
         """Give the kernel of `cat.to`, which reads ids of categories as a `Categorical` or `Enum`.
 
-        The input holds the ids, so it must have the physical type of the
-        target. A target that has no categories raises a `SchemaError`, and so
-        does an input of another type.
+        The input holds the ids. The kernel first casts an input of another
+        type to the physical type of the target, and this cast is not strict.
+        A cast that polars refuses raises its error. A cast that keeps a
+        nested type, as the cast of a `Struct` does, makes the kernel panic
+        where it reads the ids. A target that has no categories raises a
+        `SchemaError`.
+
+        Args:
+            target: The target type of the node.
+
+        Returns:
+            The dispatch.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> enum = DType("Enum", (("a",),))
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TextKernels().to_category(enum).output(Data(DType("Date")))
+            Enum(categories=['a'])
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TextKernels().to_category(enum).output(Data(DType("Binary")))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: ...
+            >>> with PolarsRelease.pretend("2.0.0"):
+            ...     TextKernels().to_category(DType("Int8")).output(Data(DType("String")))
+            ... # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: SchemaError: ...
+        """
+        if not self.CATEGORIES(target):
+            return Dispatch("cat.to", (), Refuse(ErrorClass.SCHEMA))
+        physical = target.physical()
+        ids = (Arm(Kinds(physical.name), Fixed(target)),)
+        read = Dispatch("cat.to", ids, Refuse(Stop.PANICS))
+        return Dispatch("cat.to", ids, Recast(physical, then=read))
+
+    @to_category.before("2.0.0")
+    def _ids_only(self, target: DType) -> Dispatch:
+        """Give the kernel of `cat.to` in the older releases, which takes only the physical type.
+
+        The input must have the physical type of the target. A target that has
+        no categories raises a `SchemaError`, and so does an input of another
+        type.
 
         Args:
             target: The target type of the node.
@@ -1090,9 +1136,9 @@ class TextKernels:
 
         Example:
             >>> enum = DType("Enum", (("a",),))
-            >>> TextKernels().to_category(enum).output(Data(DType("UInt8")))
+            >>> TextKernels()._ids_only(enum).output(Data(DType("UInt8")))
             Enum(categories=['a'])
-            >>> TextKernels().to_category(DType("String")).output(Data(DType("UInt32")))
+            >>> TextKernels()._ids_only(DType("String")).output(Data(DType("UInt32")))
             ... # doctest: +ELLIPSIS
             Traceback (most recent call last):
             ...

@@ -307,6 +307,34 @@
     df.select(pl.col("a") + cs.numeric())  # E: select would produce duplicate column "a"  [duplicate-column]
 
 - case: a_selection_over_a_remainder_reads_each_kind
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame, other_columns
+
+    class Quotes(Columns):
+        symbol: pl.String
+        bid: pl.Float64
+
+    Floats = other_columns(all_of=pl.Float64)
+    Rest = other_columns()
+
+    def float_rest(df: TypedDataFrame[Quotes, Floats]) -> None:
+        # A Float64 beside a Float64 keeps its type.
+        reveal_type(df.select(cs.float() + pl.col("bid")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Float64}, closed=True), astrolabe.remainder.Only[main.Floats, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]]]"
+        # A comparison gives a Boolean.
+        reveal_type(df.select(cs.float() > pl.col("bid")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'bid': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Floats, astrolabe.remainder.OfType[polars.datatypes.classes.FloatType]], polars.datatypes.classes.Boolean]]"
+
+    def any_rest(df: TypedDataFrame[Quotes, Rest]) -> None:
+        # Every kind gives a Boolean, but the kind Extension, which the rules
+        # have no data type of, so its columns are Unchecked.
+        reveal_type(df.select(pl.all().is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'symbol': polars.datatypes.classes.Boolean, 'bid': polars.datatypes.classes.Boolean}, closed=True), astrolabe.remainder.Both[astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]], astrolabe.frame.Unchecked], astrolabe.remainder.Retyped[astrolabe.remainder.Except[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.Extension | polars.datatypes.classes.Map]], polars.datatypes.classes.Boolean]]]"
+        # A null test of a List column gives a Boolean.
+        reveal_type(df.select(cs.list().is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.List]], polars.datatypes.classes.Boolean]]"
+
+- case: a_selection_over_a_remainder_reads_each_kind_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     import polars.selectors as cs
@@ -333,6 +361,40 @@
         reveal_type(df.select(cs.list().is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({}, closed=True), astrolabe.remainder.Retyped[astrolabe.remainder.Only[main.Rest, astrolabe.remainder.OfType[polars.datatypes.classes.List]], polars.datatypes.classes.Boolean]]"
 
 - case: struct_arithmetic_maps_each_field
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, Datetime, Duration, List, Struct, TypedDataFrame, Unchecked
+
+    class Records(Columns):
+        i: pl.Int32
+        span: Duration[Literal["ms"]]
+        sa: Struct[Column[Literal["a"], pl.Int32], Column[Literal["c"], pl.Int8]]
+        sd: Struct[Column[Literal["x"], pl.Date]]
+        st: Struct[Column[Literal["t"], Datetime[Literal["ms"], None]]]
+        sl: Struct[Column[Literal["l"], List[pl.Int8]]]
+        su: Struct[Column[Literal["a"], Unchecked]]
+
+    df: TypedDataFrame[Records]
+
+    # A field with an unknown type gives an unknown answer.
+    reveal_type(df.select((pl.col("su") + pl.col("i")).alias("r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'r': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], astrolabe.frame.Unchecked]]]}, closed=True), None]"
+
+    # A Date field minus a number gives a Duration field in microseconds.
+    reveal_type(df.select((pl.col("sd") - pl.col("i")).alias("r")))  # E: "r" has no result type at this frame's column types: cannot Minus a struct with non-numeric field: (field: x, dtype: Date), and polars raises InvalidOperationError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'r': astrolabe.frame.Unchecked}, closed=True), None]"
+
+    # A Datetime field minus a number keeps the time unit of the field.
+    reveal_type(df.select((pl.col("st") - pl.col("i")).alias("r")))  # E: "r" has no result type at this frame's column types: cannot Minus a struct with non-numeric field: (field: t, dtype: Datetime(time_unit='ms', time_zone=None)), and polars raises InvalidOperationError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'r': astrolabe.frame.Unchecked}, closed=True), None]"
+
+    # A List field keeps its type.
+    reveal_type(df.select((pl.col("sl") + pl.col("i")).alias("r")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'r': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['l'], astrolabe.frame.List[polars.datatypes.classes.Int32]]]]}, closed=True), None]"
+
+    # Polars refuses to add a Duration to a struct.
+    reveal_type(df.select((pl.col("sa") + pl.col("span")).alias("r")))  # E: "r" has no result type at this frame's column types: Plus not allowed on Struct({'a': Int32, 'c': Int8}) and Duration(time_unit='ms'), and polars raises InvalidOperationError  [unsupported-dtype-op]  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'r': astrolabe.frame.Unchecked}, closed=True), None]"
+
+- case: struct_arithmetic_maps_each_field_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl
