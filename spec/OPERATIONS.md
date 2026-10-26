@@ -1065,7 +1065,7 @@ The state exists only during one evaluation. The type never stores it (`D-33`).
 
 A node is elementwise where polars marks it so: a column, a literal of one value, a cast, a binary operation, a `when`, an `eval` over each list, and a function whose options are elementwise. `is_in` is elementwise only where its set of values is a literal, so `pl.col("x").over(pl.col("k").is_in([1, 2]))` runs in `agg`, and `pl.col("x").over(pl.col("k").is_in(pl.col("x")))` raises there (`spec/tests/test_rules_tree_evaluation.py`). A key of `over` in `agg` must be elementwise at every node below it, so `pl.col("x").over(pl.col("k").sort())` raises there although `sort` keeps the rows (`TestElementwiseKeys` in `spec/tests/test_expression_facts.py`).
 
-A literal adds three facts that polars reads: its value, whether it is direct, as `pl.lit(300)`, or derived, as `pl.lit(300).abs()`, and the value that a fold of literals computes. Beside `Int8` under `*`, the planner gives `Int8` for the first and `Int16` for the second.
+A literal adds three facts that polars reads: its value, whether it is direct, as `pl.lit(300)`, or derived, as `pl.lit(300).abs()`, and the value that a fold of literals computes. Beside `Int8` under `*`, with the literal on the left, the planner gives `Int8` for the first and `Int16` for the second. With the literal on the right, the first also gives `Int8` before polars 1.43.0, and `Int16` from that release.
 
 ### D-36. The three passes, and the outcome
 
