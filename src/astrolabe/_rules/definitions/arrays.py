@@ -17,7 +17,12 @@ from astrolabe._rules.cast_pass import IsInCasts
 from astrolabe._rules.definitions.cast_adapters import FunctionCasting, OwnRuleCasts
 from astrolabe._rules.definitions.definition import Definition, NullRule
 from astrolabe._rules.definitions.kernel_adapters import AllInputs, LiteralInputs, OneInput
-from astrolabe._rules.definitions.node_options import FromOptions, NodeIdentity, NodeOption
+from astrolabe._rules.definitions.node_options import (
+    FromOptions,
+    NodeIdentity,
+    NodeOption,
+    OptionReader,
+)
 from astrolabe._rules.definitions.type_function_adapters import (
     CheckedInputs,
     Mapper,
@@ -34,6 +39,39 @@ from astrolabe._rules.kernels.lists import (
 )
 from astrolabe._rules.options import FunctionFlag, FunctionOptions, Shape
 from astrolabe._rules.type_functions import ArrayClosures, ArrayIndexBounds, FieldsMapper
+
+
+class FieldNames:
+    """Read the names of the fields of `arr.to_struct` from its option, or their absence.
+
+    Polars 2.0 writes the names in a map, under the key `fields`. The older
+    releases write the names alone, and always `None`, because their
+    `arr.to_struct` renames the fields in a node of its own.
+
+    Example:
+        >>> FieldNames().field_names({"fields": ["a"]}), FieldNames().field_names(None)
+        (('a',), None)
+    """
+
+    def field_names(self, part: object) -> tuple[str, ...] | None:
+        """Read the names.
+
+        Args:
+            part: The option.
+
+        Returns:
+            The names, in order, or `None`.
+
+        Example:
+            >>> FieldNames().field_names({"fields": None}) is None
+            True
+        """
+        if isinstance(part, dict) and "fields" in part:
+            return OptionReader().texts(part["fields"])
+        return OptionReader().texts(part)
+
+
+TO_STRUCT_NAMES = NodeOption(("function", "ArrayExpr", "ToStruct"), FieldNames().field_names)
 
 
 class Arrays:
@@ -94,7 +132,7 @@ class Arrays:
     STD: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "ArrayExpr.Std"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.moment_dtype, checks=[IS_ARRAY]),
+        type_function=Mapper(FieldsMapper.var_dtype, checks=[IS_ARRAY], op="std"),
         options=ELEMENTWISE,
         casts=FunctionCasting(),
         kernel=OneInput(ArrayKernels.MOMENT),
@@ -162,7 +200,7 @@ class Arrays:
             checks=[IS_ARRAY],
             func=FromOptions(
                 ArrayClosures().to_struct,
-                NodeOption.texts("function", "ArrayExpr", "ToStruct"),
+                TO_STRUCT_NAMES,
             ),
         ),
         options=ELEMENTWISE,
@@ -170,7 +208,7 @@ class Arrays:
         kernel=OneInput(
             FromOptions(
                 ArrayKernels().to_struct,
-                NodeOption.texts("function", "ArrayExpr", "ToStruct"),
+                TO_STRUCT_NAMES,
             ),
         ),
     )

@@ -175,14 +175,16 @@ Polars reads a tree in three passes, and the checker repeats them. The planner c
 
 ```python
 pl.col("d").cum_sum()  # d : Decimal(10, 2)
-# planned as Decimal(10, 2), runs as Decimal(38, 2)
+# before polars 2.0.0: planned as Decimal(10, 2), runs as Decimal(38, 2)
 ```
+
+From polars 2.0.0, the planner gives `Decimal(38, 2)` too, and `pl.col("i").shift(1, fill_value=pl.col("j").first())` over `i : Int8` and `j : Int16` shows the difference: it is planned as `Int8` and runs as `Int16` in every release.
 
 A frame operation runs its expression, so a frame column takes the run type. A lazy frame runs nothing until `collect()`, and polars plans each later step at the planner type that it stores for the column. Where the two types differ, a column of a lazy frame holds both, as `Planned[run, planner]` (`D-45`):
 
 ```python
 lf.with_columns(d=pl.col("d").cum_sum())
-# d : Planned[Decimal(38, 2), Decimal(10, 2)]: a later step plans d at Decimal(10, 2)
+# before polars 2.0.0, d : Planned[Decimal(38, 2), Decimal(10, 2)]: a later step plans d at Decimal(10, 2)
 ```
 
 **Where the rules come from.** Polars does not type each operation with code of its own. It declares the rules of each operation in a small vocabulary: the supertype of two data types, the casts, the options that say how a node runs, a type function, the rules of the cast pass, and a kernel. The checker translates that vocabulary once, and each node's definition names the parts it uses (`D-37`). A rule covers every input: every data type, every parameter, every literal value, any depth of nesting and any number of inputs. A behavior that follows no logic, such as a bug of polars, is a measured fact of the registry, with its reason. Where no rule and no fact gives an answer, the answer is `Unchecked`, so a guess never becomes a type.

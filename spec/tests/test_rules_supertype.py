@@ -31,6 +31,7 @@ from spec.tests.rule_probes import CastPassCheck, JoinCalls, RuleAnswer, RuleKin
 from spec.tools.node_census.kinds import CensusKinds
 from astrolabe._rules.dtypes import DType
 from astrolabe._rules.supertype import LosslessUpcast, Supertype, SupertypeFlag
+from astrolabe._rules.releases import PolarsRelease
 
 
 class TestSupertype:
@@ -87,8 +88,16 @@ class TestSupertype:
         assert not problems, "\n".join(problems)
 
     @pytest.mark.parametrize("left", RuleKinds().dtypes(), ids=repr)
+    @pytest.mark.skipif(
+        PolarsRelease.installed() < PolarsRelease.parse("1.40.0"),
+        reason="max_horizontal has no cast pass before polars 1.40.0",
+    )
     def test_join_without_text_matches_the_casts_of_max_horizontal(self, left: pl.DataType) -> None:
-        """The cast pass of `max_horizontal` joins with no cast of a number to text."""
+        """The cast pass of `max_horizontal` joins with no cast of a number to text.
+
+        Polars 1.40.0 adds that cast pass. The join itself is the same in the
+        older releases, where `is_between` and `is_close` cast with it.
+        """
         check = CastPassCheck(SupertypeFlag(0))
         problems = []
         for right in RuleKinds().dtypes():

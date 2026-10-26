@@ -287,6 +287,33 @@
     narrowed: TypedSeries[Literal["price"], Unchecked] = s
 
 - case: series_cast_of_a_struct_recasts_every_field
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        s: Struct[Column[Literal["x"], pl.Int64], Column[Literal["y"], pl.Float64]]
+        l: List[pl.Int64]
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    s: TypedSeries[Literal["s"], Struct[Column[Literal["x"], pl.Int64], Column[Literal["y"], pl.Float64]]] = df["s"]
+    recast: TypedSeries[
+        Literal["s"], Struct[Column[Literal["x"], pl.Float64], Column[Literal["y"], pl.Float64]]
+    ] = s.cast(pl.Float64)
+    text: TypedSeries[Literal["s"], pl.String] = s.cast(pl.String)
+    boxed: TypedSeries[
+        Literal["s"], Struct[Column[Literal["x"], List[pl.Int64]], Column[Literal["y"], List[pl.Int64]]]
+    ] = s.cast(pl.List(pl.Int64))  # E: This Series cannot cast from Struct({'x': Int64, 'y': Float64}) to List(Int64)  [invalid-cast] # E: Incompatible types in assignment (expression has type "TypedSeries[Literal['s'], Unchecked]", variable has type "TypedSeries[Literal['s'], Struct[tuple[Column[Literal['x'], astrolabe.frame.List[Int64]], Column[Literal['y'], astrolabe.frame.List[Int64]]]]]")  [assignment]
+    l: TypedSeries[Literal["l"], List[pl.Int64]] = df["l"]
+    reveal_type(l.cast(pl.Int64))  # E: This Series cannot cast from List(Int64) to Int64  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['l'], astrolabe.frame.Unchecked]"
+    widened: TypedSeries[Literal["l"], List[pl.Float64]] = l.cast(pl.List(pl.Float64))
+
+- case: series_cast_of_a_struct_recasts_every_field_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -312,6 +339,34 @@
     widened: TypedSeries[Literal["l"], List[pl.Float64]] = l.cast(pl.List(pl.Float64))
 
 - case: a_series_cast_gives_the_data_type_that_polars_gives
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Column, Columns, List, Struct, TypedDataFrame, TypedSeries
+
+    class FrameSchema(Columns):
+        ls: List[pl.String]
+        li: List[pl.Int64]
+        b: pl.Boolean
+        st: Struct[Column[Literal["a"], pl.String]]
+
+    df: TypedDataFrame[FrameSchema]
+    ls: TypedSeries[Literal["ls"], List[pl.String]] = df["ls"]
+    li: TypedSeries[Literal["li"], List[pl.Int64]] = df["li"]
+    b: TypedSeries[Literal["b"], pl.Boolean] = df["b"]
+    st: TypedSeries[Literal["st"], Struct[Column[Literal["a"], pl.String]]] = df["st"]
+    # A cast reads the element of a list and the fields of a struct.
+    reveal_type(ls.cast(pl.List(pl.Boolean)))  # E: This Series cannot cast from List(String) to List(Boolean)  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['ls'], astrolabe.frame.Unchecked]"
+    reveal_type(ls.cast(pl.List(pl.Int64)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['ls'], astrolabe.frame.List[polars.datatypes.classes.Int64]]"
+    reveal_type(st.cast(pl.Boolean))  # E: This Series cannot cast from Struct({'a': String}) to Boolean  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['st'], astrolabe.frame.Unchecked]"
+    reveal_type(st.cast(pl.List(pl.Int64)))  # E: This Series cannot cast from Struct({'a': String}) to List(Int64)  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['st'], astrolabe.frame.Unchecked]"
+    # The answer of a cast is not always its target.
+    reveal_type(li.cast(pl.List(pl.Null)))  # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['li'], astrolabe.frame.List[polars.datatypes.classes.Int64]]"
+    reveal_type(b.cast(pl.List(pl.Categorical)))  # E: This Series cannot cast from Boolean to List(Categorical)  [invalid-cast] # N: Revealed type is "astrolabe.frame.TypedSeries[Literal['b'], astrolabe.frame.Unchecked]"
+
+- case: a_series_cast_gives_the_data_type_that_polars_gives_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl

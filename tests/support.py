@@ -32,6 +32,7 @@ from mypy.nodes import (
     ArgKind,
     Block,
     CallExpr,
+    Context,
     FloatExpr,
     FuncDef,
     IntExpr,
@@ -98,6 +99,7 @@ from astrolabe.frame import Unchecked as _UncheckedMarker
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from mypy.errorcodes import ErrorCode
     from mypy.nodes import Expression, Statement, TypeInfo
 
     from astrolabe._hooks.expression.quadruple import ExpressionType
@@ -350,6 +352,63 @@ def new_dynamic_class_context() -> FakeDynamicClassContext:
         {}
     """
     return FakeDynamicClassContext()
+
+
+class FakeFailApi:
+    """Stand in for the part of the mypy API that reports an error, and keep each message.
+
+    Example:
+        >>> api = FakeFailApi()
+        >>> api.fail("no result", Context())
+        >>> api.messages
+        ['no result']
+    """
+
+    def __init__(self) -> None:
+        """Start with no message."""
+        self.messages: list[str] = []
+
+    def fail(self, msg: str, ctx: Context, /, *, code: ErrorCode | None = None) -> None:
+        """Keep the message of one error.
+
+        Args:
+            msg: The message.
+            ctx: The place of the error, which the stand-in does not read.
+            code: The code of the error, which the stand-in does not read.
+        """
+        del ctx, code
+        self.messages.append(msg)
+
+
+class FakeFailContext:
+    """Stand in for the context of a hook, at which code reports an error.
+
+    A hook reports through the `api` of its context, at its `context`. This
+    stand-in keeps each message, so that code which reports only in some
+    releases of polars can have a doctest.
+
+    Example:
+        >>> FakeFailContext().api.messages
+        []
+    """
+
+    def __init__(self) -> None:
+        """Give the context an API that keeps the messages, and a place."""
+        self.api = FakeFailApi()
+        self.context = Context()
+
+
+def new_fail_context() -> FakeFailContext:
+    """Build the context of a hook that keeps each error it reports.
+
+    Returns:
+        A new context, with no message.
+
+    Example:
+        >>> new_fail_context().api.messages
+        []
+    """
+    return FakeFailContext()
 
 
 def new_type_fixture() -> TypeFixture:

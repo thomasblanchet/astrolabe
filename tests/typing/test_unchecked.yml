@@ -153,6 +153,21 @@
     reveal_type(df.select((pl.col("any_col") == 5).alias("cmp")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'cmp': polars.datatypes.classes.Boolean}, closed=True), None]"
 
 - case: boolean_op_with_unchecked_operand_propagates_unchecked
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame, Unchecked
+
+    class FrameSchema(Columns):
+        any_flag: Unchecked
+        known_flag: pl.Boolean
+
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+    reveal_type(df.select((pl.col("any_flag") & pl.col("known_flag")).alias("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'b': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: boolean_op_with_unchecked_operand_propagates_unchecked_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame, Unchecked

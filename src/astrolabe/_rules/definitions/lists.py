@@ -83,7 +83,7 @@ class Lists:
     STD: ClassVar[Definition] = Definition(
         identity=NodeIdentity("Function", "ListExpr.Std"),
         nulls=NullRule.FIRST,
-        type_function=Mapper(FieldsMapper.moment_dtype, checks=[IS_LIST]),
+        type_function=Mapper(FieldsMapper.var_dtype, checks=[IS_LIST], op="std"),
         options=ELEMENTWISE,
         casts=FunctionCasting(),
         kernel=OneInput(ListKernels.STD),

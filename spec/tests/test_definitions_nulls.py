@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import polars as pl
 import pytest
 
-from spec.tests.rule_probes import KernelSamples, PolarsAnswer, RuleKinds, TreeFrame
+from spec.tests.rule_probes import ApiGate, KernelSamples, PolarsAnswer, RuleKinds, TreeFrame
 from astrolabe._rules.definitions.aggregations import Aggregations
 from astrolabe._rules.definitions.binary_operators import BinaryOperators
 from astrolabe._rules.definitions.definition import NullRule
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from astrolabe._rules.definitions.definition import Definition
+    from astrolabe._rules.definitions.node_options import NodeIdentity
 
 
 class NullCalls:
@@ -503,24 +504,50 @@ class NullCases:
             >>> rule, len(calls)
             (<NullRule.FIRST: 'first'>, 1)
         """
-        explicit = {
-            definition.identity: NullCalls.CALLS[name]
-            for name, definition in NullCalls.DEFINITIONS.items()
-        }
+        explicit = self._explicit()
         census = CensusCalls().of()
-        stated = [
-            definition
-            for definition in Definitions.BY_IDENTITY.values()
-            if definition.nulls is not NullRule.NONE
-        ]
         cases: dict[str, tuple[NullRule, list[Callable[[pl.Expr, pl.Expr], pl.Expr]]]] = {}
-        for definition in stated:
+        for definition in self._stated():
             function = definition.identity.function or definition.identity.shape
             builds = census.get(function, [])
             paired = [self._paired(build) for build in builds]
             known = explicit.get(definition.identity)
             cases[function] = (definition.nulls, paired if known is None else [known])
         return cases
+
+    def _explicit(self) -> dict[NodeIdentity, Callable[[pl.Expr, pl.Expr], pl.Expr]]:
+        """Give the call of each node in the table of `NullCalls` that the installed polars has.
+
+        Returns:
+            The call, by the identity of the node.
+
+        Example:
+            >>> len(NullCases()._explicit()) > 10
+            True
+        """
+        gate = ApiGate()
+        return {
+            definition.identity: NullCalls.CALLS[name]
+            for name, definition in NullCalls.DEFINITIONS.items()
+            if gate.has(name)
+        }
+
+    def _stated(self) -> list[Definition]:
+        """Give each definition that states a null rule, of a node that the installed polars has.
+
+        Returns:
+            The definitions.
+
+        Example:
+            >>> all(definition.nulls is not NullRule.NONE for definition in NullCases()._stated())
+            True
+        """
+        absent = ApiGate().absent()
+        return [
+            definition
+            for definition in Definitions.BY_IDENTITY.values()
+            if definition.nulls is not NullRule.NONE and definition.identity not in absent
+        ]
 
     def _paired(self, build: Callable[[pl.Expr], pl.Expr]) -> Callable[[pl.Expr, pl.Expr], pl.Expr]:
         """Give a call of one input as a call of two, which reads the first.
@@ -606,7 +633,11 @@ class ShortCalls:
 
 
 def test_each_definition_that_states_a_short_rule_has_a_call() -> None:
-    """A rule of a short input that no test checks is a claim with no proof."""
+    """A rule of a short input that no test checks is a claim with no proof.
+
+    A function that the installed release of polars does not have keeps its
+    call, which the tests below leave out.
+    """
     stated = {
         definition.identity
         for definition in Definitions.BY_IDENTITY.values()
@@ -615,7 +646,7 @@ def test_each_definition_that_states_a_short_rule_has_a_call() -> None:
     assert stated == {definition.identity for definition, _, _ in ShortCalls.CALLS.values()}
 
 
-@pytest.mark.parametrize("name", sorted(ShortCalls.CALLS))
+@pytest.mark.parametrize("name", sorted(ApiGate().kept(ShortCalls.CALLS)))
 @pytest.mark.parametrize("short", [True, False])
 def test_a_short_input_gives_only_nulls(name: str, *, short: bool) -> None:
     """Over a short input the node gives only nulls, and over a longer input it gives values."""
@@ -625,7 +656,7 @@ def test_a_short_input_gives_only_nulls(name: str, *, short: bool) -> None:
     assert TreeFrame().rules(expression) == TreeFrame().polars(expression)
 
 
-@pytest.mark.parametrize("name", sorted(ShortCalls.CALLS))
+@pytest.mark.parametrize("name", sorted(ApiGate().kept(ShortCalls.CALLS)))
 def test_a_null_that_the_code_decides_meets_one_row(name: str) -> None:
     """`rolling_corr` panics beside one row where an input holds a null, which the rules know.
 

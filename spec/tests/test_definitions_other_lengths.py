@@ -111,6 +111,7 @@ class OtherLengthNodes:
             CellCheck(
                 OtherLengths.EXTEND_CONSTANT,
                 lambda x, y, z: x.extend_constant(y, z),
+                Values.NUMBER_TEXT,
                 skip=SKIP,
             ),
             (INTEGERS, ONE, ONE),
@@ -120,6 +121,7 @@ class OtherLengthNodes:
             CellCheck(
                 OtherLengths.EXTEND_CONSTANT,
                 lambda x, y, z: x.extend_constant(y, z),
+                Values.NUMBER_TEXT,
                 skip=SKIP,
             ),
             (INTEGERS, CATEGORY, ONE),

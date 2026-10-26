@@ -16,6 +16,7 @@ Run it with `uv run python -m spec.tools.rules.tree_check <count> [depth] [seed]
 from __future__ import annotations
 
 import json
+import multiprocessing
 import random
 import sys
 from collections import Counter
@@ -240,6 +241,9 @@ class TreeTally:
 class TreeCheck:
     """Run the check on many trees, in worker processes that a crash or a hang does not stop.
 
+    Each worker starts a fresh interpreter (`spawn`): a fork copies the
+    threads of polars in the parent, and the child can then hang.
+
     Example:
         >>> TreeCheck(workers=1).run([1], depth=1).agreed.total() + TreeTally().lost >= 0
         True
@@ -274,7 +278,7 @@ class TreeCheck:
             0
         """
         tally = TreeTally()
-        pool = ProcessPoolExecutor(self._workers)
+        pool = self._pool()
         for seed in seeds:
             try:
                 tally.add(pool.submit(check_one, seed, depth).result(timeout=self.TIMEOUT))
@@ -301,7 +305,18 @@ class TreeCheck:
         for process in list(getattr(pool, "_processes", {}).values()):
             process.kill()
         pool.shutdown(wait=False, cancel_futures=True)
-        return ProcessPoolExecutor(self._workers)
+        return self._pool()
+
+    def _pool(self) -> ProcessPoolExecutor:
+        """Give a pool of workers that each start a fresh interpreter.
+
+        Returns:
+            The pool.
+
+        Example:
+            >>> TreeCheck(workers=1)._pool().shutdown()
+        """
+        return ProcessPoolExecutor(self._workers, mp_context=multiprocessing.get_context("spawn"))
 
     @classmethod
     def main(cls) -> int:

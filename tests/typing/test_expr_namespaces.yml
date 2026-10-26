@@ -385,6 +385,59 @@
     )
 
 - case: an_element_read_reaches_a_struct_element
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    from astrolabe import Array, Column, Columns, List, Struct, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[Struct[Column[Literal["a"], pl.Int64]]]
+        r: Array[Struct[Column[Literal["a"], pl.Int64]], Literal[2]]
+
+    # A member that gives the element back gives a Struct element too.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class ListSchema(Columns):
+        first: Struct[Column[Literal["a"], pl.Int64]]
+        last: Struct[Column[Literal["a"], pl.Int64]]
+        got: Struct[Column[Literal["a"], pl.Int64]]
+        item: Struct[Column[Literal["a"], pl.Int64]]
+        exploded: Struct[Column[Literal["a"], pl.Int64]]
+
+    listed: TypedDataFrame[ListSchema] = df.select(
+        first=pl.col("l").list.first(),
+        last=pl.col("l").list.last(),
+        got=pl.col("l").list.get(0),
+        item=pl.col("l").list.head(1).list.item(),
+        exploded=pl.col("l").list.explode(),
+    )
+
+    class ArraySchema(Columns):
+        first: Struct[Column[Literal["a"], pl.Int64]]
+        last: Struct[Column[Literal["a"], pl.Int64]]
+        got: Struct[Column[Literal["a"], pl.Int64]]
+        exploded: Struct[Column[Literal["a"], pl.Int64]]
+        listed: List[Struct[Column[Literal["a"], pl.Int64]]]
+        head: List[Struct[Column[Literal["a"], pl.Int64]]]
+
+    arrays: TypedDataFrame[ArraySchema] = df.select(
+        first=pl.col("r").arr.first(),
+        last=pl.col("r").arr.last(),
+        got=pl.col("r").arr.get(0),
+        exploded=pl.col("r").arr.explode(),
+        listed=pl.col("r").arr.to_list(),
+        head=pl.col("r").arr.head(1),
+    )
+
+    reveal_type(df.select(pl.col("l").explode()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': astrolabe.frame.Struct[tuple[astrolabe.frame.Column[Literal['a'], polars.datatypes.classes.Int64]]]}, closed=True), None]"
+    reveal_type(df.select(pl.col("r").flatten()))  # N: Revealed type is "polars.dataframe.frame.DataFrame" # E: "TypedExpr[Deferred[Literal["pl.col('r')"]]]" has no attribute "flatten"  [attr-defined]
+    df.select(pl.col("l").list.sum())  # E: "l" has no result type at this frame's column types: sum does not accept Struct({'a': Int64}), and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: an_element_read_reaches_a_struct_element_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
 

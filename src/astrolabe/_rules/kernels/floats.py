@@ -16,7 +16,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.dtypes import DType, Is
-from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
+from astrolabe._rules.failures import PolarsRefusal, Stop, UnequalLengths
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.kernels.dispatch import (
     Arm,
     Data,
@@ -51,17 +52,21 @@ class Log:
     Example:
         >>> Log().output([Data(DType("Int8")), Data(DType("Float32"))], [3, 1])
         Float32
-        >>> Log().output([Data(DType("Int8")), Data(DType("Int8"))], [3, 2])  # doctest: +ELLIPSIS
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.44.0"):
+        ...     Log().output([Data(DType("Int8")), Data(DType("Int8"))], [3, 2])
+        ... # doctest: +ELLIPSIS
         Traceback (most recent call last):
         ...
-        astrolabe._rules.failures.PolarsRefusal: InvalidOperationError: cannot do a binary ...
+        astrolabe._rules.failures.PolarsRefusal: ShapeError: can't compute broadcast length, ...
     """
 
     def output(self, inputs: Sequence[Data], lengths: Sequence[int]) -> DType:
         """Give the type of the output.
 
-        It raises `PolarsRefusal` where a cast has no kernel, or where the
-        kernel calls itself without end.
+        It raises `PolarsRefusal` where a cast has no kernel, where the
+        kernel calls itself without end, or where the two inputs have other
+        lengths and neither has one row (`UnequalLengths`).
 
         Args:
             inputs: The data of the value and of the base.
@@ -70,17 +75,12 @@ class Log:
         Returns:
             The type.
 
-        Raises:
-            PolarsRefusal: The two inputs have other lengths, and neither has one row.
-
         Example:
             >>> Log().output([Data(DType("Float64")), Data(DType("Boolean"))], [])
             Float64
         """
-        others = {length for length in lengths if length != 1}
-        if len(others) > 1:
-            message = f"cannot do a binary operation on columns of different lengths: {lengths}"
-            raise PolarsRefusal(ErrorClass.INVALID_OPERATION, message)
+        message = f"cannot do a binary operation on columns of different lengths: {lengths}"
+        UnequalLengths().check(lengths, message)
         return self._log(inputs[0], inputs[1])
 
     def _log(self, value: Data, base: Data) -> DType:
@@ -135,20 +135,71 @@ class Log:
             raise PolarsRefusal(Stop.CRASHES, message)
 
 
+class NotNanNull:
+    """Accept `Null` in the kernel of `is_not_nan`, as polars does from 1.44.0.
+
+    From that release, `is_not_nan` gives a `Boolean` column of nulls for a
+    `Null` column, as `is_nan` does. Older releases raise on `Null`.
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.43.2"):
+        ...     NotNanNull()(DType("Null"))
+        False
+    """
+
+    @polars_releases
+    def __call__(self, dtype: DType) -> bool:
+        """Say whether the kernel accepts the type: `Null`.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether the type is `Null`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     NotNanNull()(DType("Null"))
+            True
+        """
+        return dtype.name == "Null"
+
+    @__call__.before("1.44.0")
+    def _refused(self, dtype: DType) -> bool:
+        """Say that the kernel of the older releases accepts no type here.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> NotNanNull()._refused(DType("Null"))
+            False
+        """
+        del dtype
+        return False
+
+
 class FloatKernels:
     """Hold the dispatch of each kernel of the float family.
 
-    `SQRT` and `CBRT` keep a float and cast every other input to `Float64`, and
-    a cast with no kernel raises. `EXP` and `LOG1P` cast a `Decimal` to
-    `Float64`, then read the physical type: an integer, such as the days of a
-    `Date`, gives `Float64`, and a float keeps its width. They cast every other
-    physical type to `Float64`, and a cast with no kernel panics.
-    `TRIGONOMETRY` keeps a float, casts another number to `Float64`, and raises
-    on every other type.
+    `SQRT` and `CBRT` keep a float and cast every other input to `Float64`,
+    and a cast with no kernel raises. A cast that gives another type, as that
+    of a `Struct`, raises from polars 1.44.0 and ends the process before
+    (`Recast`). `EXP` and `LOG1P` cast a `Decimal` to `Float64`, then read the
+    physical type: an integer, such as the days of a `Date`, gives `Float64`,
+    and a float keeps its width. They cast every other physical type to
+    `Float64`, and a cast with no kernel panics. `TRIGONOMETRY` keeps a float,
+    casts another number to `Float64`, and raises on every other type.
 
     `IS_NAN`, `IS_FINITE` and `IS_INFINITE` give a `Boolean` for a number of
     a primitive type and for `Null`, and raise on every other type, a
-    `Decimal` included. `IS_NOT_NAN` is the same, but it raises on `Null`.
+    `Decimal` included. `IS_NOT_NAN` is the same, but only from polars 1.44.0
+    on for `Null` (`NotNanNull`).
 
     Example:
         >>> FloatKernels.SQRT.output(Data(DType("String")))
@@ -165,12 +216,12 @@ class FloatKernels:
     SQRT: ClassVar[Dispatch] = Dispatch(
         "sqrt",
         (Arm(FLOAT, Same()),),
-        Recast(DType("Float64")),
+        Recast(DType("Float64"), checked=True),
     )
     CBRT: ClassVar[Dispatch] = Dispatch(
         "cbrt",
         (Arm(FLOAT, Same()),),
-        Recast(DType("Float64")),
+        Recast(DType("Float64"), checked=True),
     )
     EXP: ClassVar[Dispatch] = Dispatch(
         "exp",
@@ -218,7 +269,7 @@ class FloatKernels:
     )
     IS_NOT_NAN: ClassVar[Dispatch] = Dispatch(
         "is_not_nan",
-        (Arm(Is.primitive_numeric, BOOLEAN),),
+        (Arm(Is.primitive_numeric, BOOLEAN), Arm(NotNanNull(), BOOLEAN)),
         Refuse(),
     )
     IS_FINITE: ClassVar[Dispatch] = Dispatch("is_finite", IS_NAN.arms, Refuse())

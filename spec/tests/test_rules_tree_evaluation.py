@@ -32,6 +32,7 @@ from astrolabe._rules.execution import GroupBy, QueryFlags
 from astrolabe._rules.failures import UndecidedError
 from astrolabe._rules.node_evaluation import ColumnLeaf, Unchecked
 from astrolabe._rules.options import Height, RowForm
+from astrolabe._rules.releases import PolarsRelease
 from astrolabe._rules.tree import ExpressionTree
 from astrolabe._rules.tree_evaluation import JoinKeyRows, LiteralParse, NodeTraits, TreeEvaluation
 from spec.tests.rule_probes import PolarsAnswer, Stopped, TemplateCall, TreeColumns, TreeFrame
@@ -365,9 +366,19 @@ STORED_FRAME = pl.DataFrame({
     "f32": pl.Series([1.0, 2.0, 3.0], dtype=pl.Float32),
     "dec": pl.Series([1, 2, 3], dtype=pl.Decimal(10, 2)),
 })
+# The steps that give `d` a stored type other than the type of its data. From
+# polars 2.0.0, the planner widens the precision of the two steps of a decimal
+# too, so only the fill of another kind keeps the two types apart.
 STORED_FIRSTS: dict[str, pl.Expr] = {
-    "a product with a decimal": pl.col("i8") * pl.col("dec"),
-    "a cumulative sum of a decimal": pl.col("dec").cum_sum(),
+    "a shift filled by another kind": pl.col("i8").shift(1, fill_value=pl.col("i32").first()),
+    **(
+        {
+            "a product with a decimal": pl.col("i8") * pl.col("dec"),
+            "a cumulative sum of a decimal": pl.col("dec").cum_sum(),
+        }
+        if PolarsRelease.installed() < PolarsRelease.parse("2.0.0")
+        else {}
+    ),
 }
 STORED_SECONDS: dict[str, pl.Expr] = {
     "fill_null": pl.col("i8").fill_null(pl.col("d")),
@@ -382,21 +393,30 @@ STORED_SECONDS: dict[str, pl.Expr] = {
 }
 
 
-@pytest.mark.parametrize("first", sorted(STORED_FIRSTS))
-@pytest.mark.parametrize("second", sorted(STORED_SECONDS))
+# The fill of `i8` reads the data of `d`, of another type than its plan, only
+# where `i8` holds a null, so the values decide whether the kernel panics.
+STORED_PAIRS = [
+    (first, second)
+    for first in sorted(STORED_FIRSTS)
+    for second in sorted(STORED_SECONDS)
+    if (first, second) != ("a shift filled by another kind", "fill_null")
+]
+
+
+@pytest.mark.parametrize(("first", "second"), STORED_PAIRS)
 def test_a_leaf_with_a_stored_type_gives_the_answer_of_polars(first: str, second: str) -> None:
     """A step of a lazy frame plans at the stored type of a column, and runs on its data.
 
     The first step gives the column `d` a stored type other than the type of
     its data. The leaf of `d` holds both, and the evaluator gives the type
-    of the second step as polars runs it.
+    of the second step as polars runs it, or says that it stops.
 
     Args:
         first: The step that makes `d`.
         second: The step that reads `d`.
     """
     lazy = STORED_FRAME.lazy().with_columns(d=STORED_FIRSTS[first])
-    stored, run = lazy.collect_schema()["d"], lazy.collect().schema["d"]
+    stored, run = lazy.collect_schema()["d"], lazy.collect(engine="in-memory").schema["d"]
     assert stored != run
     leaves = {
         name: ColumnLeaf(DType.of(dtype), RowForm.PER_ROW)
@@ -407,7 +427,13 @@ def test_a_leaf_with_a_stored_type_gives_the_answer_of_polars(first: str, second
     answers = TreeEvaluation(leaves, GroupBy((2, 1), QueryFlags.lazy())).answers(
         ExpressionTree().of(expression)
     )
-    assert answers.run_select == DType.of(lazy.select(expression).collect().schema["o"])
+    run = PolarsAnswer().result(
+        lambda: lazy.select(expression).collect(engine="in-memory").schema["o"]
+    )
+    if isinstance(run, Stopped):
+        assert not isinstance(answers.run_select, DType), answers.run_select
+    else:
+        assert answers.run_select == DType.of(run)
     assert answers.planner_select == DType.of(lazy.select(expression).collect_schema()["o"])
 
 
@@ -477,7 +503,7 @@ def test_arithmetic_in_agg_runs_in_place_only_on_flat_values(path: str) -> None:
     answers = TreeEvaluation(leaves, GroupBy((3, 2))).answers(ExpressionTree().of(expression))
     query = SplitDecimal().lazy().group_by("g").agg(expression)
     try:
-        polars: object = DType.of(query.collect().schema["o"])
+        polars: object = DType.of(query.collect(engine="in-memory").schema["o"])
     except BaseException as error:  # a panic is not an Exception
         polars = type(error).__name__
     rules = answers.run_agg

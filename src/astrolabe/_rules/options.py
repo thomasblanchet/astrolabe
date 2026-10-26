@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar
 
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import SupertypeFlag
 
 if TYPE_CHECKING:
@@ -526,6 +527,11 @@ class KernelLength:
     - `joined`: the rows of all the inputs one after the other, as `append`
       gives them, with no check of the lengths.
     - `frame`: the height of the frame, as `over` gives it.
+    - `branches`: the length of the branch of a `when` that its mask picks.
+      The inputs pass the check of `broadcast`. From polars 1.44.0, a mask
+      of one row runs only the branch that its value picks, so two branches
+      of other lengths, neither of one row, give the length of one of them,
+      which the values decide.
 
     A definition names the rule of its kernel. A node whose kind fixes the
     rule, such as a binary operation, gets it from `Shape.kernel_length`.
@@ -550,7 +556,13 @@ class KernelLength:
     count: int = 0
     offset: int = 0
 
-    CHECKS: ClassVar[frozenset[str]] = frozenset({"broadcast", "equal", "first", "masked"})
+    CHECKS: ClassVar[frozenset[str]] = frozenset({
+        "broadcast",
+        "equal",
+        "first",
+        "masked",
+        "branches",
+    })
     DECIDED: ClassVar[frozenset[str]] = frozenset({"values", "masked", "shrinks"})
 
     @classmethod
@@ -709,6 +721,25 @@ class KernelLength:
         return cls("joined")
 
     @classmethod
+    def branches(cls) -> KernelLength:
+        """Give the rule of a `when`, whose output has the length of the branch that the mask picks.
+
+        Returns:
+            The rule.
+
+        Example:
+            >>> KernelLength.branches().length([3, 3, 1])
+            3
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> mask = [RowForm.ONE_VALUE, RowForm.PER_ROW, RowForm.OTHER_LENGTH]
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     rule = KernelLength.branches()
+            ...     rule.length([1, 5, 2]), rule.decided([1, 5, 2], []), rule.form(mask)
+            (5, True, <RowForm.OTHER_LENGTH: 'other length'>)
+        """
+        return cls("branches")
+
+    @classmethod
     def frame(cls) -> KernelLength:
         """Give the rule of a kernel whose output has the height of the frame.
 
@@ -737,7 +768,9 @@ class KernelLength:
             >>> KernelLength.broadcast().form([RowForm.ONE_VALUE, RowForm.ONE_ROW])
             <RowForm.ONE_ROW: 'one row'>
         """
-        if self.rule in {"broadcast", "equal"}:
+        if self.rule == "branches" and self._picked_form(inputs):
+            return RowForm.OTHER_LENGTH
+        if self.rule in {"broadcast", "equal", "branches"}:
             longest = max(inputs, key=RowForm.rank)
             return RowForm.ONE_ROW if longest is RowForm.ONE_VALUE else longest
         if self.rule == "frame":
@@ -805,6 +838,8 @@ class KernelLength:
         """
         if self.rule == "frame":
             raise NoLengthError
+        if self.rule == "branches" and self._picked(lengths, decided):
+            return max(lengths[1:])
         if self.rule in self.CHECKS:
             return self._checked(lengths, decided)
         counts = {
@@ -877,11 +912,13 @@ class KernelLength:
         """
         if self.rule in self.DECIDED or (self.rule == "joined" and any(decided)):
             return True
+        if self.rule == "branches" and self._picked(lengths, decided):
+            return True
         if not any(decided) or self.rule in {"one", "frame"}:
             return False
         if self.rule == "of_input":
             return decided[min(self.count, len(decided) - 1)]
-        if self.rule not in {"broadcast", "equal"}:
+        if self.rule not in {"broadcast", "equal", "branches"}:
             return decided[0]
         pairs = zip(lengths, decided, strict=True)
         return not any(length != 1 and not free for length, free in pairs)
@@ -916,6 +953,80 @@ class KernelLength:
             return bounded[0]
         pairs = zip(lengths, bounded, strict=True)
         return any(free for size, free in pairs if size == length)
+
+    def _picked(self, lengths: Sequence[int], decided: Sequence[bool]) -> bool:
+        """Say whether the mask of a `when` picks the length of the output.
+
+        Args:
+            lengths: The number of rows of the mask and of each branch.
+            decided: Whether the values decide the length of each input, or
+                none where no input has such a length.
+
+        Returns:
+            Whether the mask has one row, and the two branches have other
+            lengths, neither of one row, in a release that runs one branch.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     KernelLength.branches()._picked([1, 5, 2], [])
+            True
+        """
+        if any(decided) or not self._one_branch():
+            return False
+        mask, truthy, falsy = lengths
+        return mask == 1 and truthy != falsy and 1 not in {truthy, falsy}
+
+    def _picked_form(self, inputs: Sequence[RowForm]) -> bool:
+        """Say whether the mask of a `when` picks the row form of the output.
+
+        Args:
+            inputs: The row forms of the mask and of each branch.
+
+        Returns:
+            Whether the mask has one row, and the two branches have other row
+            forms, neither of one row, in a release that runs one branch.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> forms = [RowForm.ONE_VALUE, RowForm.PER_ROW, RowForm.OTHER_LENGTH]
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     KernelLength.branches()._picked_form(forms)
+            True
+        """
+        if not self._one_branch():
+            return False
+        mask, truthy, falsy = inputs
+        singles = mask.is_single(), truthy.is_single(), falsy.is_single()
+        return singles == (True, False, False) and truthy is not falsy
+
+    @polars_releases
+    def _one_branch(self) -> bool:
+        """Say whether a mask of one row runs only the branch that its value picks.
+
+        Returns:
+            Whether it does.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.44.0"):
+            ...     KernelLength.branches()._one_branch()
+            True
+        """
+        return True
+
+    @_one_branch.before("1.44.0")
+    def _both_branches(self) -> bool:
+        """Say that a mask of one row runs both branches, as the older releases do.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> KernelLength.branches()._both_branches()
+            False
+        """
+        return False
 
     def _common(self, lengths: Sequence[int]) -> int | None:
         """Give the one length of inputs that must have one length.
@@ -1073,6 +1184,54 @@ class ScalarInput:
         return cls(place, f"non-scalar {parameter} passed to `{function}`")
 
 
+class SortByHeight:
+    """Give the projection height of `sort_by`: the heights of its value and its keys, side by side.
+
+    Before polars 1.40.0, the planner reads a `sort_by` as one value where its
+    value is one value, whatever its keys.
+
+    Example:
+        >>> SortByHeight()._value_first([Height.SCALAR, Height.COLUMN])
+        <Height.SCALAR: 'scalar'>
+    """
+
+    @polars_releases
+    def of(self, inputs: Sequence[Height]) -> Height:
+        """Give the height: the heights of the inputs, side by side.
+
+        Args:
+            inputs: The heights of the value and of the keys.
+
+        Returns:
+            The height.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SortByHeight().of([Height.SCALAR, Height.COLUMN])
+            <Height.COLUMN: 'column'>
+        """
+        return Height.zipped(inputs)
+
+    @of.before("1.40.0")
+    def _value_first(self, inputs: Sequence[Height]) -> Height:
+        """Give the height of the older releases: one value where the value is one value.
+
+        Args:
+            inputs: The heights of the value and of the keys.
+
+        Returns:
+            The height.
+
+        Example:
+            >>> SortByHeight()._value_first([Height.COLUMN, Height.SCALAR])
+            <Height.COLUMN: 'column'>
+        """
+        if inputs[0] is Height.SCALAR:
+            return Height.SCALAR
+        return Height.zipped(inputs)
+
+
 @dataclass(frozen=True)
 class Shape:
     """Hold the facts of one node of a plan that decide the shape of its output.
@@ -1121,7 +1280,6 @@ class Shape:
     ZIPPED: ClassVar[frozenset[NodeKind]] = frozenset({
         NodeKind.BINARY,
         NodeKind.TERNARY,
-        NodeKind.SORT_BY,
     })
     FIRST_HEIGHT: ClassVar[frozenset[NodeKind]] = frozenset({
         NodeKind.CAST,
@@ -1139,7 +1297,7 @@ class Shape:
     })
     KERNEL_LENGTHS: ClassVar[dict[NodeKind, KernelLength]] = {
         NodeKind.BINARY: KernelLength.broadcast(),
-        NodeKind.TERNARY: KernelLength.broadcast(),
+        NodeKind.TERNARY: KernelLength.branches(),
         NodeKind.SORT_BY: KernelLength.equal(),
         NodeKind.CAST: KernelLength.first(),
         NodeKind.SORT: KernelLength.first(),
@@ -1308,6 +1466,8 @@ class Shape:
             return self.FIXED_HEIGHTS[self.kind]
         if self.kind in self.ZIPPED:
             return Height.zipped(inputs)
+        if self.kind is NodeKind.SORT_BY:
+            return SortByHeight().of(inputs)
         if self.kind in self.FIRST_HEIGHT:
             return inputs[0]
         if self.kind is NodeKind.FUNCTION:
