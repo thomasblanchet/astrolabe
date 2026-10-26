@@ -13,7 +13,6 @@ import polars as pl
 import pytest
 
 from astrolabe._rules.failures import ErrorClass, PolarsRefusal, Stop
-from astrolabe._rules.kernels.dispatch import KernelFacts
 
 
 class Exceptions:
@@ -56,7 +55,7 @@ class TestFailures:
 
     def test_a_panic_of_polars_is_not_an_exception(self) -> None:
         """A panic reaches Python as a `PanicException`, which derives from `BaseException` only."""
-        probe = KernelFacts.SHARED_NULL_LEAF.probe
+        probe = "pl.select(pl.coalesce(pl.lit(1), pl.lit(2**40)))"
         with pytest.raises(BaseException) as caught:  # ruff: ignore[pytest-raises-too-broad]
             eval(probe, {"pl": pl})  # ruff: ignore[suspicious-eval-usage]
         assert type(caught.value).__name__ == "PanicException"

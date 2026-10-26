@@ -1184,6 +1184,54 @@ class ScalarInput:
         return cls(place, f"non-scalar {parameter} passed to `{function}`")
 
 
+class SortByHeight:
+    """Give the projection height of `sort_by`: the heights of its value and its keys, side by side.
+
+    Before polars 1.40.0, the planner reads a `sort_by` as one value where its
+    value is one value, whatever its keys.
+
+    Example:
+        >>> SortByHeight()._value_first([Height.SCALAR, Height.COLUMN])
+        <Height.SCALAR: 'scalar'>
+    """
+
+    @polars_releases
+    def of(self, inputs: Sequence[Height]) -> Height:
+        """Give the height: the heights of the inputs, side by side.
+
+        Args:
+            inputs: The heights of the value and of the keys.
+
+        Returns:
+            The height.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.40.0"):
+            ...     SortByHeight().of([Height.SCALAR, Height.COLUMN])
+            <Height.COLUMN: 'column'>
+        """
+        return Height.zipped(inputs)
+
+    @of.before("1.40.0")
+    def _value_first(self, inputs: Sequence[Height]) -> Height:
+        """Give the height of the older releases: one value where the value is one value.
+
+        Args:
+            inputs: The heights of the value and of the keys.
+
+        Returns:
+            The height.
+
+        Example:
+            >>> SortByHeight()._value_first([Height.COLUMN, Height.SCALAR])
+            <Height.COLUMN: 'column'>
+        """
+        if inputs[0] is Height.SCALAR:
+            return Height.SCALAR
+        return Height.zipped(inputs)
+
+
 @dataclass(frozen=True)
 class Shape:
     """Hold the facts of one node of a plan that decide the shape of its output.
@@ -1232,7 +1280,6 @@ class Shape:
     ZIPPED: ClassVar[frozenset[NodeKind]] = frozenset({
         NodeKind.BINARY,
         NodeKind.TERNARY,
-        NodeKind.SORT_BY,
     })
     FIRST_HEIGHT: ClassVar[frozenset[NodeKind]] = frozenset({
         NodeKind.CAST,
@@ -1419,6 +1466,8 @@ class Shape:
             return self.FIXED_HEIGHTS[self.kind]
         if self.kind in self.ZIPPED:
             return Height.zipped(inputs)
+        if self.kind is NodeKind.SORT_BY:
+            return SortByHeight().of(inputs)
         if self.kind in self.FIRST_HEIGHT:
             return inputs[0]
         if self.kind is NodeKind.FUNCTION:

@@ -854,8 +854,8 @@ class DeferredEvaluation:
     def __init__(self, context: str, planned: Mapping[str, str] | None = None) -> None:
         """Keep the context of an operation, the passes of its optimizer, and the stored types.
 
-        An eager frame simplifies the expressions of a `select` and runs no
-        pass in `agg`. A lazy frame runs every pass when it collects, the
+        An eager frame simplifies the expressions of a `select`, and those of
+        `agg` as `EagerAgg` says. A lazy frame runs every pass when it collects, the
         slice pushdown included. A lazy frame also stores a type for each
         column, and polars plans each step at that type. Where it differs
         from the type of the data, the leaf of the column holds both. The

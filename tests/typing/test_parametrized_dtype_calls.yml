@@ -71,6 +71,33 @@
     reveal_type(df.select(pl.col("s").cast(pl.Datetime())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
 
 - case: select_cast_to_parametrized_datetime_with_non_literal_unit_narrows_to_the_bare_dtype
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # unit's own declared type satisfies real polars' own TimeUnit
+    # stub, so this is not a mypy [arg-type] error on its own -- but
+    # its own AST node is a plain name reference, not a string literal,
+    # so DtypeConstructorArgs cannot read it. The whole dtype falls back
+    # to the plain, argless real Datetime instead of losing the whole
+    # result: not a partially-unknown Datetime[<unknown>, ...], but not
+    # unrecognized either -- the same as the old argless pl.Datetime.
+    unit: Literal["ms"] = "ms"
+
+    # Polars 2.0.0 refuses a cast of text to a Datetime, so the source
+    # is a Date.
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime(unit))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Datetime}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_non_literal_unit_narrows_to_the_bare_dtype_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -96,6 +123,25 @@
     reveal_type(df.select(pl.col("s").cast(pl.Datetime(unit))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Datetime}, closed=True), None]"
 
 - case: select_cast_to_bare_datetime_class_narrows_to_microseconds
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # Polars 2.0.0 refuses a cast of text to a Datetime, so the source
+    # is a Date.
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    # A bare class reference, with no call at all, stands for the
+    # instance that polars builds for it: Datetime("us", None).
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': astrolabe.frame.Datetime[Literal['us'], None]}, closed=True), None]"
+
+- case: select_cast_to_bare_datetime_class_narrows_to_microseconds_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -142,6 +188,30 @@
     reveal_type(pl.read_csv("data.csv", schema={"gap": pl.Duration}))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'gap': astrolabe.frame.Duration[Literal['us']]}, closed=True), None]"
 
 - case: select_cast_to_parametrized_datetime_with_non_literal_zone_narrows_to_the_bare_dtype
+  skip: __import__("tests.releases").releases.polars_before("2.0.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    # zone is given, not omitted, but its own AST node is a plain name
+    # reference, not a string literal: a partial-argument failure
+    # (unit resolves, zone does not), falling back to the bare dtype
+    # the same way a fully-unresolvable argument list does.
+    zone: Literal["UTC"] = "UTC"
+
+    # Polars 2.0.0 refuses a cast of text to a Datetime, so the source
+    # is a Date.
+    class FrameSchema(Columns):
+        s: pl.Date
+
+    Frame = TypedDataFrame[FrameSchema]
+
+    df: Frame
+    reveal_type(df.select(pl.col("s").cast(pl.Datetime("us", zone))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Datetime}, closed=True), None]"
+
+- case: select_cast_to_parametrized_datetime_with_non_literal_zone_narrows_to_the_bare_dtype_before_polars_2_0
+  skip: not __import__("tests.releases").releases.polars_before("2.0.0")
   main: |
     from typing import Literal
     import polars as pl

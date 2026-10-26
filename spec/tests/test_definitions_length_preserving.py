@@ -36,6 +36,7 @@ and `ewm_std`, `ewm_var` and `pct_change` over a struct end the process.
 
 from __future__ import annotations
 
+import json
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 from typing import TYPE_CHECKING, ClassVar
@@ -44,15 +45,18 @@ import polars as pl
 import pytest
 
 from spec.tests.rule_probes import (
+    ApiGate,
     CellCheck,
     Input,
     Inputs,
     NodeSample,
+    PolarsAnswer,
     Stopped,
     TemplateCall,
     Values,
 )
 from astrolabe._rules.definitions.length_preserving import LengthPreserving
+from astrolabe._rules.definitions.node_options import NodeOptions
 from astrolabe._rules.dtypes import DType
 from astrolabe._rules.failures import Stop
 from astrolabe._rules.node_evaluation import ColumnLeaf, NodeEvaluation, Refused
@@ -85,7 +89,7 @@ class Nodes:
     INTEGER: ClassVar[Input] = Inputs().labelled("Int64/per row")
     COUNT: ClassVar[Input] = Inputs().labelled("lit int 1/direct")
     KEY: ClassVar[Input] = Inputs().labelled("Datetime(time_unit='ms', time_zone=None)/per row")
-    ONE_INPUT: ClassVar[dict[str, CellCheck]] = {
+    ONE_INPUT: ClassVar[dict[str, CellCheck]] = ApiGate().kept({
         "arg_sort": CellCheck(LengthPreserving.ARG_SORT, lambda x: x.arg_sort()),
         "is_duplicated": CellCheck(LengthPreserving.IS_DUPLICATED, lambda x: x.is_duplicated()),
         "is_first_distinct": CellCheck(
@@ -165,6 +169,12 @@ class Nodes:
             LengthPreserving.ROLLING_VAR,
             lambda x: x.rolling_var(window_size=2),
         ),
+    })
+    # The answers that no sample shows before a release of polars, by the call and
+    # the cell, each with that release. A test of its own checks each one
+    # (`test_qcut_with_breaks_runs_over_texts_of_numbers_in_agg`).
+    UNSHOWN: ClassVar[dict[tuple[str, str], str]] = {
+        ("qcut breaks", "String/per row: run agg"): "1.42.0",
     }
     ONE_INPUT_OPTIONS: ClassVar[dict[str, CellCheck]] = {
         "pl.cum_count": CellCheck(LengthPreserving.CUM_COUNT, TemplateCall("pl.cum_count('x')")),
@@ -291,7 +301,7 @@ class Nodes:
             lambda x: x.rolling_skew(window_size=3, bias=False),
         ),
     }
-    MANY_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...]]]] = {
+    MANY_INPUTS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, ...]]]] = ApiGate().kept({
         "shift": (
             CellCheck(LengthPreserving.SHIFT, TemplateCall("pl.col('x').shift()")),
             (INTEGER, COUNT),
@@ -412,8 +422,8 @@ class Nodes:
             ),
             (FLOAT, KEY),
         ),
-    }
-    TWO_INPUT_OPTIONS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input]]]] = {
+    })
+    TWO_INPUT_OPTIONS: ClassVar[dict[str, tuple[CellCheck, tuple[Input, Input]]]] = ApiGate().kept({
         "shift 2": (
             CellCheck(LengthPreserving.SHIFT, TemplateCall("pl.col('x').shift(-2)")),
             (INTEGER, COUNT),
@@ -488,14 +498,14 @@ class Nodes:
             ),
             (FLOAT, FLOAT),
         ),
-    }
-    OUT_OF_PROCESS: ClassVar[dict[str, tuple[Definition, str, int]]] = {
+    })
+    OUT_OF_PROCESS: ClassVar[dict[str, tuple[Definition, str, int]]] = ApiGate().kept({
         "ewm_mean": (LengthPreserving.EWM_MEAN, "pl.col('x').ewm_mean(alpha=0.5)", 1),
         "ewm_sum": (LengthPreserving.EWM_SUM, "pl.col('x').ewm_sum(alpha=0.5)", 1),
         "ewm_std": (LengthPreserving.EWM_STD, "pl.col('x').ewm_std(alpha=0.5)", 1),
         "ewm_var": (LengthPreserving.EWM_VAR, "pl.col('x').ewm_var(alpha=0.5)", 1),
         "pct_change": (LengthPreserving.PCT_CHANGE, "pl.col('x').pct_change()", 2),
-    }
+    })
 
     @classmethod
     def many_input_cells(cls) -> list[tuple[str, tuple[Input, ...]]]:
@@ -506,7 +516,7 @@ class Nodes:
 
         Example:
             >>> cells = Nodes.many_input_cells()
-            >>> len(cells) > 8500, cells[0][0]
+            >>> len(cells) > 8000, cells[0][0]
             (True, 'shift')
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
@@ -526,8 +536,8 @@ class Nodes:
 
         Example:
             >>> cells = Nodes.two_input_option_cells()
-            >>> len(cells), cells[0][1][1].label
-            (1260, 'lit int 1/direct')
+            >>> len(cells) > 1000, cells[0][1][1].label
+            (True, 'lit int 1/direct')
         """
         cells: list[tuple[str, tuple[Input, ...]]] = []
         for name, (_, (left, right)) in cls.TWO_INPUT_OPTIONS.items():
@@ -694,9 +704,42 @@ def test_node_of_one_input_gives_the_answers_of_polars(node: str, cell: tuple[In
 def test_option_of_one_input_gives_the_answers_of_polars(
     node: str, cell: tuple[Input, ...]
 ) -> None:
-    """The four answers of a node of one input at another value of an option match polars."""
+    """The four answers of a node of one input at another value of an option match polars.
+
+    An answer that no sample shows in the installed release is left out (`Nodes.UNSHOWN`).
+    """
     problems = Nodes.ONE_INPUT_OPTIONS[node].problems(list(cell))
-    assert not problems, "\n".join(problems)
+    installed = PolarsRelease.installed()
+    unshown = {
+        place
+        for (call, place), release in Nodes.UNSHOWN.items()
+        if call == node and installed < PolarsRelease.parse(release)
+    }
+    shown = [problem for problem in problems if not problem.startswith(tuple(unshown))]
+    assert not shown, "\n".join(shown)
+
+
+def test_qcut_with_breaks_runs_over_texts_of_numbers_in_agg() -> None:
+    """`qcut` with two breaks over text runs in `agg` with the type of the rules where text parses.
+
+    Before polars 1.42.0, a group whose text does not parse makes the kernel
+    panic, and a group of one text gives two equal breaks, which polars
+    refuses. Each sample holds text of one of these two kinds, so no sample
+    shows the run in `agg` (`Nodes.UNSHOWN`). Text of distinct numbers runs.
+    In polars 1.42, the values decide the type of this call
+    (`QuantileCut._values_decide`), so the test does not apply there.
+    """
+    installed = PolarsRelease.installed()
+    if PolarsRelease.parse("1.42.0") <= installed < PolarsRelease.parse("1.43.0"):
+        pytest.skip("in polars 1.42, the values decide the type of this call")
+    node = pl.col("t").qcut([0.25, 0.75], include_breaks=True)
+    tree = json.loads(node.meta.serialize(format="json"))
+    definition = LengthPreserving.QCUT.at(NodeOptions(tree))
+    leaf = ColumnLeaf(DType("String"), RowForm.PER_ROW)
+    rules = NodeEvaluation(definition, [leaf], CellCheck.GROUPS).answers().run_agg
+    frame = pl.DataFrame({"k": [1, 1, 1, 2, 2], "t": ["1", "2", "3", "4", "5"]})
+    ran = PolarsAnswer().answer(lambda: frame.group_by("k").agg(node.alias("o")).schema["o"])
+    assert rules == ran
 
 
 @pytest.mark.parametrize("cell", NodeSample().options(), ids=CellCheck.label)

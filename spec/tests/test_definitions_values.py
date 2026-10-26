@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, ClassVar
 import polars as pl
 import pytest
 
-from spec.tests.rule_probes import TreeFrame
+from spec.tests.rule_probes import ApiGate, TreeFrame
 from astrolabe._rules.definitions.aggregations import Aggregations
 from astrolabe._rules.definitions.elementwise import Elementwise
 from astrolabe._rules.definitions.length_preserving import LengthPreserving
@@ -46,7 +46,7 @@ class ValueCalls:
         ['cast Boolean', 'cast Float64']
     """
 
-    CALLS: ClassVar[dict[str, tuple[Definition, Callable[[pl.Expr], pl.Expr]]]] = {
+    CALLS: ClassVar[dict[str, tuple[Definition, Callable[[pl.Expr], pl.Expr]]]] = ApiGate().kept({
         "min": (Aggregations.MIN, lambda x: x.min()),
         "max": (Aggregations.MAX, lambda x: x.max()),
         "first": (Aggregations.FIRST, lambda x: x.first()),
@@ -67,7 +67,7 @@ class ValueCalls:
         "cast Float64": (Elementwise.CAST, lambda x: x.cast(pl.Float64)),
         "cast String": (Elementwise.CAST, lambda x: x.cast(pl.String)),
         "cast Boolean": (Elementwise.CAST, lambda x: x.cast(pl.Boolean)),
-    }
+    })
     VALUES: ClassVar[list[object]] = [1, -2, 300, 2**40, 1.5, "a", "12", True]
 
 
@@ -140,11 +140,15 @@ class PolarsColumn:
 
 
 def test_each_definition_that_states_a_value_has_a_call() -> None:
-    """A rule of values that no test checks is a claim with no proof."""
+    """A rule of values that no test checks is a claim with no proof.
+
+    A node that the installed release does not have has no call (`ApiGate`).
+    """
+    absent = ApiGate().absent()
     stated = {
         definition.identity
         for definition in Definitions.BY_IDENTITY.values()
-        if definition.computes is not None
+        if definition.computes is not None and definition.identity not in absent
     }
     assert stated == {definition.identity for definition, _ in ValueCalls.CALLS.values()}
 

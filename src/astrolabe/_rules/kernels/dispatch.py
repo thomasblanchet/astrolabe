@@ -728,7 +728,9 @@ class KernelFact:
     """Hold a fact of a kernel that the types of its inputs do not decide.
 
     `reason` says why no rule of the types covers it. `probe` is a Python
-    expression, over the module `pl` of polars, that shows it.
+    expression, over the module `pl` of polars, that shows it. `since` is
+    the first release of polars that shows it, where an older release that
+    the checker supports does not.
 
     Example:
         >>> KernelFacts.SHARED_NULL_LEAF.name
@@ -738,6 +740,7 @@ class KernelFact:
     name: str
     reason: str
     probe: str
+    since: str | None = None
 
 
 class KernelFacts:
@@ -767,5 +770,6 @@ class KernelFacts:
             "pl.Series('x', [1, 2], dtype=pl.Int8)"
             " + pl.Series('y', [[None]], dtype=pl.List(pl.Int8))"
         ),
+        since="1.43.0",
     )
     ALL: ClassVar[tuple[KernelFact, ...]] = (SHARED_NULL_LEAF,)

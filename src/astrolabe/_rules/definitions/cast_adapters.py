@@ -25,6 +25,7 @@ from astrolabe._rules.cast_pass import (
     VisitTurn,
 )
 from astrolabe._rules.options import CastingRules
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import Supertype
 from astrolabe._rules.definitions.node_options import (
     NodeOptions,
@@ -273,6 +274,8 @@ class SupertypeConversion:
     (`VisitTurn.ROOT`). Where the casts went, it reads the types of its inputs
     again, and its casting rule refuses them. Any other node reads the casts
     at its first visit, and the pass takes its casting rule away there.
+    Before polars 1.40.0, the conversion puts no cast, and the node has no
+    casting rule: the kernel casts the data (`Appended`).
 
     Example:
         >>> from astrolabe._rules.dtypes import DType
@@ -285,6 +288,7 @@ class SupertypeConversion:
 
     RULE: ClassVar[CastingRules] = CastingRules.cast_to_supertypes()
 
+    @polars_releases
     def visit(
         self,
         inputs: Sequence[Operand],
@@ -323,6 +327,36 @@ class SupertypeConversion:
             supertype = Supertype().require(inputs[0].dtype, inputs[1].dtype)
             read = [self._read(operand, supertype) for operand in inputs]
             FunctionCasts(self.RULE).visit(read)
+        return Visit.unchanged(len(inputs))
+
+    @visit.before("1.40.0")
+    def _no_rule(
+        self,
+        inputs: Sequence[Operand],
+        options: FunctionOptions,
+        *,
+        turn: VisitTurn,
+    ) -> Visit:
+        """Give the casts of the visit in the older releases: none, as the node has no casting rule.
+
+        Args:
+            inputs: The inputs of the function.
+            options: The options of the function.
+            turn: The visit of the cast pass.
+
+        Returns:
+            A visit that changes nothing.
+
+        Example:
+            >>> from astrolabe._rules.dtypes import DType
+            >>> from astrolabe._rules.options import FunctionOptions
+            >>> from astrolabe._rules.type_functions import Operand
+            >>> inputs = [Operand.column(DType("Binary")), Operand.of_value(1)]
+            >>> turn = VisitTurn.ROOT
+            >>> SupertypeConversion()._no_rule(inputs, FunctionOptions(), turn=turn).steps
+            ((), ())
+        """
+        del options, turn
         return Visit.unchanged(len(inputs))
 
     def _read(self, operand: Operand, supertype: DType) -> Operand:
