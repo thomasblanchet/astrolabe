@@ -24,7 +24,6 @@ Some limits are a choice, and the design accepts them:
 - A join that can rename a column for some callers is an error, not a result. One promise on the declaration removes it.
 - A node that a later release of Polars adds reads as `Unchecked`, under the name of the expression.
 - An expression over several columns whose data types the checker does not know gives `Unchecked`.
-- With `--num-workers`, mypy caches a module before it checks the function bodies. A call from another module can then get the placeholder of an inferred return type on a warm run. A serial run is exact.
 
 ## Behaviors of Polars
 
