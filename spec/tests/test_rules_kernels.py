@@ -331,8 +331,8 @@ class PairCheck:
 
         Example:
             >>> check = PairCheck("add", SeriesArithmetic(NumericOp.ADD))
-            >>> check._answer(pl.Date(), pl.Int8(), Case(False, False))
-            raises InvalidOperationError
+            >>> check._answer(pl.Int8(), pl.Int16(), Case(False, False))
+            Int16
         """
         one = self._samples.series(left, nulls=case.left_nulls, one_row=case.left_one_row)
         other = self._samples.series(right, nulls=case.right_nulls, one_row=case.right_one_row)
@@ -1520,13 +1520,18 @@ class TestKernelFacts:
 
     @pytest.mark.parametrize("fact", KernelFacts.ALL, ids=lambda fact: fact.name)
     def test_probe_of_a_fact_panics(self, fact: KernelFact) -> None:
-        """The probe of each fact panics in polars, as its reason says."""
+        """The probe of each fact panics in polars, as its reason says.
+
+        In a release older than the first one that shows the fact, the probe runs.
+        """
         namespace = {"pl": pl}
         probe = fact.probe
         answer = PolarsAnswer().answer(
             lambda: eval(probe, namespace).dtype,  # ruff: ignore[suspicious-eval-usage],
         )
-        assert answer == Stopped(Stop.PANICS)
+        first = PolarsRelease.parse(fact.since) if fact.since is not None else None
+        older = first is not None and PolarsRelease.installed() < first
+        assert (answer != Stopped(Stop.PANICS)) if older else (answer == Stopped(Stop.PANICS))
 
 
 TEXTS: tuple[str, ...] = (

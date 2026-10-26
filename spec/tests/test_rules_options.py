@@ -580,10 +580,17 @@ class Lengths:
 def test_a_declared_node_has_the_kind_of_its_node_in_the_plan(node: Node) -> None:
     """Check the kind of each declared node against the root of its plan in polars.
 
+    Polars 1.42 and older cannot show the plan of some nodes, such as
+    `explode`, so the check does not run there for those nodes.
+
     Args:
         node: The node.
     """
-    assert Plans().kind(node) == node.plan_name()
+    try:
+        kind = Plans().kind(node)
+    except NotImplementedError:
+        pytest.skip(f"this release of polars cannot show the plan of {node.name}")
+    assert kind == node.plan_name()
 
 
 class Windows:

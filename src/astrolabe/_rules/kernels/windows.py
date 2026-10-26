@@ -46,6 +46,7 @@ from astrolabe._rules.kernels.dispatch import (
 )
 from astrolabe._rules.kernels.zipping import SameTypeZip
 from astrolabe._rules.operators import NumericOp
+from astrolabe._rules.releases import polars_releases
 from astrolabe._rules.supertype import Supertype
 from astrolabe._rules.type_functions import Operand, WindowClosures
 
@@ -712,7 +713,7 @@ class QuantileCut:
     stays a struct, so the kernel finds no floats and raises a `SchemaError`.
     The cast turns a value that does not fit into null, so the value of a
     literal input decides whether any float is left. An input of only nulls
-    gives nulls of the output type, with no more checks. Otherwise the kernel
+    gives nulls, with no more checks (`_only_nulls`). Otherwise the kernel
     refuses a quantile outside of 0 to 1, then breaks that are not unique
     unless the call allows them, then labels that do not number one more than
     the quantiles. One row gives the same break for each quantile. The options
@@ -792,8 +793,89 @@ class QuantileCut:
         if data.dtype.name != "Float64":
             message = f"invalid series dtype: expected `Float64`, got `{data.dtype!r}`"
             raise PolarsRefusal(ErrorClass.SCHEMA, message)
-        if not data.nulls:
-            self._check(data)
+        if data.nulls:
+            return self._only_nulls()
+        self._check(data)
+        return self._with_values(inputs[0])
+
+    @polars_releases
+    def _only_nulls(self) -> DType:
+        """Give the type of the output over an input of only nulls: the type of the options.
+
+        Returns:
+            The type, a struct where the call includes the breaks.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     QuantileCut((0.5,), None, include_breaks=True)._only_nulls().name
+            'Struct'
+        """
+        return self._dtype
+
+    @_only_nulls.before("1.43.0")
+    def _categories_only(self) -> DType:
+        """Give `Categorical` over an input of only nulls, as the older releases do, breaks or not.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> QuantileCut((0.5,), None, include_breaks=True)._categories_only()
+            Categorical
+        """
+        return DType("Categorical")
+
+    @polars_releases
+    def _with_values(self, source: Data) -> DType:
+        """Give the type of the output over an input that can hold values: the type of the options.
+
+        Args:
+            source: The data of the input, before the cast.
+
+        Returns:
+            The type.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     qcut._with_values(Data(DType("String"))).name
+            'Struct'
+        """
+        del source
+        return self._dtype
+
+    @_with_values.before("1.43.0")
+    def _values_decide(self, source: Data) -> DType:
+        """Give the type over an input that can hold values, as the older releases give it.
+
+        Where the call includes the breaks, the older releases give `Categorical`
+        where the cast leaves no value, and the struct otherwise. A text column
+        holds values that the cast turns into nulls where they do not parse, so
+        its values decide the type.
+
+        Args:
+            source: The data of the input, before the cast.
+
+        Returns:
+            The type.
+
+        Raises:
+            UndecidedError: The input is text and the call includes the breaks.
+
+        Example:
+            >>> qcut = QuantileCut((0.5,), None, include_breaks=True)
+            >>> qcut._values_decide(Data(DType("Int8"))).name
+            'Struct'
+            >>> qcut._values_decide(Data(DType("String")))
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.UndecidedError: values: the type of qcut with breaks ...
+        """
+        if self._dtype.name == "Struct" and source.dtype.name == "String":
+            question = "the type of qcut with breaks over text, which the values decide"
+            raise UndecidedError(Undecided.VALUES, question)
         return self._dtype
 
     def _cast(self, data: Data, computed: Sequence[Operand]) -> Data:
@@ -845,6 +927,66 @@ class QuantileCut:
             raise PolarsRefusal(ErrorClass.SHAPE, "provide len(quantiles) + 1 labels")
 
 
+class EwmFallback:
+    """Give the last arm of `ewm_mean` and `ewm_sum`, over a type that is not a float.
+
+    From polars 1.43.0, the kernel calls itself again with no cast, without
+    end, so the process never returns. Older releases cast the input to
+    `Float64` first, as `ewm_std` does, so a struct, which stays a struct,
+    makes the process crash (`Recast`). The cast pass casts every other type
+    to `Float64` before the kernel runs, so a struct is the one type that
+    reaches this arm.
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> nested = Data(DType("Struct", ((("a", DType("Int8")),),)))
+        >>> with PolarsRelease.pretend("1.42.1"):
+        ...     EwmFallback().give(nested, WindowKernels.EWM_LOOP)  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        ...
+        astrolabe._rules.failures.PolarsRefusal: crashes: ewm_mean calls ...
+    """
+
+    @polars_releases
+    def give(self, data: Data, kernel: Dispatch) -> DType:
+        """Raise that the process never returns.
+
+        Args:
+            data: The data.
+            kernel: The dispatch that holds the arm.
+
+        Returns:
+            Never: the arm always refuses.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> nested = Data(DType("Struct", ((("a", DType("Int8")),),)))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     EwmFallback().give(nested, WindowKernels.EWM_LOOP)  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+            ...
+            astrolabe._rules.failures.PolarsRefusal: hangs: ...
+        """
+        return Refuse(Stop.HANGS).give(data, kernel)
+
+    @give.before("1.43.0")
+    def _recast(self, data: Data, kernel: Dispatch) -> DType:
+        """Cast to `Float64` and run the kernel again, as the older releases do.
+
+        Args:
+            data: The data.
+            kernel: The dispatch that holds the arm.
+
+        Returns:
+            The type of the second call.
+
+        Example:
+            >>> EwmFallback()._recast(Data(DType("Int8")), WindowKernels.EWM_LOOP)
+            Float64
+        """
+        return Recast(DType("Float64")).give(data, kernel)
+
+
 class WindowKernels:
     """Hold the dispatch of each kernel of one input whose value at a row reads other rows.
 
@@ -876,8 +1018,8 @@ class WindowKernels:
     `FIRST_DISTINCT` gives `Boolean` for a series of one row, and otherwise
     refuses `Null`, an `Array` and a list of nested values (`FirstRow`).
 
-    `EWM_LOOP` is `ewm_mean` and `ewm_sum`: they keep a float, and call
-    themselves again with no cast on any other type, without end. `EWM_RECAST`
+    `EWM_LOOP` is `ewm_mean` and `ewm_sum`: they keep a float, and give any
+    other type to their last arm (`EwmFallback`). `EWM_RECAST`
     is `ewm_std` and `ewm_var`: they cast another type to `Float64` first, so a
     struct, which stays a struct, makes the process crash. The cast pass casts
     every other input to `Float64` before these kernels run (`EwmCasts`).
@@ -960,7 +1102,7 @@ class WindowKernels:
     EWM_LOOP: ClassVar[Dispatch] = Dispatch(
         "ewm_mean",
         (Arm(Is.float, Same()),),
-        Refuse(Stop.HANGS),
+        EwmFallback(),
     )
     EWM_RECAST: ClassVar[Dispatch] = Dispatch(
         "ewm_std",

@@ -1263,28 +1263,28 @@ class PolarsCell:
             answers.append(answer)
         return answers[0]
 
-    def types(self, *, agg: bool, skip: frozenset[Values] = frozenset()) -> set[DType]:
-        """Give the run type of the node in a context, on each sample that runs.
+    def outcomes(self, *, agg: bool, skip: frozenset[Values] = frozenset()) -> set[DType | Stopped]:
+        """Give the outcome of the node in a context on each sample: its run type, or how it stops.
 
         Args:
             agg: Whether to run `agg`.
             skip: The samples that the run does not try.
 
         Returns:
-            The types, one for each sample that runs.
+            The outcomes, one for each sample.
 
         Example:
-            >>> PolarsCell(pl.col("c0").abs().alias("o")).types(agg=False)
+            >>> PolarsCell(pl.col("c0").abs().alias("o")).outcomes(agg=False)
             {Int8}
         """
         eager = pl.QueryOptFlags._eager()  # ruff: ignore[private-member-access]
-        types: set[DType] = set()
+        outcomes: set[DType | Stopped] = set()
         for values in [values for values in Values if values not in skip]:
             query = self._query(self._frames.frame(values), agg=agg)
             answer = PolarsAnswer().answer(functools.partial(self._dtype, query, eager))
-            if isinstance(answer, DType):
-                types.add(answer)
-        return types
+            if isinstance(answer, (DType, Stopped)):
+                outcomes.add(answer)
+        return outcomes
 
     def _dtype(self, query: pl.LazyFrame, flags: pl.QueryOptFlags) -> pl.DataType:
         """Run a query, and give the type of its column `o`.
@@ -1466,8 +1466,9 @@ class CellCheck:
 
         Returns:
             The answer, or `None`. Where the rules say that the values decide
-            the type, the answer is `None` if polars gives two types or more
-            over the samples, and the one type otherwise.
+            the type, the answer is `None` if polars gives two outcomes or more
+            over the samples, a type or a way that it stops, and the one
+            outcome otherwise.
 
         Example:
             >>> from astrolabe._rules.definitions.elementwise import Elementwise
@@ -1480,8 +1481,8 @@ class CellCheck:
         if isinstance(wanted, Refused) and wanted.stop in self.OUT_OF_PROCESS:
             return None
         if isinstance(wanted, Unchecked) and wanted.cause is Undecided.VALUES:
-            types = cell.types(agg=agg, skip=self._skip)
-            return None if len(types) > 1 else cell.run(agg=agg, every=True, skip=self._skip)
+            outcomes = cell.outcomes(agg=agg, skip=self._skip)
+            return None if len(outcomes) > 1 else cell.run(agg=agg, every=True, skip=self._skip)
         if isinstance(wanted, DType):
             return cell.run(agg=agg, every=True, skip=self._skip)
         return cell.run(agg=agg, every=False, first=self._refused)

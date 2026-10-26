@@ -3165,11 +3165,12 @@ class IsBetweenCasts:
     bound that holds at every row that is not null drops out, and the node
     compares the input with the other bound only (`BinaryCasts`). Where both
     hold, the node compares the input with the lower bound. A bound that
-    fails at every row puts its rewrite in place of the node. Otherwise
-    each bound meets the input as a comparison does (`CoercedBinopDtype`),
-    and the three inputs cast to the supertype of the two types that this
-    gives. Where a comparison casts nothing, or the two types have no
-    supertype, the node stays as it is, and its run compares the types.
+    fails at every row puts its rewrite in place of the node. Otherwise,
+    from polars 1.43.0, each bound meets the input as a comparison does
+    (`CoercedBinopDtype`), and the three inputs cast to the supertype of the
+    two types that this gives. Where a comparison casts nothing, or the two
+    types have no supertype, the node stays as it is, and its run compares
+    the types. Older releases cast nothing more than the literal bounds.
 
     Example:
         >>> uint8 = Operand.column(DType("UInt8"))
@@ -3311,6 +3312,7 @@ class IsBetweenCasts:
         steps[place + 1] += compared.steps[1]
         return Visit(tuple(steps))
 
+    @polars_releases
     def _joined(
         self,
         needle: Operand,
@@ -3329,9 +3331,15 @@ class IsBetweenCasts:
             supertype gives nothing.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> int8, uint8 = Operand.column(DType("Int8")), Operand.column(DType("UInt8"))
-            >>> IsBetweenCasts("Both")._joined(int8, [uint8, int8], [(), (), ()]).steps
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     IsBetweenCasts("Both")._joined(int8, [uint8, int8], [(), (), ()]).steps
             ((cast(Int16, strict),), (cast(Int16, strict),), (cast(Int16, strict),))
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     text = Operand.column(DType("String"))
+            ...     IsBetweenCasts("Both")._joined(int8, [text, int8], [(), (), ()]).steps
+            ((), (), ())
         """
         lower_op, upper_op = self.OPERATORS[self.closed]
         lower = CoercedBinopDtype().of(lower_op, needle, bounds[0])
@@ -3348,6 +3356,31 @@ class IsBetweenCasts:
         for place, operand in enumerate(inputs):
             cast = CastExprIr().steps(operand, joined, CastOption.NON_STRICT)
             steps[place] += cast
+        return Visit(tuple(steps))
+
+    @_joined.before("1.43.0")
+    def _rewrites_only(
+        self,
+        needle: Operand,
+        bounds: Sequence[Operand],
+        steps: list[tuple[Step, ...]],
+    ) -> Visit:
+        """Give the visit where both bounds stay, as the older releases give it: the rewrites only.
+
+        Args:
+            needle: The input.
+            bounds: The two bounds, after the rewrites of the literals.
+            steps: The steps of the rewrites of the literals.
+
+        Returns:
+            The steps of the rewrites.
+
+        Example:
+            >>> int8, uint8 = Operand.column(DType("Int8")), Operand.column(DType("UInt8"))
+            >>> IsBetweenCasts("Both")._rewrites_only(int8, [uint8, int8], [(), (), ()]).steps
+            ((), (), ())
+        """
+        del needle, bounds
         return Visit(tuple(steps))
 
 

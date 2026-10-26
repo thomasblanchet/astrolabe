@@ -22,6 +22,7 @@ from astrolabe._rules.definitions.node_options import (
 )
 from astrolabe._rules.definitions.simplify_adapters import NoSimplify, SimplifyRule
 from astrolabe._rules.kernels.dispatch import Data
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -348,12 +349,15 @@ class DdofNulls:
 class WeightedNulls:
     """Say that an exponentially weighted node gives only nulls over fewer rows than it needs.
 
-    The node gives a null until it has read `min_samples` values. An
-    unbiased deviation, that is `ewm_std` or `ewm_var` with `bias=False`,
-    also gives a null until it has read two values.
+    The node gives a null until it has read `min_samples` values. From
+    polars 1.43.0, an unbiased deviation, that is `ewm_std` or `ewm_var` with
+    `bias=False`, also gives a null until it has read two values. Older
+    releases give 0 for the deviation of one value.
 
     Example:
-        >>> WeightedNulls(1, bias=False).all_null(1, [])
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.43.0"):
+        ...     WeightedNulls(1, bias=False).all_null(1, [])
         True
     """
 
@@ -377,7 +381,35 @@ class WeightedNulls:
         del computed
         samples = OptionValues().known(self.samples, "the samples of the weights")
         biased = OptionValues().known(self.bias, "the bias of the deviation")
-        return rows < (samples if biased else max(samples, 2))
+        return rows < (samples if biased else max(samples, self._unbiased_values()))
+
+    @polars_releases
+    def _unbiased_values(self) -> int:
+        """Give the values that an unbiased deviation reads before it gives a value: two.
+
+        Returns:
+            The number of values.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     WeightedNulls(1)._unbiased_values()
+            2
+        """
+        return 2
+
+    @_unbiased_values.before("1.43.0")
+    def _one_value(self) -> int:
+        """Give the values that an unbiased deviation of the older releases reads: one.
+
+        Returns:
+            The number of values.
+
+        Example:
+            >>> WeightedNulls(1)._one_value()
+            1
+        """
+        return 1
 
     def some_null(self, computed: Sequence[Operand]) -> bool:
         """Say whether the first row holds fewer values than the node needs.
@@ -389,7 +421,9 @@ class WeightedNulls:
             Whether the node needs two values or more.
 
         Example:
-            >>> WeightedNulls(1, bias=False).some_null([])
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     WeightedNulls(1, bias=False).some_null([])
             True
         """
         return self.all_null(1, computed)

@@ -687,6 +687,7 @@
     df.select(pl.col("ab").reverse().is_null())  # E: "ab" has no result type at this frame's column types: reverse does not accept Array(Boolean, shape=(1,)), and polars panics  [unsupported-dtype-op]
 
 - case: a_fixed_answer_over_a_rule_that_the_frame_decides_keeps_its_refusal
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -725,6 +726,49 @@
     reveal_type(df.select(pl.col("g").clip((pl.col("u") - pl.col("u")).max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
     df.select(pl.when(pl.col("b")).then((pl.col("ls") + 1).is_null()).otherwise(pl.col("b")))  # E: "ls" has no result type at this frame's column types: add operation not supported for List(String) and String, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.col("g").clip((pl.col("ls") + 1).null_count()))  # E: "g" has no result type at this frame's column types: add operation not supported for List(String) and String, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip((pl.col("t") - pl.col("u")).max()))  # E: "g" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("g").shift((pl.col("t") - pl.col("u")).max()))  # E: "g" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
+
+- case: a_fixed_answer_over_a_rule_that_the_frame_decides_keeps_its_refusal_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Columns, Datetime, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        li: List[pl.Int64]
+        ls: List[pl.String]
+        t: Datetime[Literal["us"], Literal["UTC"]]
+        u: Datetime[Literal["us"], None]
+        b: pl.Boolean
+        g: pl.Int64
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A cast, a binary member over a carrier and a join of two time
+    # zones have an answer that only the full types decide. A member
+    # with a fixed answer over them needs that answer too.
+    reveal_type(df.select(pl.col("li").cast(pl.List(pl.Boolean)).list.len()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select((pl.col("li") + 1).is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select((pl.col("li") + 1).null_count()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select((pl.col("li") + 1).is_null() & pl.col("b")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select((pl.col("li") + 1).len()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.UInt32}, closed=True), None]"
+    reveal_type(df.select((pl.col("u") - pl.col("u")).is_null()))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select((pl.col("ls") + 1).len()))  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'ls': astrolabe.frame.Unchecked}, closed=True), None]"
+    df.select(pl.col("ls").cast(pl.List(pl.Boolean)).list.len())  # E: "ls" has no result type at this frame's column types: casting from String to Boolean not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("ls").cast(pl.List(pl.Boolean)).is_null())  # E: "ls" has no result type at this frame's column types: casting from String to Boolean not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("ls").cast(pl.List(pl.Boolean)).count())  # E: "ls" has no result type at this frame's column types: casting from String to Boolean not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select((pl.col("ls") + 1).is_null())  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select((pl.col("ls") + 1).null_count())  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select((pl.col("ls") + 1).list.len())  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select((pl.col("ls") + 1).is_null() & pl.col("b"))  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select((pl.col("t") - pl.col("u")).is_null())  # E: "t" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
+    # A value of a chain and an operand argument keep the refusal too.
+    reveal_type(df.select(pl.when(pl.col("b")).then((pl.col("li") + 1).is_null()).otherwise(pl.col("b"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'li': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("g").clip((pl.col("u") - pl.col("u")).max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    df.select(pl.when(pl.col("b")).then((pl.col("ls") + 1).is_null()).otherwise(pl.col("b")))  # E: "ls" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip((pl.col("ls") + 1).null_count()))  # E: "g" has no result type at this frame's column types: List(String) is not a list at every level, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.col("g").clip((pl.col("t") - pl.col("u")).max()))  # E: "g" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
     df.select(pl.col("g").shift((pl.col("t") - pl.col("u")).max()))  # E: "g" has no result type at this frame's column types: failed to determine supertype of Datetime(time_unit='us', time_zone='UTC') and Datetime(time_unit='us', time_zone=None), and polars raises SchemaError  [unsupported-dtype-op]
 
@@ -821,6 +865,7 @@
     df.group_by("s").agg(pl.col("g").head(pl.col("f").first()))  # E: "g" has no result type at this frame's column types: length must be integral for slice expression, not Float64, and polars raises InvalidOperationError  [unsupported-dtype-op]
 
 - case: an_operand_argument_of_a_kind_that_polars_refuses_beside_the_receiver_refuses_the_call
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     import polars as pl
     import polars.selectors as cs
@@ -847,6 +892,44 @@
     df.select(pl.col("g").clip(None, pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.col("g").is_between(pl.col("y").max(), 5))  # E: "g" has no result type at this frame's column types: could not evaluate comparison of Int64 and Binary, and polars raises SchemaError  [unsupported-dtype-op]
     df.select(pl.col("d").is_between(pl.col("s").min(), pl.col("d").max()))  # E: "d" has no result type at this frame's column types: cannot compare 'date/datetime/time' to a string value, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").replace(1, pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").replace(pl.col("y").max(), 1))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("f").fill_nan(pl.col("y").max()))  # E: "f" has no result type at this frame's column types: failed to determine supertype of Float64 and Binary, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("g").extend_constant(pl.col("y").max(), 1))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("d").clip(pl.col("t").dt.time().max()))  # E: "d" has no result type at this frame's column types: casting from Time to Date not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip(pl.lit(b"a", dtype=pl.Binary)))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.lit(1).clip(pl.col("y").max()))  # E: "literal" has no result type at this frame's column types: casting from Binary to Int32 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(cs.by_name("g").clip(pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.group_by("s").agg(pl.col("g").clip(pl.col("y").first()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: an_operand_argument_of_a_kind_that_polars_refuses_beside_the_receiver_refuses_the_call_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        g: pl.Int64
+        f: pl.Float64
+        s: pl.String
+        d: pl.Date
+        t: pl.Datetime
+        y: pl.Binary
+
+    df: TypedDataFrame[FrameSchema]
+
+    # A bound, a value to replace and a fill value meet the receiver:
+    # the refused kinds of the argument depend on the kind of the receiver.
+    reveal_type(df.select(pl.col("s").replace("a", pl.col("y").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.String}, closed=True), None]"
+    reveal_type(df.select(pl.col("y").extend_constant(pl.col("s").max(), 1)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'y': polars.datatypes.classes.Binary}, closed=True), None]"
+    reveal_type(df.select(pl.col("d").is_between(pl.col("t").min(), pl.col("t").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("d").clip(pl.col("t").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'d': polars.datatypes.classes.Date}, closed=True), None]"
+    reveal_type(df.select(pl.col("g").clip(pl.col("d").max())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'g': polars.datatypes.classes.Int64}, closed=True), None]"
+    df.select(pl.col("g").clip(pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").clip(None, pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(pl.col("g").is_between(pl.col("y").max(), 5))  # E: "g" has no result type at this frame's column types: could not evaluate comparison of Int64 and Binary, and polars raises SchemaError  [unsupported-dtype-op]
+    df.select(pl.col("d").is_between(pl.col("s").min(), pl.col("d").max()))
     df.select(pl.col("g").replace(1, pl.col("y").max()))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.col("g").replace(pl.col("y").max(), 1))  # E: "g" has no result type at this frame's column types: casting from Binary to Int64 not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.select(pl.col("f").fill_nan(pl.col("y").max()))  # E: "f" has no result type at this frame's column types: failed to determine supertype of Float64 and Binary, and polars raises SchemaError  [unsupported-dtype-op]
@@ -910,6 +993,7 @@
     df.select(pl.col("g").first().is_between(pl.col("g").head(2), pl.col("g")))  # E: "g" has no result type at this frame's column types: `is_between` joins two masks of other lengths, and polars panics  [unsupported-dtype-op]
 
 - case: two_bounds_of_is_between_that_meet_no_common_type_refuse_the_call
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     from typing import Literal
 
@@ -940,6 +1024,39 @@
     df.select(pl.col("n").is_between(pl.col("s").first(), pl.col("c").first()))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(cs.by_name("i").is_between(pl.col("b").first(), pl.col("d").first()))  # E: "i" has no result type at this frame's column types: casting from Boolean to Decimal(precision=38, scale=2) not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
     df.group_by("s").agg(pl.col("i").is_between(pl.col("b").first(), pl.col("d").first()))  # E: "i" has no result type at this frame's column types: casting from Boolean to Decimal(precision=38, scale=2) not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+
+- case: two_bounds_of_is_between_that_meet_no_common_type_refuse_the_call_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, Decimal, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        b: pl.Boolean
+        d: Decimal[Literal[10], Literal[2]]
+        f: pl.Float64
+        n: pl.Null
+        c: pl.Categorical
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # polars casts both bounds to one type, so two bounds can refuse
+    # together where each one runs alone beside the receiver.
+    reveal_type(df.select(pl.col("i").is_between(pl.col("b").first(), pl.col("b").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").is_between(pl.col("d").first(), pl.col("d").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").is_between(pl.col("b").first(), pl.col("f").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("n").is_between(pl.col("c").first(), pl.col("c").first())))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op] # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': astrolabe.frame.Unchecked}, closed=True), None]"
+    df.select(pl.col("i").is_between(pl.col("b").first(), pl.col("d").first()))
+    df.select(pl.col("i").is_between(pl.col("d").first(), pl.col("b").first()))
+    df.select(pl.col("n").is_between(pl.col("c").first(), pl.lit(2)))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("n").is_between(pl.col("s").first(), pl.col("c").first()))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(cs.by_name("i").is_between(pl.col("b").first(), pl.col("d").first()))
+    df.group_by("s").agg(pl.col("i").is_between(pl.col("b").first(), pl.col("d").first()))
 
 - case: a_bound_of_is_between_shares_the_zone_and_the_categories_of_the_receiver
   main: |
@@ -981,6 +1098,7 @@
     reveal_type(df.select(pl.col("u").clip(pl.col("v").first())))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'u': astrolabe.frame.Datetime[Literal['us'], Literal['UTC']]}, closed=True), None]"
 
 - case: a_python_value_bound_of_is_between_is_its_literal
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     from datetime import date
     from decimal import Decimal
@@ -1002,6 +1120,44 @@
     df.select(pl.col("n").is_between(pl.col("c").first(), 2))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.col("n").is_between(2.5, pl.col("c").first()))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.col("i").is_between(pl.col("b").first(), Decimal("1.5")))  # E: "i" has no result type at this frame's column types: casting from Boolean to Decimal(precision=38, scale=1) not supported, and polars raises InvalidOperationError  [unsupported-dtype-op]
+    df.select(cs.by_name("n").is_between(pl.col("c").first(), 2))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("s").is_between(pl.col("s").first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
+    reveal_type(df.select(pl.col("i").is_between(pl.col("i").first(), None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("i").is_between(pl.col("b").first(), 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+    # A bare string names a column, so a String receiver can meet it.
+    reveal_type(df.select(pl.col("s").is_between("s", "s")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").is_between(pl.col("s").first(), "s")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    df.select(pl.col("s").is_between("missing", "s"))  # E: Unknown column "missing"  [unknown-column]
+    # Two Python values are two literals too.
+    df.select(pl.col("s").is_between(0, 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("b").is_between(date(2020, 1, 1), date(2021, 1, 1)))  # E: "b" has no result type at this frame's column types: could not evaluate comparison of Boolean and Date, and polars raises SchemaError  [unsupported-dtype-op]
+    # A number variable stands for each value of its type that the checker tries.
+    q: int = 2
+    reveal_type(df.select(pl.col("i").is_between(pl.col("i").first(), q)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
+
+- case: a_python_value_bound_of_is_between_is_its_literal_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    from datetime import date
+    from decimal import Decimal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, TypedDataFrame
+
+    class FrameSchema(Columns):
+        i: pl.Int64
+        b: pl.Boolean
+        n: pl.Null
+        c: pl.Categorical
+        s: pl.String
+
+    df: TypedDataFrame[FrameSchema]
+
+    # Beside an expression bound, polars reads a Python value as pl.lit(value).
+    df.select(pl.col("n").is_between(pl.col("c").first(), 2))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("n").is_between(2.5, pl.col("c").first()))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("i").is_between(pl.col("b").first(), Decimal("1.5")))
     df.select(cs.by_name("n").is_between(pl.col("c").first(), 2))  # E: "n" has no result type at this frame's column types: cannot compare a category with Null, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.col("s").is_between(pl.col("s").first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
     reveal_type(df.select(pl.col("i").is_between(pl.col("i").first(), None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
@@ -1047,6 +1203,7 @@
     reveal_type(df.select(pl.col("i").is_between(q, r)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'i': polars.datatypes.classes.Boolean}, closed=True), None]"
 
 - case: a_null_literal_bound_of_is_between_drops_the_comparison
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     from typing import Literal
 
@@ -1077,6 +1234,42 @@
     # Beside a Null receiver, polars checks the bounds first.
     reveal_type(df.select(pl.col("n").is_between(None, pl.col("s"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Boolean}, closed=True), None]"
     df.select(pl.col("n").is_between(None, pl.col("l")))  # E: "n" has no result type at this frame's column types: cannot order List(Int64), and polars raises InvalidOperationError  [unsupported-dtype-op]
+    # A null literal under another member is a Null bound.
+    df.select(pl.col("s").is_between(pl.lit(None).first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
+    df.select(pl.col("s").is_between(pl.col("n").first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
+
+- case: a_null_literal_bound_of_is_between_drops_the_comparison_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    from typing import Literal
+
+    import polars as pl
+    import polars.selectors as cs
+    from astrolabe import Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        k: pl.Int64
+        s: pl.String
+        c: pl.Categorical
+        y: pl.Binary
+        n: pl.Null
+        l: List[pl.Int64]
+
+    df: TypedDataFrame[FrameSchema]
+    q: int = 2
+
+    # polars rewrites a comparison with the null literal before it checks a kind.
+    reveal_type(df.select(pl.col("s").is_between(None, 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").is_between(pl.lit(None), pl.lit(2))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("c").is_between(2, None)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'c': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("y").is_between(pl.lit(None).alias("z"), pl.col("l"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'y': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("l").is_between(None, "s")))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'l': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(pl.col("s").is_between(None, q)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.select(cs.by_name("s").is_between(None, 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'s': polars.datatypes.classes.Boolean}, closed=True), None]"
+    reveal_type(df.group_by("k").agg(pl.col("s").is_between(None, 2)))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'k': polars.datatypes.classes.Int64, 's': astrolabe.frame.List[polars.datatypes.classes.Boolean]}, closed=True), None]"
+    # Beside a Null receiver, polars checks the bounds first.
+    reveal_type(df.select(pl.col("n").is_between(None, pl.col("s"))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'n': polars.datatypes.classes.Boolean}, closed=True), None]"
+    df.select(pl.col("n").is_between(None, pl.col("l")))  # E: "n" has no result type at this frame's column types: could not evaluate comparison of Null and List(Int64), and polars raises SchemaError  [unsupported-dtype-op]
     # A null literal under another member is a Null bound.
     df.select(pl.col("s").is_between(pl.lit(None).first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
     df.select(pl.col("s").is_between(pl.col("n").first(), 2))  # E: "s" has no result type at this frame's column types: cannot compare String with Int32, and polars raises ComputeError  [unsupported-dtype-op]
@@ -1295,6 +1488,7 @@
     widened: TypedDataFrame[WidenedSchema] = df.select(pl.col("a2").append(pl.col("a3")))
 
 - case: a_literal_operand_reaches_a_carrier_element
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     from typing import Literal
     import polars as pl
@@ -1314,6 +1508,33 @@
         a: Array[pl.Int8, Literal[3]]
 
     fitted: TypedDataFrame[FittedSchema] = df.select(pl.col("l") + 1, pl.col("a") * 2)
+
+    class WidenedSchema(Columns):
+        l: List[pl.Float64]
+
+    widened: TypedDataFrame[WidenedSchema] = df.select(pl.col("l") / 2)
+
+- case: a_literal_operand_reaches_a_carrier_element_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    from typing import Literal
+    import polars as pl
+    from astrolabe import Array, Columns, List, TypedDataFrame
+
+    class FrameSchema(Columns):
+        l: List[pl.Int8]
+        a: Array[pl.Int8, Literal[3]]
+
+    # A literal fits itself to the column it meets, and it reaches
+    # the element of a carrier the same way. An array keeps its width.
+    Frame = TypedDataFrame[FrameSchema]
+    df: Frame
+
+    class FittedSchema(Columns):
+        l: List[pl.Int8]
+        a: Array[pl.Int8, Literal[3]]
+
+    fitted: TypedDataFrame[FittedSchema] = df.select(pl.col("l") + 1, pl.col("a") * 2)  # E: Incompatible types in assignment (expression has type "TypedDataFrame[TypedDict({'l': astrolabe.frame.List[Int32], 'a': Array[Int32, Literal[3]]}), None]", variable has type "TypedDataFrame[FittedSchema, None]")  [assignment]
 
     class WidenedSchema(Columns):
         l: List[pl.Float64]
@@ -2437,6 +2658,7 @@
     df.select(pl.col("x").pct_change(pl.col("g").head(2)))  # E: "x" has no result type at this frame's column types: n must be a single value., and polars raises ComputeError  [unsupported-dtype-op]
 
 - case: a_node_over_few_rows_gives_only_nulls
+  skip: __import__("tests.releases").releases.polars_before("1.43.0")
   main: |
     import polars as pl
     from astrolabe import Columns, TypedDataFrame
@@ -2449,6 +2671,24 @@
     reveal_type(df.select(pl.col("x").first().std().cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
     reveal_type(df.select(pl.col("x").head(2).var(ddof=2).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
     reveal_type(df.select(pl.col("x").first().ewm_var(alpha=0.5).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
+    reveal_type(df.select(pl.col("x").first().ewm_var(alpha=0.5, bias=True).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
+    # The run computes the count of `diff` from the two literals.
+    reveal_type(df.select(pl.col("x").first().diff(pl.lit(1) + 0).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
+
+- case: a_node_over_few_rows_gives_only_nulls_before_polars_1_43
+  skip: not __import__("tests.releases").releases.polars_before("1.43.0")
+  main: |
+    import polars as pl
+    from astrolabe import Columns, TypedDataFrame
+
+    class Rows(Columns):
+        x: pl.Int64
+
+    df: TypedDataFrame[Rows]
+    # Polars casts values to a list of dates at the physical type, and nulls at the type itself.
+    reveal_type(df.select(pl.col("x").first().std().cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
+    reveal_type(df.select(pl.col("x").head(2).var(ddof=2).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"
+    reveal_type(df.select(pl.col("x").first().ewm_var(alpha=0.5).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
     reveal_type(df.select(pl.col("x").first().ewm_var(alpha=0.5, bias=True).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Int32]}, closed=True), None]"
     # The run computes the count of `diff` from the two literals.
     reveal_type(df.select(pl.col("x").first().diff(pl.lit(1) + 0).cast(pl.List(pl.Date))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'x': astrolabe.frame.List[polars.datatypes.classes.Date]}, closed=True), None]"

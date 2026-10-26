@@ -33,6 +33,7 @@ from astrolabe._rules.kernels.dispatch import (
     Same,
 )
 from astrolabe._rules.kernels.numeric import NumericKernels
+from astrolabe._rules.releases import polars_releases
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -146,6 +147,57 @@ class Neighbors:
         return DType("Boolean")
 
 
+class GroupedFloat16:
+    """Accept a `Float16` in a kernel of the groups that panics on it, as polars does before 1.43.0.
+
+    Before that release, `mean`, `median` and `quantile` over the groups of
+    `agg` have no kernel for `Float16`, and polars panics. From that release,
+    they keep the `Float16`. An arm of this test, first in the arms of such a
+    kernel, gives the panic of the older releases only.
+
+    Example:
+        >>> from astrolabe._rules.releases import PolarsRelease
+        >>> with PolarsRelease.pretend("1.42.1"):
+        ...     GroupedFloat16()(DType("Float16"))
+        True
+    """
+
+    @polars_releases
+    def __call__(self, dtype: DType) -> bool:
+        """Say whether the kernel panics on the type: never.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Always `False`.
+
+        Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
+            >>> with PolarsRelease.pretend("1.43.0"):
+            ...     GroupedFloat16()(DType("Float16"))
+            False
+        """
+        del dtype
+        return False
+
+    @__call__.before("1.43.0")
+    def _panics(self, dtype: DType) -> bool:
+        """Say whether the kernel of the older releases panics on the type: on `Float16`.
+
+        Args:
+            dtype: The data type.
+
+        Returns:
+            Whether the type is `Float16`.
+
+        Example:
+            >>> GroupedFloat16()._panics(DType("Float32"))
+            False
+        """
+        return dtype.name == "Float16"
+
+
 class ReductionKernels:
     """Hold the dispatch of each reduction of one input.
 
@@ -200,7 +252,11 @@ class ReductionKernels:
     NESTED: ClassVar[Kinds] = Kinds(*Is.NESTED)
     EXTREMUM: ClassVar[Dispatch] = Dispatch("min", (Arm(NESTED, Refuse()),), Same())
     MEDIAN: ClassVar[Dispatch] = Dispatch("median", NumericKernels.MEAN.arms, Refuse())
-    MOMENT_GROUPS: ClassVar[Dispatch] = Dispatch("mean", NumericKernels.MEAN.arms, Same())
+    MOMENT_GROUPS: ClassVar[Dispatch] = Dispatch(
+        "mean",
+        (Arm(GroupedFloat16(), Refuse(Stop.PANICS)), *NumericKernels.MEAN.arms),
+        Same(),
+    )
     VAR_ARMS: ClassVar[tuple[Arm, ...]] = (
         Arm(Is.integer, Fixed(FLOAT64)),
         Arm(Is.float, Same()),
@@ -820,7 +876,11 @@ class GroupQuantile:
         astrolabe._rules.failures.UndecidedError: values: the quantile of an integer, ...
     """
 
-    GROUPS: ClassVar[Dispatch] = Dispatch("quantile", Quantile.ARMS, Same())
+    GROUPS: ClassVar[Dispatch] = Dispatch(
+        "quantile",
+        (Arm(GroupedFloat16(), Refuse(Stop.PANICS)), *Quantile.ARMS),
+        Same(),
+    )
     OUTSIDE: ClassVar[Dispatch] = Dispatch(
         "quantile",
         (

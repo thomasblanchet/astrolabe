@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from astrolabe._rules.definitions.definition import Definition
+    from astrolabe._rules.definitions.node_options import NodeIdentity
 
 
 class NullCalls:
@@ -503,27 +504,50 @@ class NullCases:
             >>> rule, len(calls)
             (<NullRule.FIRST: 'first'>, 1)
         """
-        gate = ApiGate()
-        absent = gate.absent()
-        explicit = {
-            definition.identity: NullCalls.CALLS[name]
-            for name, definition in NullCalls.DEFINITIONS.items()
-            if gate.has(name)
-        }
+        explicit = self._explicit()
         census = CensusCalls().of()
-        stated = [
-            definition
-            for definition in Definitions.BY_IDENTITY.values()
-            if definition.nulls is not NullRule.NONE and definition.identity not in absent
-        ]
         cases: dict[str, tuple[NullRule, list[Callable[[pl.Expr, pl.Expr], pl.Expr]]]] = {}
-        for definition in stated:
+        for definition in self._stated():
             function = definition.identity.function or definition.identity.shape
             builds = census.get(function, [])
             paired = [self._paired(build) for build in builds]
             known = explicit.get(definition.identity)
             cases[function] = (definition.nulls, paired if known is None else [known])
         return cases
+
+    def _explicit(self) -> dict[NodeIdentity, Callable[[pl.Expr, pl.Expr], pl.Expr]]:
+        """Give the call of each node in the table of `NullCalls` that the installed polars has.
+
+        Returns:
+            The call, by the identity of the node.
+
+        Example:
+            >>> len(NullCases()._explicit()) > 10
+            True
+        """
+        gate = ApiGate()
+        return {
+            definition.identity: NullCalls.CALLS[name]
+            for name, definition in NullCalls.DEFINITIONS.items()
+            if gate.has(name)
+        }
+
+    def _stated(self) -> list[Definition]:
+        """Give each definition that states a null rule, of a node that the installed polars has.
+
+        Returns:
+            The definitions.
+
+        Example:
+            >>> all(definition.nulls is not NullRule.NONE for definition in NullCases()._stated())
+            True
+        """
+        absent = ApiGate().absent()
+        return [
+            definition
+            for definition in Definitions.BY_IDENTITY.values()
+            if definition.nulls is not NullRule.NONE and definition.identity not in absent
+        ]
 
     def _paired(self, build: Callable[[pl.Expr], pl.Expr]) -> Callable[[pl.Expr, pl.Expr], pl.Expr]:
         """Give a call of one input as a call of two, which reads the first.

@@ -3332,8 +3332,12 @@ class ArithmeticField:
             The type, or `None` where no such arm applies.
 
         Example:
+            >>> from astrolabe._rules.releases import PolarsRelease
             >>> narrow = Operand.column(DType("Float32"))
             >>> ArithmeticField()._literal_arm(Operand.of_value(1.5), narrow)
+            Float32
+            >>> with PolarsRelease.pretend("1.42.1"):
+            ...     ArithmeticField()._literal_arm(narrow, Operand.of_value(1.5))
             Float32
         """
         if self._literal_takes_right(left, right):
