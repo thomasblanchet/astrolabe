@@ -29,6 +29,7 @@ export default defineConfig({
       editLink: { baseUrl: 'https://github.com/thomasblanchet/astrolabe/edit/main/site/' },
       customCss: ['katex/dist/katex.min.css', './src/styles/starlight-theme.css'],
       components: {
+        Banner: './src/components/docs/Banner.astro',
         SiteTitle: './src/components/docs/SiteTitle.astro',
         PageTitle: './src/components/docs/PageTitle.astro',
         SocialIcons: './src/components/docs/SocialIcons.astro',

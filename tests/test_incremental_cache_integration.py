@@ -185,7 +185,12 @@ reveal_type(Prices().price_expr())
 """
 
 
-def _run_inferred(tmp_path: Path, uses: str, lib: str = _INFERRED_LIB) -> tuple[str, int]:
+def _run_inferred(
+    tmp_path: Path,
+    uses: str,
+    lib: str = _INFERRED_LIB,
+    options: tuple[str, ...] = (),
+) -> tuple[str, int]:
     (tmp_path / "pyproject.toml").write_text('[tool.mypy]\nplugins = ["astrolabe.plugin"]\n')
     (tmp_path / "lib.py").write_text(lib)
     (tmp_path / "main.py").write_text(uses)
@@ -194,6 +199,7 @@ def _run_inferred(tmp_path: Path, uses: str, lib: str = _INFERRED_LIB) -> tuple[
         str(tmp_path / "pyproject.toml"),
         "--cache-dir",
         str(tmp_path / ".mypy_cache"),
+        *options,
         str(tmp_path / "main.py"),
         str(tmp_path / "lib.py"),
     ])
@@ -213,6 +219,23 @@ def test_an_inferred_return_type_survives_a_warm_cache(tmp_path: Path) -> None:
     assert "Deferred[Literal[\"pl.col('price').cast(pl.Float64)\"]]" in warm
     assert "astrolabe.declare.InferredExpr" not in warm
     assert warm == cold
+
+
+def test_an_inferred_return_type_survives_a_warm_cache_in_parallel_mode(tmp_path: Path) -> None:
+    """A function that returns `InferredExpr` keeps its type from the cache of a parallel run.
+
+    With `--num-workers`, mypy writes the cache of a module after its first
+    phase of checking. The body of `price_expr` gives its return type, so
+    the plugin marks it as part of the interface of `lib.py`, and mypy
+    checks it in that first phase, before it writes the cache.
+    """
+    workers = ("--num-workers", "2")
+    cold, cold_exit = _run_inferred(tmp_path, _INFERRED_USES, options=workers)
+    warm, warm_exit = _run_inferred(tmp_path, _INFERRED_USES + "\nx = 1\n", options=workers)
+    assert cold_exit == 0, cold
+    assert warm_exit == 0, warm
+    assert "Deferred[Literal[\"pl.col('price').cast(pl.Float64)\"]]" in warm
+    assert "astrolabe.declare.InferredExpr" not in warm
 
 
 def test_an_inferred_return_type_of_a_method_survives_a_warm_cache(tmp_path: Path) -> None:
