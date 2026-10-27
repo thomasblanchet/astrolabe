@@ -1,32 +1,34 @@
 ---
 title: Quickstart
-description: Declare a schema, type a frame, and see the checker find a fault.
+description: Declare a schema, type a frame, and see the checker find a mistake.
 sidebar:
   order: 3
 ---
 
 import Example from '../../../../components/docs/Example.astro';
 
-This page takes five minutes. It assumes that you [installed Astrolabe and set up the project](../install/).
+Before you start, [install Astrolabe and set up your project](../install/).
 
 ## Declare a schema
 
-A schema is a class that inherits from `Columns`. Each field is a column, with a Polars data type. Use the schema in the type `TypedDataFrame`:
+A schema lists the columns of a frame and their data types. You write it as a class that inherits from `Columns`: each field is a column, and the type of the field is a Polars data type. To type a frame with the schema, write `TypedDataFrame[Trades]`.
+
+The function below takes a frame of trades and returns the cheapest trade. It sorts by `prices`, but the column is named `price`:
 
 <Example name="quickstart_check" />
 
-Run mypy. The function sorts by `prices`, and the frame has `price`, so the checker reports the line.
+Run mypy. The checker reports the line with the typo, because the frame has no column named `prices`. Without Astrolabe, this mistake shows up only when the code runs.
 
-## Fix the fault, and read a type
+## Fix the mistake, and read a type
 
-Correct the name. Then ask mypy for the type of a new frame with `reveal_type`:
+Correct the name to `price`. Then add a column with `with_columns`, and ask mypy for the type of the result with `reveal_type`:
 
 <Example name="quickstart_fixed" />
 
-The new column `doubled` has the data type `Float64`, because a `Float64` times an integer gives a `Float64` in Polars. The checker computes that type with the rules of Polars, so each later step knows the column and its data type.
+The result has the two original columns, plus the new column `doubled`. Its data type is `Float64`, because in Polars a `Float64` multiplied by an integer gives a `Float64`. The checker works out that type with the typing rules of Polars, so every later step knows that `doubled` exists, and what data type it has.
 
 ## Next steps
 
-- Follow the [Tutorial](../../tutorial/load/) to type a whole pipeline, one idea at a time.
-- Read the [Guides](../../guides/schemas/) for one topic at a time.
-- Look up an error in [Error codes](../../reference/error-codes/).
+- The [Tutorial](../../tutorial/load/) types a whole pipeline, step by step.
+- The [Guides](../../guides/schemas/) explain each topic in depth.
+- [Error codes](../../reference/error-codes/) gives the cause and the fix of each error.

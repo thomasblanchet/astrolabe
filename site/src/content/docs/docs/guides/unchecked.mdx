@@ -7,26 +7,26 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-The checker cannot read the body of a Python function that Polars runs on the data. So it cannot know the data type that such a function gives.
+Some Polars methods run a Python function on the data, such as `map_elements`. The checker cannot look inside a Python function, so it cannot know the data type that the function returns. It still knows the name of the result, though, and the rest of the frame.
 
 ## Unchecked keeps the name
 
-`Unchecked` is the data type of a column whose name the checker knows and whose data type it does not:
+`Unchecked` is the data type of a column whose name the checker knows, but whose data type it does not know:
 
 <Example name="unchecked_map" />
 
-Every later operation accepts an `Unchecked` column. So a program that runs one function in Python keeps every other check: the other columns keep their data types, and a later read of a missing name is still an error.
+Every later operation accepts an `Unchecked` column, so one Python function does not turn off the other checks. The other columns keep their data types, and reading a column that does not exist is still an error.
 
-These members give `Unchecked`: `map_elements`, `map_batches`, `pl.map_batches`, `pl.map_groups`, `pl.fold`, `pl.reduce`, `pl.cum_fold` and `pl.cum_reduce` without `return_dtype=`, `rolling_map`, and the `map_columns` of a frame.
+These calls give `Unchecked`: `map_elements`, `map_batches`, `pl.map_batches`, `pl.map_groups`, `pl.fold`, `pl.reduce`, `pl.cum_fold` and `pl.cum_reduce` without `return_dtype=`, `rolling_map`, and the `map_columns` of a frame.
 
 ## State the data type
 
-`return_dtype=` names the data type of the result. The column is typed again:
+`return_dtype=` states the data type that the Python function returns. The checker then gives the column that data type:
 
 <Example name="unchecked_typed" />
 
 ## Make it an error
 
-At the level `stated` or a stricter one, a member without its `return_dtype=` is an error, and a note names the setting that lets it pass. See [Make the checker stricter](../../tutorial/strictness/) and [Configuration](../../reference/configuration/).
+At the level `stated` or stricter, a call without its `return_dtype=` is an error, and a note under the error names the setting that lets it pass. See [Make the checker stricter](../../tutorial/strictness/) and [Configuration](../../reference/configuration/).
 
-A `Columns` class can declare a column as `Unchecked`. `check_schema` then checks that the column is present, and does not check its data type.
+A `Columns` class can also declare a column as `Unchecked`, for a column whose data type you do not want to fix. `check_schema` then checks that the column is present, but not its data type.

@@ -18,7 +18,7 @@ The command sets up `pyproject.toml` for the plugin:
 - It adds `astrolabe.plugin` to `plugins` in `[tool.mypy]`, and sets `allow_redefinition = true`.
 - It writes a `[tool.astrolabe]` table with every setting at its default, each with a comment.
 
-The command keeps the comments and the format of the file. A second run changes nothing, and says that the project is already set up.
+It keeps your comments and formatting. Running it again changes nothing, and says that the project is already set up.
 
 | Option | Effect |
 | -- | -- |
@@ -26,4 +26,4 @@ The command keeps the comments and the format of the file. A second run changes 
 | `--allow-unproven LEVEL` | The level to write for `allow_unproven`: `never`, `none`, `stated`, `omitted`, `possible` or `asserted`. The default is `omitted`. |
 | `--dry-run` | Show the changes, and write nothing. |
 
-If mypy reads its configuration from `mypy.ini`, `.mypy.ini` or the `[mypy]` section of `setup.cfg`, the command changes nothing. It shows the lines to add to that file.
+If your mypy configuration lives in `mypy.ini`, `.mypy.ini` or the `[mypy]` section of `setup.cfg`, the command leaves it alone and prints the lines to add instead.

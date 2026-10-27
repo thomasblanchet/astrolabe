@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Every operation that changes the schema of a frame has a hook. Each hook computes the result schema from the schema of the input, or reports why it cannot. The [operation catalog](../../spec/operation-catalog/) of the specification gives the rule of each call.
+Every operation that changes the schema of a frame has its own check, which works out the result schema from the input schema, or reports why it cannot. The [operation catalog](../../spec/operation-catalog/) of the specification gives the rule of each call.
 
 | Operation | What the checker computes and checks |
 | -- | -- |
@@ -31,6 +31,6 @@ Every operation that changes the schema of a frame has a hook. Each hook compute
 | `lazy()`, `collect()` | The same schema, as a `LazyFrame` or as a `DataFrame`. |
 | `pl.read_*`, `pl.scan_*`, `pl.from_*` with `schema=` | A typed frame with the given schema. |
 
-An operation that keeps the columns, for example `sort`, `head`, `tail`, `unique` or `sample`, keeps the schema.
+Operations that leave the columns alone, such as `sort`, `head`, `tail`, `unique` or `sample`, keep the schema as it is.
 
-The expressions inside the operations are typed with the typing rules of Polars. See [Expressions and data types](../../guides/expressions/).
+The expressions inside these operations are typed with the typing rules of Polars. See [Expressions and data types](../../guides/expressions/).

@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-A field of a `Columns` class is a type annotation, and a type annotation cannot hold a call such as `pl.Datetime("us")`. A data type with parameters therefore has a marker. At run time, `.schema` turns each marker into the Polars data type.
+A field of a `Columns` class is a type annotation, and a type annotation cannot contain a call such as `pl.Datetime("us")`. So each data type with parameters has a marker, a generic class that carries the parameters as type arguments. At run time, `.schema` turns each marker back into the Polars data type.
 
 ## Markers
 
@@ -21,9 +21,9 @@ A field of a `Columns` class is a type annotation, and a type annotation cannot 
 | `pl.Array(pl.Int64, 3)` | `Array[pl.Int64, Literal[3]]` |
 | `pl.Struct({"bar": pl.Int64})` | `Struct[Column[Literal["bar"], pl.Int64]]`. Each argument is one field. |
 
-Import the markers from `astrolabe`. `Decimal` and `Enum` have the same names as classes of the standard library. A file that needs both can write `decimal.Decimal` and `enum.Enum`.
+Import the markers from `astrolabe`. `Decimal` and `Enum` share their names with classes of the standard library, so a file that needs both can import the modules and write `decimal.Decimal` and `enum.Enum`.
 
-A name can hold a data type, as in `Stamp = pl.Datetime("us")`. A declaration that takes a data type as an argument reads it. A field cannot, because mypy refuses a variable in a type annotation. For a field, write a type alias of the marker: `Stamped = Datetime[Literal["us"], None]`.
+A variable can hold a data type, as in `Stamp = pl.Datetime("us")`, and any declaration that takes a data type as an argument reads it. A field cannot, because mypy does not accept a variable in a type annotation. For a field, write a type alias of the marker: `Stamped = Datetime[Literal["us"], None]`.
 
 ## Special data types
 
@@ -36,6 +36,6 @@ A name can hold a data type, as in `Stamp = pl.Datetime("us")`. A declaration th
 
 ## Families
 
-A family is a set of data types, as Polars defines it. `all_of=`, `none_of=`, `some_column(...)` and `OfType[...]` accept a family. `astrolabe` exports the families of Polars: `NumericType`, `IntegerType`, `SignedIntegerType`, `UnsignedIntegerType`, `FloatType`, `TemporalType` and `NestedType`.
+A family is a set of data types, as Polars defines it, such as all the numeric types. `all_of=`, `none_of=`, `some_column(...)` and `OfType[...]` accept a family, and `astrolabe` exports the families of Polars: `NumericType`, `IntegerType`, `SignedIntegerType`, `UnsignedIntegerType`, `FloatType`, `TemporalType` and `NestedType`.
 
-A region of a declaration is a set of kinds: data types with their parameters taken away. See [Declare expression types](../../guides/expression-types/).
+A read in a declaration matches data types without their parameters, so a `Datetime` read covers every time unit and time zone. See [Declare expression types](../../guides/expression-types/).

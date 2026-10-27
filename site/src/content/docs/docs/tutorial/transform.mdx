@@ -8,28 +8,30 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-The pipeline now computes the value of each trade, keeps the large ones, and sums them by symbol.
+Once a frame is typed, the checker checks each operation on it. Each operation also gives a new frame, and the checker works out the schema of that new frame too.
 
 ## Each step has a schema
 
+The pipeline below computes the value of each trade as `notional`, keeps the large trades, and sums their value by symbol:
+
 <Example name="tut_transform_steps" />
 
-The checker computes the schema of each result:
+The checker works out the schema of each frame along the way:
 
-- `with_columns` adds `notional`. A `Float64` times an `Int64` gives a `Float64`.
-- `filter` keeps the rows and the columns.
-- `group_by(...).agg(...)` keeps the key and the aggregates. `pl.len()` counts the rows as a `UInt32`. The other columns are gone.
+- `with_columns` adds a column named `notional`. Its data type is `Float64`, because `price` is a `Float64`, `quantity` is an `Int64`, and in Polars a `Float64` times an `Int64` gives a `Float64`.
+- `filter` removes rows, but it keeps every column, so the schema does not change.
+- `group_by(...).agg(...)` keeps the grouping key and one column for each aggregation. `pl.len()` counts the rows of each group as a `UInt32`. Every other column is gone.
 
-A later step that reads `price` from `by_symbol` is an error, because the column is gone.
+So a later step that reads `price` from `by_symbol` is an error: after the aggregation, that frame no longer has a `price` column.
 
 ## Each step checks its data types
 
-An operation needs columns of the right data types. A mismatch is an error, like a missing column:
+An operation also needs its columns to have the right data types. A column with the wrong data type is an error, in the same way as a missing column:
 
 <Example name="tut_transform_errors" />
 
-- `filter` keeps the rows where a condition is true, so it needs a `Boolean` column.
+- `filter` keeps the rows where a condition is true, so the condition has to be a `Boolean` column, and `price` is a `Float64`.
 - Polars cannot subtract a `Float64` from a `String`.
-- A join compares the keys on the two sides, and a `String` key cannot match an `Int64` key.
+- A join matches the keys of the two frames. Here `symbol` is a `String` in `trades` and an `Int64` in `venues`, and Polars cannot match the two.
 
 Next: [3. Write a function that accepts other columns](../functions/).

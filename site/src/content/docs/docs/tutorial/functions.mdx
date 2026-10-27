@@ -8,29 +8,31 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A pipeline puts its steps in functions. A function reads some columns, and a caller often has more. This chapter declares a function that accepts any frame with the columns that it reads.
+Pipelines are usually split into functions. A function typically reads a few columns of the frame that it receives, while its callers pass frames with many more columns. To accept those frames, the function declares only the columns that it reads, and a remainder stands for the rest.
 
 ## Declare the columns that the function reads
 
-A `Columns` class names columns and their data types, like a dataclass. `other_columns()` declares a remainder: the columns of a frame that its type does not name. Write it as the second argument of `TypedDataFrame`:
+A `Columns` class lists columns and their data types, much like a dataclass lists fields. `other_columns()` declares a remainder: a name that stands for the columns of a frame that its type does not list. You pass the remainder as the second argument of `TypedDataFrame`:
 
 <Example name="tut_functions_define" />
 
-`TypedDataFrame[Priced, Rest]` accepts any frame with `symbol`, `price` and `quantity`, whatever other columns it has. A frame of this type is an open frame. A frame with no remainder, like `TypedDataFrame[Turnover]`, is a closed frame: it has exactly its declared columns.
+`TypedDataFrame[Priced, Rest]` accepts any frame that has `symbol`, `price` and `quantity`, whatever other columns the frame also has. A frame type with a remainder like this is an open frame. A frame type without a remainder, such as `TypedDataFrame[Turnover]`, is a closed frame: it has exactly the declared columns, and no others.
 
-## The checker checks each call
+## Each call is checked
 
 <Example name="tut_functions_call" />
 
-- `blotter` has the three columns and one more, `venue`. The call passes.
-- `quotes` has no `quantity`. The checker reports the call, not the body of the function.
+- `blotter` has the three declared columns, plus `venue`. The remainder takes `venue`, so the call passes.
+- `quotes` has no `quantity` column, so it does not fit the parameter type. The checker reports the mistake at the call, not inside the function.
 
 ## The body sees only the declared columns
 
-A caller can pass a frame without `venue`, so the body cannot use it:
+Inside the function, the checker knows only the declared columns. Some callers pass a frame with `venue`, and others pass a frame without it, so the body cannot rely on `venue`:
 
 <Example name="tut_functions_body" />
 
-The remainder `Rest` can hold `venue` or not, so the checker cannot give the result a schema. The note under the error names the level of the setting `allow_unproven` at which the line passes: see [Make the checker stricter](../strictness/). To use `venue`, declare it in the class of the parameter. Then each caller must pass it.
+The checker cannot tell whether `Rest` contains `venue`, so it cannot give the result of `group_by("venue")` a schema, and it reports the line. The note under the error names the level of the setting `allow_unproven` at which this line is accepted. The chapter [Make the checker stricter](../strictness/) explains the setting.
+
+If the function needs `venue`, declare it in the class of the parameter. The body can then use it, and every caller has to pass a frame that has it.
 
 Next: [4. Let the body decide the return type](../inference/).

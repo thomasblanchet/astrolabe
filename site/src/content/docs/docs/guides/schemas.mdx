@@ -7,57 +7,61 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A schema is the columns of a frame, each with a name and a data type. A schema has no order. Declare it once, and use it in the type of a frame.
+A schema describes the columns of a frame: the name of each column, and its data type. The checker uses the schema to know which columns a frame has at each step, so the schema is the first thing to declare. You declare it once, and you use it in the type of any frame that has those columns.
+
+A schema has no order. Two frames with the same columns in a different order have the same schema.
 
 ## Declare a schema with a class
 
-A `Columns` class lists the columns. Each field is a column, and its type is a Polars data type. `Columns` declares no column of its own. A subclass inherits the columns of its base:
+The usual way to declare a schema is a class that inherits from `Columns`. Each field of the class is a column, and the type of the field is the data type of the column, such as `pl.String` or `pl.Float64`. `Columns` itself declares no column. A class that inherits from another schema class gets all of its columns, and can add more:
 
 <Example name="schemas_class" />
 
-`TypedDataFrame[Blotter]` is a closed frame: it has exactly the four columns. To accept a frame with more columns, see [Open frames](../open-frames/).
+Here `Blotter` has the three columns of `Trades`, plus `venue`. `TypedDataFrame[Blotter]` is a closed frame type: a frame of this type has exactly these four columns, and no others. To type a function that accepts frames with more columns, see [Open frames](../open-frames/).
 
-`TypedDataFrame` with no argument names no column. The checker reads it as the plain frame `pl.DataFrame`, and does not track it. `TypedDataFrame[()]` is a frame with no column.
+Two special forms exist. `TypedDataFrame` with no argument names no columns, so the checker treats it as a plain `pl.DataFrame`, and does not track it. `TypedDataFrame[()]` is a frame with no columns at all.
 
 ## Declare a schema with a dict
 
-A column name that is not a Python identifier cannot be a field. Declare such a schema with `columns()`, from a name and a dict:
+A field of a class needs a name that is a valid Python identifier, and column names such as `2024` or `v1|a` are not. For such names, declare the schema with `columns()`. It takes a name for the schema, and a dict that maps each column name to its data type:
 
 <Example name="schemas_columns" />
 
+A schema declared this way works everywhere that a schema class works.
+
 ## Give the parameters of a data type
 
-Some data types have parameters: the time unit of a `Datetime`, the precision of a `Decimal`, the categories of an `Enum`. A field is a type annotation, so it names these data types with a marker:
+Some data types have parameters: the time unit of a `Datetime`, the precision and the scale of a `Decimal`, the categories of an `Enum`, the inner data type of a `List`. In Polars code, you write these as calls, such as `pl.Datetime("us")`. A field of a class is a type annotation, though, and a type annotation cannot contain a call. So Astrolabe gives each of these data types a marker: a type that carries the parameters as type arguments.
 
 <Example name="schemas_parameters" />
 
-The checker keeps the parameters. A `Datetime` in microseconds is a different data type from a `Datetime` in milliseconds. See [Data types](../../reference/data-types/) for each marker.
+The checker keeps the parameters as part of the data type. So a `Datetime` in microseconds is a different data type from a `Datetime` in milliseconds. [Data types](../../reference/data-types/) lists every marker.
 
-## Keep a data type in a name
+## Keep a data type in a variable
 
-A name can hold a data type. Write it as you write it everywhere else in Polars:
+In Polars code, a data type with parameters is often stored in a variable, so that it is written only once. The declarations of Astrolabe read such variables:
 
 <Example name="schemas_names" />
 
-Every declaration that takes a data type as an argument reads such a name, with its parameters: `columns(...)`, `column(...)` and `other_columns(all_of=...)`. A name bound to another name resolves too.
+Every declaration that takes a data type as an argument reads the variable, with its parameters: `columns(...)`, `column(...)` and `other_columns(all_of=...)`. A variable that refers to another variable works too.
 
-A field is a type annotation, and mypy refuses a variable there. In a `Columns` class, name the data type with its marker: `Stamped = Datetime[Literal["us"], None]` is a type alias, and `time: Stamped` declares the field.
+A field of a `Columns` class is different, because it is a type annotation, and mypy does not accept a variable in a type annotation. In a `Columns` class, write a type alias of the marker instead: `Stamped = Datetime[Literal["us"], None]` defines the alias, and `time: Stamped` declares the field.
 
 ## Write a generic schema
 
-A schema can take a data type as a parameter. Each use of the schema gives the parameter:
+A schema can take a data type as a parameter, like a generic class, and each use of the schema then states that data type. One function can then accept frames whose `value` column has any data type, and return a frame with the same data type:
 
 <Example name="schemas_generic" />
 
-The checker binds `T` to `UInt32` at the call, so the result has the data type of the caller.
+At the call, the checker binds `T` to `UInt32`, the data type of the `value` column of the caller. So the result has a `value` column of data type `UInt32` too.
 
 ## Rules of a schema
 
-A Polars column is never optional, and the declared columns of a frame are complete. So a `Columns` class has two rules:
+A Polars column is never optional: a frame either has the column or does not. And the declared columns of a frame are its complete list of declared columns. So a `Columns` class follows two rules:
 
-- Each field has a Polars data type, or a marker of one.
+- Every field has a Polars data type, or a marker of one.
 - The class does not use `total=False`, `closed=False`, `Required[...]` or `NotRequired[...]`.
 
-The checker reports a class that breaks a rule where a frame type uses the class:
+The checker reports a class that breaks a rule wherever a frame type uses the class. It points the error at the field, or at the class:
 
 <Example name="schemas_errors" />

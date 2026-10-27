@@ -5,24 +5,24 @@ sidebar:
   order: 3
 ---
 
-Astrolabe is a plugin for mypy. mypy reads the program, keeps the types, and reports the errors. The plugin computes the types that mypy cannot compute alone: the schema of each frame, and the data type of each column.
+Astrolabe is a plugin for mypy. mypy reads the program, holds the types and reports the errors. The plugin adds what mypy cannot work out by itself: the schema of each frame, and the data type of each column.
 
 ## The type of an expression holds its code
 
-An expression such as `pl.col("price") * 2` has no meaning alone: its data type depends on the frame where it runs. So the plugin gives the expression a type that holds its code.
+An expression such as `pl.col("price") * 2` has no data type of its own: its data type depends on the frame that it runs on. On a frame where `price` is a `Float64`, it gives a `Float64`. On a frame where `price` is an `Int64`, it gives an `Int64`. So the plugin cannot give the expression a data type when you write it. Instead, it gives the expression a type that holds its code.
 
-When the expression meets a frame, for example in `select` or `with_columns`, the plugin computes the column that it gives, at the data types of that frame. The same expression gives a `Float64` over a `Float64` column, and an `Int64` over an `Int64` column.
+When the expression reaches a frame, for example in `select` or `with_columns`, the plugin reads that code and works out the column that it produces, from the data types of that frame.
 
 ## The rules come from Polars
 
-The plugin computes each data type with the typing rules of Polars. The rules are translated from the source of Polars, and tested against Polars itself: a test runs each rule and the real call over many data types, and compares the answers. A behavior of Polars that no statement captures is listed in [Polars behaviors](../../spec/polars-behaviors/).
+The plugin works out each data type with the typing rules of Polars. The rules are translated from the source code of Polars, and they are tested against Polars itself: a test runs each rule and the real Polars call over many data types, and compares the answers. A few behaviors of Polars follow no rule that the checker can state, and [Polars behaviors](../../spec/polars-behaviors/) lists them.
 
 Some rules change between releases of Polars. The plugin reads the release that your project installs, and applies the rules of that release. It supports each release from 1.39.3 to 2.0.
 
 ## Calls are generic
 
-A function over an open frame is generic in its remainder. At each call, mypy substitutes the arguments of the caller in the signature, as it does for a type variable. The plugin computes the effect of each marker on the columns of the caller. So a function written once gives the exact result for each caller.
+A function that takes an open frame is generic in its remainder, in the same way as a function with a type variable is generic in that variable. At each call, mypy puts the types of the caller into the signature, as it does for any type variable. The plugin then works out what the function does to the columns of the caller. So a function that you write once gives the exact result for every caller.
 
 ## The rules are written down
 
-The type system has a written specification. It states what each type means and the rule of each operation. Its core theorems are proved in Lean 4, and each measured claim names the test that measures it. See [the specification](../../spec/how-to-read-it/).
+The type system has a written specification, which states what each type means and the rule of each operation. Its core theorems are proved in Lean 4, and every claim that comes from a measurement names the test that measures it. See [the specification](../../spec/how-to-read-it/).

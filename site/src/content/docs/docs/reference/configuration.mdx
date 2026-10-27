@@ -19,11 +19,11 @@ Every setting lives under `[tool.astrolabe]` in `pyproject.toml`. `astrolabe ini
 | `disallow_implicit_inferred_fallback` | `false` | When true, an inferred return type that falls back to the plain type is an error. |
 | `disallow_implicit_inferred_fallback_overrides` | none | The same setting for one kind: `expr`, `dataframe` or `lazyframe`. |
 
-The plugin warns about a key that names no setting, and about a value that it cannot read. A setting with a value that it cannot read takes its default.
+The plugin warns about unknown keys and about values that it cannot read, and a setting with an unreadable value falls back to its default.
 
 ## allow_unproven
 
-Some results have no proof. Each one has a reason, and each reason has a level. A level accepts its own reasons and the reasons of every stricter level on the scale.
+When the checker cannot prove a result, it does not guess. It records the result as unproven, with a reason, such as "a column name is not a literal string". Each reason belongs to one of the levels below, which run from the strictest, `never`, to the most lenient, `asserted`. The setting `allow_unproven` picks one level. The checker then accepts the reasons of that level and of every level above it in the table, without an error, and it reports the reasons of every level below it.
 
 <LevelScale />
 
@@ -38,11 +38,11 @@ Some results have no proof. Each one has a reason, and each reason has a level. 
 
 The default is `omitted`. At this level, the checker accepts the reasons of `stated` and `omitted`, and reports the reasons of `possible` and `asserted`.
 
-A checker gap is a case that the plugin does not model. The code has nothing to fix there, so a gap passes at every level except `never`.
+A checker gap is a case that the plugin does not model. The cause is in the plugin, so there is nothing in your code to fix, and a gap passes at every level except `never`.
 
 ## allow_unproven_overrides
 
-A sub-table sets the level of one operation. The keys are operation names:
+This sub-table sets the level for single operations, keyed by operation name:
 
 ```toml title="pyproject.toml"
 [tool.astrolabe]
@@ -59,16 +59,16 @@ The key `fit` covers each call to a function with a declared parameter. The key 
 
 ## report_checker_gaps
 
-When true, the checker reports each checker gap at every level. Use it to find the places where the plugin gives up for a reason that the code cannot fix.
+When true, the checker reports every checker gap at every level. Use it to find where the plugin gives up for a reason that your code cannot fix.
 
 ## disallow_vertical_concat
 
-A vertical concat stacks frames by the position of their columns. A type does not hold the order of the columns, so the checker never types the result: it gives the plain frame. When true, each vertical concat is an error, both `"vertical"` and `"vertical_relaxed"`.
+A vertical concat stacks frames by column position. A type does not track column order, so the checker never types the result, and returns a plain frame. When true, every vertical concat, `"vertical"` and `"vertical_relaxed"` alike, is an error.
 
 ## elevate_untyped_select
 
-When true, `.select()` on a plain, never typed frame gives a typed frame with each requested name. A column takes the data type of its `.cast(...)`, or `Unchecked`. See [Loading data](../../guides/loading/).
+When true, `.select()` on a plain frame returns a typed frame with the requested columns. Each column has the data type of its `.cast(...)`, or `Unchecked` if it has none. See [Loading data](../../guides/loading/).
 
 ## disallow_implicit_inferred_fallback
 
-If one value that a function marks with `infer(...)` is a plain type, the whole return type of the function is the plain type. By default, that happens with no error. When true, it is an error. The sub-table `[tool.astrolabe.disallow_implicit_inferred_fallback_overrides]` takes a boolean for each kind: `expr`, `dataframe` and `lazyframe`.
+If one value that a function marks with `infer(...)` has a plain type, the whole return type of the function falls back to that plain type. By default this happens silently, and when true it is an error. The sub-table `[tool.astrolabe.disallow_implicit_inferred_fallback_overrides]` takes a boolean for each kind: `expr`, `dataframe` and `lazyframe`.

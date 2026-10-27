@@ -8,24 +8,24 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A function that adds a column to an open frame returns the columns of the caller, and the new one. The return type must say both.
+When a function adds a column to an open frame, its result has the columns of the caller plus the new column. The return type has to describe both: the declared columns, and a remainder for the other columns of the caller.
 
-Below, `add_notional` accepts any frame with the columns of `Priced`: `price` and `quantity`. `Rest` stands for the other columns of the caller. The function adds `notional`, so its result has the columns of `WithNotional` and the other columns of the caller.
+Below, `add_notional` accepts any frame that has `price` and `quantity`, the columns of `Priced`. `Rest` stands for the other columns of the caller. The function adds a `notional` column, so its result has the columns of `WithNotional`, plus the other columns of the caller.
 
-## Let the checker compute the remainder
+## Let the checker work out the remainder
 
-Write `InferredRemainder` in the place of the remainder, and wrap the returned value in `infer(...)`. The checker computes the remainder from the body:
+You do not need to spell out the remainder of the result. Write `InferredRemainder` in its place, and wrap the value that the function returns in `infer(...)`. The checker then works out the remainder from the body:
 
 <Example name="tut_inference_remainder" />
 
-The returned value must hold each column of `WithNotional`, with the same data type. At each call, the result keeps the other columns of the caller: the frame of `Trades` has `symbol`, and so does `result`. If a caller passes a `notional` column, `with_columns` replaces it, and the checker takes that into account.
+The returned value has to contain every column of `WithNotional`, with the declared data types. The remainder of the result is whatever the body leaves of the other columns of the caller. At this call, the caller passes a `Trades` frame, which also has `symbol`, so `result` has `symbol` too. The checker also follows the details of the body. If a caller's frame already has a `notional` column, `with_columns` replaces it, so the remainder of the result never contains `notional`.
 
-## Let the checker compute the whole frame
+## Let the checker work out the whole frame
 
-`InferredDataFrame` lets the checker compute the whole return type. With two `return` statements, the result is the union of the two frames:
+With `InferredDataFrame` as the return type, the checker works out the whole return type from the body, columns included. A function with two `return` statements returns the union of the two frames, because the checker cannot know which branch runs:
 
 <Example name="tut_inference_frame" />
 
-Write `infer(...)` around the whole value of each `return`. See [Inferred return types](../../guides/inferred/) for `InferredExpr` and `InferredLazyFrame`.
+Wrap the whole value of each `return` in `infer(...)`. [Inferred return types](../../guides/inferred/) also covers `InferredExpr` for expressions and `InferredLazyFrame` for lazy frames.
 
 Next: [5. Declare reusable expressions](../declarations/).

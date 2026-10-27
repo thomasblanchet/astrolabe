@@ -7,27 +7,27 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A frame that a reader gives is typed when the call names its schema. Without a schema, Polars finds the data types from the data when the code runs, and the checker cannot know them.
+A frame is typed only if the checker knows its schema. For a frame that a reader returns, the checker knows the schema when the call passes one with `schema=`. Without a schema, Polars infers the data types from the data when the code runs, and the checker, which runs before that, cannot know them.
 
 ## Readers with a schema
 
-The readers and the constructors that take `schema=` give a typed frame. A `scan_*` reader gives a typed lazy frame:
+The readers and the constructors that take `schema=` return a typed frame. A `scan_*` reader returns a typed lazy frame, and a constructor such as `pl.from_dicts` returns a typed frame:
 
 <Example name="loading_readers" />
 
-These calls read a schema: `pl.read_csv`, `pl.scan_csv`, `pl.read_parquet`, `pl.scan_parquet`, `pl.read_json`, `pl.read_ndjson`, `pl.scan_ndjson`, `pl.from_dict`, `pl.from_dicts`, `pl.from_records` and `pl.from_numpy`.
+These calls take a schema: `pl.read_csv`, `pl.scan_csv`, `pl.read_parquet`, `pl.scan_parquet`, `pl.read_json`, `pl.read_ndjson`, `pl.scan_ndjson`, `pl.from_dict`, `pl.from_dicts`, `pl.from_records` and `pl.from_numpy`.
 
 ## Write the schema in the call
 
-The checker reads a dict literal in the call. It does not follow a dict that a variable holds, so the frame stays plain:
+The checker reads a schema that is written as a dict literal in the call. It does not follow a dict that is stored in a variable, so in the example below, the frame stays plain:
 
 <Example name="loading_variable" />
 
-To use one schema in several places, declare a `Columns` class, and check each frame at the boundary with `check_schema`. See [Runtime checks](../runtime/).
+To use one schema in several places, declare it once as a `Columns` class. Then check each frame where it enters the program with `check_schema`, which gives the frame the type of that class. See [Runtime checks](../runtime/).
 
 ## Select from a plain frame
 
-A plain frame has no known columns. A `select` on it states the names that the code needs. The checker gives a typed frame with those names: each column keeps the data type of its `.cast(...)`, or takes `Unchecked`:
+A plain frame has no known columns, so the checker cannot check the operations on it. A `select` on a plain frame is an exception, because the call names the columns that the code needs. The checker turns that into a typed frame with those names. A column with a `.cast(...)` gets the data type of the cast, and a column without one gets `Unchecked`:
 
 <Example name="loading_elevate" />
 

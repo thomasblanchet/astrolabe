@@ -37,7 +37,7 @@ poetry add git+https://github.com/thomasblanchet/astrolabe
 
 ## Set up the project
 
-Run this command in the directory of your project:
+In your project directory, run:
 
 <Tabs syncKey="package-manager">
 <TabItem label="uv">
@@ -63,14 +63,14 @@ poetry run astrolabe init
 </TabItem>
 </Tabs>
 
-The command changes `pyproject.toml`:
+The command updates `pyproject.toml`:
 
 - It adds the plugin to `[tool.mypy]` and sets `allow_redefinition = true`.
 - It writes a `[tool.astrolabe]` table with every setting at its default, each with a comment.
 
-The command keeps the comments and the format of the file. A second run changes nothing. To see the changes before it writes them, add `--dry-run`. See [CLI](../../reference/cli/) for the other options.
+It keeps your comments and formatting, and running it again changes nothing. Add `--dry-run` to see the changes without writing them. See [CLI](../../reference/cli/) for the other options.
 
-If mypy reads its configuration from `mypy.ini`, `.mypy.ini` or the `[mypy]` section of `setup.cfg`, the command changes nothing. It shows the lines to add to that file.
+If your mypy configuration lives in `mypy.ini`, `.mypy.ini` or the `[mypy]` section of `setup.cfg`, the command leaves it alone and prints the lines to add instead.
 
 ## Set up by hand
 
@@ -82,16 +82,16 @@ plugins = ["astrolabe.plugin"]
 allow_redefinition = true
 ```
 
-The plugin needs `allow_redefinition = true`. The type of an expression that a loop builds settles only when mypy lets the loop rebind its variable. If the setting is off, the plugin logs a warning.
+The plugin needs `allow_redefinition = true`. When a loop builds an expression step by step, the variable that holds the expression gets a new expression type at each step, and mypy lets a variable change its type only with this setting. Without it, such an expression never gets its final type. If the setting is off, the plugin prints a warning.
 
 ## Run the checker
 
-Run mypy as before:
+Then run mypy as usual:
 
 ```sh
 mypy .
 ```
 
-The errors of the plugin show wherever mypy runs: in the terminal, in an editor that runs mypy, in pre-commit hooks and in CI. Each error ends with a code in brackets, for example `[unknown-column]`. See [Error codes](../../reference/error-codes/).
+The plugin's errors appear wherever mypy runs: in the terminal, in an editor that runs mypy, in pre-commit hooks and in CI. Each one ends with a code in brackets, such as `[unknown-column]`. See [Error codes](../../reference/error-codes/).
 
 Next, type your first frame in the [Quickstart](../quickstart/).

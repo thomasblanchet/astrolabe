@@ -7,9 +7,9 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-Each error ends with a code in brackets. This page gives the cause and the fix for each code. The examples show the real messages.
+Each error ends with a code in brackets. Below, each code has its cause and its fix, with an example that shows the real message.
 
-Some errors are unproven results, not faults: the checker cannot prove that the code is correct. The setting `allow_unproven` decides which of them it reports, and the note under such an error names the level that lets it pass. See [Configuration](../configuration/).
+Some errors are unproven results rather than mistakes: the checker cannot prove that the code is correct. The setting `allow_unproven` decides which of them it reports, and the note under such an error names the level that lets it pass. See [Configuration](../configuration/).
 
 To silence one line, add `# type: ignore[code]`. To turn a code off, use the `disable_error_code` setting of mypy.
 
@@ -29,9 +29,9 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="err_columns_not_closed" />
 
-**Cause.** The declared columns of a frame are complete. A `Columns` class cannot leave room for other columns.
+**Cause.** The declared columns of a frame are the complete list, so a `Columns` class cannot leave room for other columns.
 
-**Fix.** Delete `closed=False`. To accept other columns, declare a remainder with `other_columns()`, and write it as the second argument: `TypedDataFrame[Loose, Rest]`.
+**Fix.** Delete `closed=False`. To accept other columns, declare a remainder with `other_columns()` and pass it as the second argument: `TypedDataFrame[Loose, Rest]`.
 
 ## columns-not-total
 
@@ -45,7 +45,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 ## concat-collision
 
-**A concat combines columns differently for some callers.**
+**A concat combines columns differently depending on the caller.**
 
 <Example name="err_concat_collision" />
 
@@ -57,11 +57,11 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 ## duplicate-column
 
-**An operation gives two columns with one name.**
+**An operation produces two columns with the same name.**
 
 <Example name="err_duplicate_column" />
 
-**Cause.** Polars refuses a frame with two columns of one name.
+**Cause.** Polars refuses a frame with two columns of the same name.
 
 **Fix.** Give one of the columns another name with `.alias(...)`.
 
@@ -71,11 +71,11 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="tut_declarations" />
 
-**Cause.** An expression argument reads a column that the declaration does not allow, gives another data type, or treats rows in another way: row by row, as an aggregation, or as a literal. The message names the first part that fails. The same code reports an argument that is not a typed expression.
+**Cause.** An expression argument reads a column that the declaration does not allow, gives a different data type, or treats rows differently: row by row, as an aggregation, or as a fixed value. The message names the first part that fails. The same code reports an argument that is not a typed expression.
 
 **Fix.** Pass an expression that fits, or change the declaration. See [Declare expression types](../../guides/expression-types/).
 
-**Level.** A fault of fit is always an error. An argument that is not a typed expression is an unproven result: it passes at the level `asserted`.
+**Level.** A mismatch is always an error. An argument that is not a typed expression is an unproven result: it passes at the level `asserted`.
 
 ## forbidden-column
 
@@ -83,7 +83,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="open_frames_without" />
 
-**Cause.** A parameter declares a remainder with a promise, for example `other_columns(without=["notional"])`. The frame of the caller breaks it: it holds an excluded name or data type.
+**Cause.** A parameter declares a remainder with a promise, for example `other_columns(without=["notional"])`. The caller's frame breaks it, because it holds an excluded name or data type.
 
 **Fix.** Pass a frame that keeps the promise, for example with `drop(...)` first. See [Open frames](../../guides/open-frames/).
 
@@ -105,7 +105,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="err_inferred_fallback" />
 
-**Cause.** One value in `infer(...)` is a plain type that the checker does not track, so the whole return type of the function is the plain type. This is an error only with the setting `disallow_implicit_inferred_fallback`.
+**Cause.** One value in `infer(...)` has a plain type that the checker does not track, so the whole return type of the function falls back to that plain type. This is an error only with the setting `disallow_implicit_inferred_fallback`.
 
 **Fix.** Type the value, for example with a declaration on the parameter. See [Inferred return types](../../guides/inferred/).
 
@@ -115,7 +115,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="tut_strict_stated" />
 
-**Cause.** The operation knows the name of the column, and cannot prove its data type, for example after `map_elements` without `return_dtype=`. The rest of the result keeps its schema.
+**Cause.** The operation knows the name of the column but cannot prove its data type, for example after `map_elements` without `return_dtype=`. The rest of the result keeps its schema.
 
 **Fix.** State the data type, for example with `return_dtype=`. See [Python functions and Unchecked](../../guides/unchecked/).
 
@@ -127,7 +127,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="tut_functions_body" />
 
-**Cause.** The operation cannot prove the schema of its result, so it gives the plain frame. The message states the reason.
+**Cause.** The operation cannot prove the schema of its result, so it returns a plain frame. The message states the reason.
 
 **Fix.** Remove the reason: declare the column that the operation reads, write a name as a literal, or give a schema. The note names the level that lets the error pass.
 
@@ -145,7 +145,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 ## invalid-call-shape
 
-**Polars refuses the call whatever the data.**
+**Polars refuses the call for any data.**
 
 <Example name="err_invalid_call_shape" />
 
@@ -159,7 +159,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="expr_errors" />
 
-**Cause.** Polars cannot cast the data type of the source to the target, for any value.
+**Cause.** Polars cannot cast the source data type to the target, whatever the values.
 
 **Fix.** Cast to another data type, or convert the column with a method that fits it, for example `dt.epoch()` for a `Datetime`.
 
@@ -179,7 +179,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="open_frames_join_error" />
 
-**Cause.** A join adds a suffix to a right column whose name is also a left column. The remainders can hold a shared name, so the rename depends on the caller.
+**Cause.** A join adds a suffix to a right-hand column that has the same name as a left-hand one. The two remainders can share a name, so whether the rename happens depends on the caller.
 
 **Fix.** Declare `disjoint_from=` on one remainder, or `without_suffix=` on the left one, as the message says. See [Open frames](../../guides/open-frames/).
 
@@ -191,7 +191,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="decl_malformed" />
 
-**Cause.** A declaration of an expression breaks one of its rules, for example it reads no column, reads one column two times, or has rows that overlap. The checker reports it at the declaration, never at a call.
+**Cause.** A declaration of an expression breaks one of its rules, for example it reads no column, reads the same column twice, or has overlapping rows. The checker reports it at the declaration, never at a call.
 
 **Fix.** Correct the declaration as the message says. See [Declare expression types](../../guides/expression-types/).
 
@@ -221,7 +221,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="tut_functions_call" />
 
-**Cause.** The parameter declares a column, and the frame of the caller does not have it.
+**Cause.** The parameter declares a column that the caller's frame does not have.
 
 **Fix.** Pass a frame with the column, for example with `with_columns(...)` first.
 
@@ -241,7 +241,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="sel_names" />
 
-**Cause.** A selection can pick several columns, and `.alias(...)` gives one name.
+**Cause.** A selection can pick several columns, but `.alias(...)` gives only one name.
 
 **Fix.** Use `.name.suffix(...)` or `.name.prefix(...)`. See [Selections](../../guides/selections/).
 
@@ -251,7 +251,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="open_frames_undeclared" />
 
-**Cause.** The frame does not declare the name, and its remainder can hold the name or not, depending on the caller. The operation then fails at run time for at least one caller.
+**Cause.** The frame does not declare the name, and its remainder contains it for some callers and not for others. The operation then fails at run time for at least one caller.
 
 **Fix.** Declare the column in the schema of the parameter. Then every caller must pass it.
 
@@ -263,7 +263,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="tut_load_typo" />
 
-**Cause.** The checker proves that the frame cannot hold the name: the frame is closed, or its remainder cannot hold the name.
+**Cause.** The checker can prove that the frame never holds the name: the frame is closed, or its remainder excludes the name.
 
 **Fix.** Correct the name, or add the column in an earlier step.
 
@@ -283,7 +283,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="err_vertical_concat" />
 
-**Cause.** A vertical concat stacks frames by the position of their columns, and a type does not hold the order of the columns. This is an error only with the setting `disallow_vertical_concat`.
+**Cause.** A vertical concat stacks frames by column position, and a type does not track column order. This is an error only with the setting `disallow_vertical_concat`.
 
 **Fix.** Use `how="diagonal"`, which lines up the columns by name.
 
@@ -303,7 +303,7 @@ To silence one line, add `# type: ignore[code]`. To turn a code off, use the `di
 
 <Example name="err_wrong_dtype" />
 
-**Cause.** The parameter is an open frame that declares a column, and the frame of the caller has the column with another data type. For a closed frame parameter, mypy reports the same fault as `[arg-type]`.
+**Cause.** The parameter is an open frame that declares a column, and the caller's frame has that column with a different data type. For a closed frame parameter, mypy reports the same fault as `[arg-type]`.
 
 **Fix.** Cast the column to the declared data type before the call.
 

@@ -8,27 +8,27 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-The checker proves that the code agrees with the declared types. It cannot prove that a file agrees with them. Check the data once, where it enters the program.
+The checker proves that your code agrees with the declared types. It cannot prove that the data agrees with them, because a file on disk can have any columns. So data that comes from outside the program has to be checked once at run time, at the point where it enters the program.
 
 ## Check a frame and type it
 
-`check_schema` checks at run time that a frame has exactly the declared columns, with their data types. For mypy, it gives the typed frame:
+`check_schema` checks at run time that a frame has exactly the declared columns, with the declared data types. For mypy, it returns the frame with the frame type that you pass:
 
 <Example name="tut_runtime" />
 
-Write the frame type in the call as an annotation writes it. The result has the type of a variable annotated `TypedDataFrame[Trades]`.
+Write the frame type in the call exactly as you write it in an annotation. The result has the same type as a variable annotated `TypedDataFrame[Trades]`.
 
-At run time, `check_schema` raises if a column is missing, if a column has another data type, or if the frame has a column that the type does not declare. The order of the columns does not matter.
+At run time, `check_schema` raises an error if a declared column is missing, if a column has a different data type, or if the frame has a column that the schema does not declare. The order of the columns does not matter.
 
 ## Cast, or trust
 
-Two other functions give a typed frame:
+Two other functions also return a typed frame. They differ in what they do at run time:
 
 | Function | At run time |
 | -- | -- |
-| `check_schema` | Checks the columns and the data types, and casts nothing. |
-| `force_schema` | Keeps the declared columns in their declared order, and casts each one to its declared data type. |
-| `assume_schema` | Checks nothing. Use it only for a frame that you know is correct. |
+| `check_schema` | Checks the columns and their data types. It casts nothing. |
+| `force_schema` | Keeps only the declared columns, in the declared order, and casts each one to its declared data type. |
+| `assume_schema` | Checks nothing. Use it only for a frame whose schema you already know is correct. |
 
 See [Runtime checks](../../guides/runtime/).
 

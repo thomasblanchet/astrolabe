@@ -7,35 +7,35 @@ sidebar:
 
 import Example from '../../../../components/docs/Example.astro';
 
-A type describes a set of values. The type of a frame describes a set of frames: those with some columns, each with a data type.
+A type describes a set of values: `int` describes every integer. In the same way, a frame type describes a set of frames: every frame that has certain columns, with certain data types.
 
 ## Schema
 
-A schema is the columns of a frame, each with a name and a data type. A schema has no order: two frames with the same columns in another order have the same schema. The order of the columns is a fact of the data, and no type keeps it.
+A schema is the set of columns of a frame, each with a name and a data type. A schema has no order: two frames that have the same columns in a different order have the same schema. The order of the columns belongs to the data, and no type tracks it.
 
 ## Closed and open frames
 
-A frame type names its declared columns. It can also have a remainder, which stands for the columns that it does not name.
+A frame type lists the columns that it declares. It can also have a remainder, which stands for any columns that it does not list. That gives two kinds of frame type:
 
-- A closed frame has no remainder. Its type describes the frames with exactly the declared columns. `TypedDataFrame[Trades]` is closed.
-- An open frame has a remainder. Its type describes every frame with at least the declared columns. `TypedDataFrame[Trades, Rest]` is open.
+- A closed frame type has no remainder. It describes the frames that have exactly the declared columns, and no others. `TypedDataFrame[Trades]` is closed.
+- An open frame type has a remainder. It describes every frame that has at least the declared columns, plus any others. `TypedDataFrame[Trades, Rest]` is open.
 
-A closed frame is the type of a concrete frame in a program. An open frame is the type of a parameter that accepts many frames.
+A concrete frame in a program, such as a frame that you read from a file, usually has a closed type. An open type is useful for the parameter of a function that accepts many different frames.
 
 ## The remainder follows the caller
 
-A remainder is a variable, like a type variable of a generic function. At each call, the checker puts the columns of the caller in its place. So the result of a function describes the real frame of each caller.
+A remainder works like the type variable of a generic function. At each call, the checker replaces the remainder with the actual columns of the caller's frame. So the result of the function describes the real frame of each caller, including the columns that the function never mentions.
 
-Below, `add_notional` accepts any frame with the columns of `Trades`. `Rest` stands for the other columns of the caller. The return type writes `InferredRemainder` for the remainder of the result, and `infer(...)` lets the checker compute it from the body. A `Blotter` frame has one more column, `venue`, and the result of the call keeps it:
+In the example below, `add_notional` accepts any frame that has the columns of `Trades`, and `Rest` stands for the other columns of the caller. The return type uses `InferredRemainder`, and `infer(...)` lets the checker work out the remainder of the result from the body. A `Blotter` frame has one extra column, `venue`, and the result of the call keeps it:
 
 <Example name="open_frames_call" />
 
-The checker follows what each operation of the body does to the remainder. Here `with_columns` replaces a `notional` column of the caller, so the remainder of the result holds every column of the caller except `notional`. At the call, that remainder is `venue`, a column that the function never names.
+The checker follows what each operation in the body does to the remainder. Here, `with_columns` adds `notional`, and it replaces any `notional` column that the caller's frame already has. So the remainder of the result holds every column of the caller except `notional`. At this call, that remainder is `venue`, a column that the function never mentions.
 
 ## A column with an unknown data type
 
-`Unchecked` is the data type of a column whose name is known and whose data type is not. It keeps the rest of the schema exact, where the alternative is to give up on the whole frame. Each later operation accepts it, as mypy accepts a value of type `Any`.
+Sometimes the checker knows the name of a column but not its data type, for example when a Python function computes the column. The column then gets the data type `Unchecked`. This keeps the rest of the schema exact, instead of giving up on the whole frame. Every later operation accepts an `Unchecked` column, the way mypy accepts a value of type `Any`.
 
 ## Plain frames
 
-A plain frame is a `pl.DataFrame` that the checker does not track. It is the type of a frame whose columns no code states, for example the result of a reader with no schema. The checker reports nothing about a plain frame, so code that does not use Astrolabe checks as before.
+A plain frame is a `pl.DataFrame` that the checker does not track. It is the type of a frame whose columns nothing in the code states, such as the result of a reader that gets no schema. The checker reports nothing about plain frames, so code that does not use Astrolabe is checked exactly as before.
