@@ -4,14 +4,14 @@
  *
  * The right column stays empty, because the figures of the sky fill it.
  */
-import { MYPY, POLARS, PYTHON } from '../../lib/versions';
+import { MYPY, POLARS, PRERELEASE, PYTHON } from '../../lib/versions';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 ---
 
 <header id="top" class="hero">
   <div class="copy">
-    <p class="eyebrow">static type checking for Polars</p>
+    <p class="eyebrow">static type checking for Polars <span class="stage" title={PRERELEASE}>pre-release</span></p>
     <h1>Catch Polars bugs before your code runs.</h1>
     <p class="lead">
       Astrolabe tells mypy, the Python type checker, how to track the contents of your Polars dataframes. A missing column or a
@@ -22,6 +22,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
       <a class="button secondary" href="#install">Install</a>
     </div>
     <p class="requires">Python {PYTHON}+ · mypy {MYPY}+ · Polars {POLARS}</p>
+    <p class="requires">A pre-release. {PRERELEASE}</p>
   </div>
   <div class="space" aria-hidden="true"></div>
 </header>
@@ -61,6 +62,16 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
     flex-wrap: wrap;
     gap: 14px;
     margin-top: 12px;
+  }
+
+  .stage {
+    margin-left: 10px;
+    padding: 3px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 0.85em;
+    vertical-align: 1px;
   }
 
   .requires {
