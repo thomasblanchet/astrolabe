@@ -22,7 +22,7 @@ const SPEC = [
   { file: 'spec/EXPRESSION_SPECIFICATION.md', slug: 'expressions', title: 'Expressions' },
   { file: 'spec/OPERATIONS.md', slug: 'rules-and-proofs', title: 'Rules and proofs' },
   { file: 'spec/OPERATION_CATALOG.md', slug: 'operation-catalog', title: 'Operation catalog' },
-  { file: 'POLARS_ISSUES.md', slug: 'polars-behaviors', title: 'Polars behaviors' },
+  { file: 'spec/POLARS_BEHAVIORS.md', slug: 'polars-behaviors', title: 'Polars behaviors' },
 ];
 
 const ROOT = new URL('../../', import.meta.url);

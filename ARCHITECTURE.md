@@ -419,7 +419,7 @@ ______________________________________________________________________
 
 ## 11. What this gives up
 
-This section lists the weaknesses that the design accepts. `KNOWN_ISSUES.md` lists the bugs, and the gaps that a later change can fix, and it exists only while there is one. `POLARS_ISSUES.md` lists the polars behaviors the checker works around.
+This section lists the weaknesses that the design accepts. `KNOWN_ISSUES.md` lists the bugs, and the gaps that a later change can fix, and it exists only while there is one. `spec/POLARS_BEHAVIORS.md` lists the polars behaviors the checker works around.
 
 **A join that can rename is rejected, not described.** A join over a generic frame with no promise ruling out a collision is an error rather than a result. The user lifts it with one promise on the declaration.
 
@@ -449,7 +449,7 @@ This section lists the weaknesses that the design accepts. `KNOWN_ISSUES.md` lis
 
 **A value too wide for a later cast is a fact of the data.** `pl.when(c).then(pl.col("d")).otherwise(pl.when(c).then(pl.col("u")).otherwise(pl.lit(2**63)))` over a `Date` column `d` and a `UInt8` column `u` gives `Int64`. The inner chain makes a `UInt64` column that holds $2^{63}$, and the outer chain casts it to `Int64`. Polars raises where a row takes the literal. The checker answers `Int64`, as it does for a `UInt64` column that holds $2^{63}$ under a cast to `Int64`: the values of a column are not part of its type.
 
-**A cast of a `Struct` to a number answers as a frame with rows.** `pl.col("st").cast(pl.Int64)` over a `Struct` column gives the struct, with each field cast, on a frame that holds a row, and `Int64` on a frame with no row (`POLARS_ISSUES.md`). The type of a frame does not say whether it holds a row, so the checker gives the answer of a frame with rows.
+**A cast of a `Struct` to a number answers as a frame with rows.** `pl.col("st").cast(pl.Int64)` over a `Struct` column gives the struct, with each field cast, on a frame that holds a row, and `Int64` on a frame with no row (`spec/POLARS_BEHAVIORS.md`). The type of a frame does not say whether it holds a row, so the checker gives the answer of a frame with rows.
 
 **A cast of an `Unchecked` column gives its target.** `pl.col("u").cast(pl.Int8)` over a column whose data type the checker does not know gives `Int8`. Polars keeps a struct under such a cast, so a `Struct` column would give a struct. The checker takes that as an oddity of polars, and keeps the cast that recovers the type of a column of a plain frame.
 
