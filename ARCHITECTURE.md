@@ -312,7 +312,7 @@ The remainder codec encodes a `Canonical`, and every mint site goes through `Exp
 
 The expression codec accepts only canonical declarations: reads sorted by name, rows in the tie order of the declared map, a single-region read collapsed to the two-argument display, the identity collapsed to `TypedColumn`. The rectangle cover that spells the rows reads only the cells, taking them in sorted order and growing each along the reads in order, so one declaration always spells one way. A deferred type is its code, which the recorder writes as one canonical text. Two codes with one map but different text, as `a + b` and `b + a`, compare unequal, and the fit decides on the map wherever a declaration expects one (`D-33`, `D-40`).
 
-Where the checker compares two of our types with no understanding of them, it compares structurally. Because both are in normal form, structural equality *is* engine equality for types we minted. The checker reaches the right verdict by accident, and the accident is guaranteed by construction.
+Where the checker compares two of our types with no understanding of them, it compares structurally. Because both are in normal form, structural equality *is* engine equality for types we minted. For a schema, this needs the closed `TypedDict` of PEP 728, which mypy supports from 2.2. Where a closed `TypedDict` is expected, mypy accepts only a `TypedDict` with the same keys. Where an open one is expected, it also accepts a `TypedDict` with more keys, so a frame with an extra column passes as a closed frame type. mypy 2.2 is therefore the oldest release that the plugin supports. The checker reaches the right verdict by accident, and the accident is guaranteed by construction.
 
 ### 8.1 What the checker mints on its own
 

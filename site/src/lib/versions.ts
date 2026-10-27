@@ -9,5 +9,5 @@ export const ASTROLABE = '0.1.0';
 export const POLARS_OLDEST = '1.39.3';
 export const POLARS_NEWEST = '2.0';
 export const POLARS = `${POLARS_OLDEST} to ${POLARS_NEWEST}`;
-export const MYPY = '1.13';
+export const MYPY = '2.2';
 export const PYTHON = '3.12';
