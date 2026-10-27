@@ -30,7 +30,7 @@ The rule in `CLAUDE.md` that keeps the plugin and `spec/` in step applies to eve
 
 Before a hook falls back to the plain frame or substitutes `Unchecked`, answer these questions. Also answer them before you write a test that expects a fallback.
 
-1. Does the answer really depend on data that the checker cannot see, for example the body of a `map_elements` function? Or is the implementation incomplete, for example an argument form that the hook does not read yet? If it is incomplete, fix it or record it in `KNOWN_ISSUES.md`. Do not write a test that makes the gap look intended.
+1. Does the answer really depend on data that the checker cannot see, for example the body of a `map_elements` function? Or is the implementation incomplete, for example an argument form that the hook does not read yet? If it is incomplete, fix it or open a GitHub issue for it. Do not write a test that makes the gap look intended.
 2. If the data type is unknowable, is the name still known from a keyword, an outermost `.alias(...)` or the receiver? Then keep the name under `Unchecked` and keep the rest of the schema. Fall back to the plain frame only when no name is known.
 3. Do not treat the current output as the reference answer. Verify against the real polars behavior with a script.
 

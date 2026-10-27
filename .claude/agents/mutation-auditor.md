@@ -98,7 +98,7 @@ If the caller wrote new yml cases and did not change `src/`, do not start a new 
 
 ## 9. Record
 
-Write each survivor group and each fault of the harness into `KNOWN_ISSUES.md`. Give the input, what the checker answers, and what a yml case needs to answer instead. Create the file if it does not exist.
+Open a GitHub issue for each survivor group and each fault of the harness, with `gh issue create`. Give the input, what the checker answers, and what a yml case needs to answer instead.
 
 # What you return
 
@@ -110,5 +110,6 @@ Return a short report to the caller:
 - for each gap group, the yml case to write, with the exact mypy output you captured
 - each group that cannot alter an answer, with the command that verified it
 - every fault of the harness that you met
+- the number of each issue that you opened
 
 Keep `.mutation/results.jsonl`. It holds the killing test of each mutant, and a later triage reads it.

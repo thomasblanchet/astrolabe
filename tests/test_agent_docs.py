@@ -39,10 +39,6 @@ class AgentDocs:
         "utils.py",
         "helpers.py",
     })
-    # A file that the rules tell the reader to create when it is needed.
-    # `CLAUDE.md` also says to delete it when it holds no entry, so it is
-    # absent while the checker has no known issue.
-    ON_DEMAND: ClassVar[frozenset[str]] = frozenset({"KNOWN_ISSUES.md"})
 
     SEARCH_ROOTS: ClassVar[tuple[str, ...]] = (
         "",
@@ -88,8 +84,7 @@ class AgentDocs:
     def missing_paths(self, document: Path) -> list[str]:
         """List the cited paths that exist under none of the search directories.
 
-        The check skips a span that is not a path. It also skips a file that
-        the rules create only when it is needed.
+        The check skips a span that is not a path.
 
         Args:
             document: The instruction file.
@@ -99,7 +94,7 @@ class AgentDocs:
         """
         missing: list[str] = []
         for span in self.spans(document):
-            if span in self.ON_DEMAND or self.PATH.fullmatch(span) is None:
+            if self.PATH.fullmatch(span) is None:
                 continue
             if not self._exists(span):
                 missing.append(span)

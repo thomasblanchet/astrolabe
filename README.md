@@ -148,4 +148,4 @@ uv run python -m tools.mutation --data .mutation/baseline.coverage \
   --resume --retry-undecided --timeout 900
 ```
 
-The run writes one score for each module, and then every surviving mutant. For each survivor, add the test that kills it, or record it in `KNOWN_ISSUES.md`.
+The run writes one score for each module, and then every surviving mutant. For each survivor, add the test that kills it, or open a GitHub issue for it.

@@ -95,4 +95,4 @@ uv run pytest spec
 
 ## What is not here
 
-`../ARCHITECTURE.md` describes how the plugin is built. `../KNOWN_ISSUES.md` records where the plugin falls short of these documents. Neither is part of the specification.
+`../ARCHITECTURE.md` describes how the plugin is built. The [GitHub issues](https://github.com/thomasblanchet/astrolabe/issues) record where the plugin falls short of these documents. Neither is part of the specification.

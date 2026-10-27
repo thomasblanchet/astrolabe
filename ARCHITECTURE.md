@@ -419,7 +419,7 @@ ______________________________________________________________________
 
 ## 11. What this gives up
 
-This section lists the weaknesses that the design accepts. `KNOWN_ISSUES.md` lists the bugs, and the gaps that a later change can fix, and it exists only while there is one. `spec/POLARS_BEHAVIORS.md` lists the polars behaviors the checker works around.
+This section lists the weaknesses that the design accepts. The [GitHub issues](https://github.com/thomasblanchet/astrolabe/issues) list the bugs, and the gaps that a later change can fix. `spec/POLARS_BEHAVIORS.md` lists the polars behaviors the checker works around.
 
 **A join that can rename is rejected, not described.** A join over a generic frame with no promise ruling out a collision is an error rather than a result. The user lifts it with one promise on the declaration.
 
