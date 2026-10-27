@@ -474,3 +474,11 @@
     wide.select(bumped(pl.col("price").cast(pl.Float32)))  # E: "price" has no result type at this frame's column types: column "price" is Int64, which the declared type of an argument does not allow  [unsupported-dtype-op]
     wide.select(doubled(pl.col("price").sum().cast(pl.Float32)))  # E: "price" has no result type at this frame's column types: column "price" is Int64, which the declared type of an argument does not allow  [unsupported-dtype-op]
     reveal_type(loose.select(bumped(pl.col("price").cast(pl.Float32))))  # N: Revealed type is "astrolabe.frame.TypedDataFrame[TypedDict({'price': polars.datatypes.classes.Float32}, closed=True), None]"
+
+- case: a_placeholder_takes_no_type_arguments
+  main: |
+    import polars as pl
+    from astrolabe import InferredExpr, infer
+
+    def price() -> InferredExpr[int]:  # E: InferredExpr takes no type arguments  [marker-arity]
+        return infer(pl.col("price"))  # E: infer() has no effect here: the enclosing function's return type is not InferredExpr/InferredDataFrame/InferredLazyFrame  [infer-misuse]
