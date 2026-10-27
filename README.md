@@ -6,6 +6,8 @@ A frame's static type carries its schema: the columns it declares, and a *remain
 
 The documentation is at <https://thomasblanchet.github.io/astrolabe/docs/>.
 
+> **Pre-release.** The API, the messages and the supported versions can change in any release.
+
 ## Setup
 
 Install astrolabe, then run this command in the project directory:
@@ -78,7 +80,7 @@ Supported releases: Polars `1.39.3` to `2.0`.
 
 [`spec/`](spec/) is the type system: what it promises, what its rules are, and what every Polars operation does under it. Start with [`spec/DATAFRAME_SPECIFICATION.md`](spec/DATAFRAME_SPECIFICATION.md). Every claim there is proved on the page or recomputed by a test in [`spec/tests/`](spec/tests/).
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is how the plugin is built. [`POLARS_ISSUES.md`](POLARS_ISSUES.md) lists the polars behaviors the checker works around.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is how the plugin is built. [`spec/POLARS_BEHAVIORS.md`](spec/POLARS_BEHAVIORS.md) lists the polars behaviors the checker works around.
 
 ## Development
 

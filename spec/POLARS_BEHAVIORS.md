@@ -1,8 +1,8 @@
-# Polars issues
+# Polars behaviors
 
 This document lists the polars behaviors that the checker must work around: a call polars types as valid and then refuses, and a data type whose answer polars decides by a rule no statement captures. Each row gives the input, what polars does, and what the checker does about it.
 
-A gap in the checker's own implementation is not here: `KNOWN_ISSUES.md` lists those, and that file exists only while there is one. A weakness the design accepts is not here either: the section "What this gives up" of `ARCHITECTURE.md` lists those.
+A gap in the checker's own implementation is not here: `../KNOWN_ISSUES.md` lists those, and that file exists only while there is one. A weakness the design accepts is not here either: the section "What this gives up" of `../ARCHITECTURE.md` lists those.
 
 The behaviors below were measured against polars 1.39.3, 1.40.1, 1.41.2, 1.42.1, 1.43.2, 1.44.2 and 2.0.0. An entry that holds in some of these releases only says which.
 

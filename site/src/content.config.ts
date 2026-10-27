@@ -22,7 +22,7 @@ const SPEC = [
   { file: 'spec/EXPRESSION_SPECIFICATION.md', slug: 'expressions', title: 'Expressions' },
   { file: 'spec/OPERATIONS.md', slug: 'rules-and-proofs', title: 'Rules and proofs' },
   { file: 'spec/OPERATION_CATALOG.md', slug: 'operation-catalog', title: 'Operation catalog' },
-  { file: 'POLARS_ISSUES.md', slug: 'polars-behaviors', title: 'Polars behaviors' },
+  { file: 'spec/POLARS_BEHAVIORS.md', slug: 'polars-behaviors', title: 'Polars behaviors' },
 ];
 
 const ROOT = new URL('../../', import.meta.url);
@@ -37,15 +37,35 @@ function resolve(from: string, target: string): string {
   return parts.join('/');
 }
 
+/**
+ * Rewrite the links of a document, in its prose only.
+ *
+ * Code holds text such as `class Keyed[T: pl.DataType](Columns)`, which reads
+ * like a link and is not one. So fenced code blocks and inline code stay as
+ * they are. A split on a pattern with one group puts the code at the odd
+ * places of the result.
+ */
 function relink(from: string, markdown: string): string {
-  return markdown.replace(/\]\(([^)\s]+)\)/g, (whole, target: string) => {
-    if (/^[a-z]+:/.test(target) || target.startsWith('#')) return whole;
-    const [path, anchor] = target.split('#');
-    const file = resolve(from, path);
-    const page = SPEC.find((doc) => doc.file === file);
-    if (page !== undefined) return `](../${page.slug}/${anchor ? `#${anchor}` : ''})`;
-    return `](${REPOSITORY}/blob/main/${file}${anchor ? `#${anchor}` : ''})`;
-  });
+  return markdown
+    .split(/(^```[^\n]*\n[\s\S]*?^```[ \t]*$)/m)
+    .map((block, index) => (index % 2 === 1 ? block : relinkProse(from, block)))
+    .join('');
+}
+
+function relinkProse(from: string, text: string): string {
+  return text
+    .split(/(`[^`\n]*`)/)
+    .map((part, index) => (index % 2 === 1 ? part : part.replace(/\]\(([^)\s]+)\)/g, (whole, target: string) => relinked(from, whole, target))))
+    .join('');
+}
+
+function relinked(from: string, whole: string, target: string): string {
+  if (/^[a-z]+:/.test(target) || target.startsWith('#')) return whole;
+  const [path, anchor] = target.split('#');
+  const file = resolve(from, path);
+  const page = SPEC.find((doc) => doc.file === file);
+  if (page !== undefined) return `](../${page.slug}/${anchor ? `#${anchor}` : ''})`;
+  return `](${REPOSITORY}/blob/main/${file}${anchor ? `#${anchor}` : ''})`;
 }
 
 async function loadSpec(context: LoaderContext): Promise<void> {

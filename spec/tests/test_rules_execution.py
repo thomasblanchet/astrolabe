@@ -829,7 +829,7 @@ class SortedValues:
 
     Polars sorts one value for each group with the indices of the rows of the
     groups of the frame, so it reads past the end of the values
-    (`POLARS_ISSUES.md`), and the process can crash. The sort then holds the
+    (`spec/POLARS_BEHAVIORS.md`), and the process can crash. The sort then holds the
     groups of the frame. Each later node gives the answer that it gives with
     no sort, so the rules keep the groups of one value. Only `min_by` and
     `max_by` read those groups, and they read past the end with no sort too.

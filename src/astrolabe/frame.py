@@ -445,7 +445,7 @@ class ColumnSchemaParser:
         origin = get_origin(candidate) or candidate
         if not is_typeddict(origin):
             return None
-        hints = get_type_hints(origin, include_extras=True)
+        hints = get_type_hints(origin, include_extras=True, localns=self._type_parameters(origin))
         parameters = getattr(origin, "__parameters__", ())
         bound = dict(zip(parameters, get_args(candidate), strict=False))
         substituted = {name: self._substituted(hint, bound) for name, hint in hints.items()}
@@ -456,6 +456,30 @@ class ColumnSchemaParser:
                 return None
             schema[name] = resolved_dtype
         return schema
+
+    def _type_parameters(self, origin: type) -> dict[str, Any]:
+        """Give the type parameters of a generic class, by name, to read its field annotations.
+
+        A field annotation of a generic class, for example `v: T`, names a type
+        parameter of the class. Python 3.13 reads those names by itself. Python
+        3.12 does not, so the names must reach `get_type_hints` as its local
+        names.
+
+        Args:
+            origin: The class.
+
+        Returns:
+            Each type parameter of the class, by its name. An empty dict for a
+            class that is not generic.
+
+        Example:
+            >>> class Keyed[T: pl.DataType](Columns):
+            ...     v: T
+            >>> ColumnSchemaParser()._type_parameters(Keyed)
+            {'T': T}
+        """
+        parameters = getattr(origin, "__type_params__", ())
+        return {parameter.__name__: parameter for parameter in parameters}
 
     def _substituted(self, hint: Any, bound: dict[Any, Any]) -> Any:
         """Put the arguments in the place of the type variables in one field annotation.

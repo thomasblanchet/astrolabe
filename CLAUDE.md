@@ -5,7 +5,7 @@ astrolabe is a mypy plugin. It checks the column names and the data types of pol
 - `spec/` is the design authority. It states what each type means and proves the rules.
 - `ARCHITECTURE.md` describes the layers and the modules.
 - `site/` holds the user guide: the landing page and the documentation. `README.md` is a short introduction that links to it.
-- `KNOWN_ISSUES.md` lists the bugs and the fixable gaps. It exists only while there is one. `POLARS_ISSUES.md` lists the polars behaviors the checker works around. The last section of `ARCHITECTURE.md` lists only the weaknesses that the design accepts.
+- `KNOWN_ISSUES.md` lists the bugs and the fixable gaps. It exists only while there is one. `spec/POLARS_BEHAVIORS.md` lists the polars behaviors the checker works around. The last section of `ARCHITECTURE.md` lists only the weaknesses that the design accepts.
 - Documentation and code describe the project as it is now. Do not record history in them.
 
 ## Rule files
@@ -62,4 +62,4 @@ cd spec/lean && lake build --wfail
 - Record each bug, gap or defect that you find and do not fix in the same change. This applies to the plugin, to `spec/` and to a disagreement between them. Add it to `KNOWN_ISSUES.md`, and create the file if it does not exist. Give the input, what the checker or the spec says, and what polars or the other side says. When a change fixes an entry, delete the entry in that change. When the file has no entry left, delete the file. Why: an issue that is not written down gets lost between sessions.
 - This directory is not a git repository. Back up the files before a destructive edit, for example with `tar czf` into the scratchpad.
 - Do not delete or weaken a test to make a gate pass. Fix the code, or report the conflict.
-- Save a plan that outlives one session as a file in the repository. Why: a later plan can overwrite a plan-mode file.
+- Save a plan that outlives one session as a `PLAN_*.md` file at the root of the repository. Git ignores these files, so a plan stays on the disk and out of the published repository. Why: a later plan can overwrite a plan-mode file.

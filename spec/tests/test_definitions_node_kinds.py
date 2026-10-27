@@ -13,7 +13,7 @@ about 500 pairs beside a typical input at each place (`PairSample`), and a
 node of three inputs about 500 cells (`TripleSample`).
 
 Two facts of the test frames leave cells out. An offset or a length of
-`slice` with more than one row makes `collect()` hang (`POLARS_ISSUES.md`), so
+`slice` with more than one row makes `collect()` hang (`spec/POLARS_BEHAVIORS.md`), so
 those places take inputs of one row only. And each column of the test frames
 repeats its three values over five rows, so a column of one value per row is
 not sorted, which the index of `rolling` must be: that place leaves such
@@ -24,7 +24,7 @@ values: `over` leaves out those functions beside such keys. The test frames
 hold five rows, so a literal index of `300` or of `2**40` falls outside them:
 `gather` and `get` leave out those indices. A further fact is a
 defect of polars: `sort` over one value for
-each group reads out of bounds in `agg` (`POLARS_ISSUES.md`), and can crash
+each group reads out of bounds in `agg` (`spec/POLARS_BEHAVIORS.md`), and can crash
 or allocate memory with no bound over values of a variable size: text,
 bytes, categories and nested types. So `sort` leaves out every input of one
 value of such a type. `.name.keep()` over a literal reads no column, which

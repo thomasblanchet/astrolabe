@@ -31,7 +31,7 @@ here. The tests of the kernels run those cells in a subprocess.
 
 A defect of polars leaves out a few cells. From polars 2.0.0, the floor
 division of a `Decimal` in `agg` reads groups of another length with no check
-and gives wrong values (`POLARS_ISSUES.md`), where the rules refuse. So the
+and gives wrong values (`spec/POLARS_BEHAVIORS.md`), where the rules refuse. So the
 sample of `//` leaves out a `Decimal` beside an input of another length.
 """
 
@@ -337,7 +337,7 @@ class Nodes:
         """Say whether a cell is a floor division of a `Decimal` beside an input of another length.
 
         From polars 2.0.0, such a floor division in `agg` gives wrong values
-        and no error (`POLARS_ISSUES.md`).
+        and no error (`spec/POLARS_BEHAVIORS.md`).
 
         Args:
             name: The name of the operator.

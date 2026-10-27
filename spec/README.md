@@ -1,6 +1,6 @@
 # The specification
 
-Four documents describe astrolabe's type system, and one test suite holds them to account.
+Four documents describe astrolabe's type system, and one test suite holds them to account. A fifth records the behaviors of polars that the rules work around.
 
 | Document | Answers | Read after |
 | -- | -- | -- |
@@ -8,6 +8,7 @@ Four documents describe astrolabe's type system, and one test suite holds them t
 | [EXPRESSION_SPECIFICATION.md](EXPRESSION_SPECIFICATION.md) | What is the type of an expression, and how is it used? It explains in prose, with an example for each idea. | `DATAFRAME_SPECIFICATION.md` |
 | [OPERATIONS.md](OPERATIONS.md) | What exactly are the rules for frames and expressions, and why are they correct? It gives the definitions and the proofs. | the two specifications |
 | [OPERATION_CATALOG.md](OPERATION_CATALOG.md) | What does one polars call do under these rules? It covers the frame API, `GroupBy`, the selectors and the expression API. | `OPERATIONS.md` |
+| [POLARS_BEHAVIORS.md](POLARS_BEHAVIORS.md) | Which polars behaviors do the rules work around? It lists the calls that polars types as valid and then refuses, and the answers that polars decides by a rule no statement captures. | `OPERATIONS.md` |
 
 A reader new to the system reads the two specifications in order. A reader who implements or attacks the rules reads `OPERATIONS.md`. A reader with one polars call in hand looks it up in the catalog.
 

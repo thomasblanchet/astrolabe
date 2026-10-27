@@ -13,7 +13,7 @@ npm run preview  # serves the build in dist/
 
 - `src/pages/index.astro` is the landing page, and `src/components/landing/` holds its sections. `src/lib/sky.ts` computes the sky at build time, and `src/lib/tour.ts` holds the steps of the walkthrough.
 - `src/content/docs/docs/` holds the pages of the documentation, one folder for each section of the sidebar.
-- `src/content.config.ts` adds the documents of `../spec/` and `../POLARS_ISSUES.md` to the documentation as the Specification section. The site renders them from the repository, with no copy.
+- `src/content.config.ts` adds the documents of `../spec/` to the documentation as the Specification section. The site renders them from the repository, with no copy.
 - `src/components/docs/` holds the components of the documentation, and the overrides of Starlight.
 - `src/styles/tokens.css` holds the colors and the fonts of the whole site, in a dark and a light theme.
 
