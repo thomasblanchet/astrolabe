@@ -20,7 +20,7 @@ The rule in `CLAUDE.md` that keeps the plugin and `spec/` in step applies to eve
 - Add every cited theorem to `Audit.lean` with `#assert_standard_axioms`. Why: the build then fails when the theorem uses `sorry` or an axiom other than `propext`, `Classical.choice` and `Quot.sound`.
 - Do not use `sorry`, `admit`, `native_decide`, `implemented_by` or `axiom`. A test checks the sources for these tokens.
 - Write a measured fact about polars or mypy as a field of a structure, never as an axiom, as the field `locality` of `Polars` in `Spec/L6/Node.lean` states one. A theorem that needs the fact takes the structure as an argument. The field's docstring names the test that measures the fact.
-- If Lean shows a statement of the specification false, correct the statement to what Lean proves, and record the weakness in `KNOWN_ISSUES.md`. Do not weaken a Python test to match.
+- If Lean shows a statement of the specification false, correct the statement to what Lean proves, and open a GitHub issue for the weakness. Do not weaken a Python test to match.
 
 ## Structure
 
