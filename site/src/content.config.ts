@@ -82,7 +82,10 @@ async function loadSpec(context: LoaderContext): Promise<void> {
       },
     });
     const rendered = await context.renderMarkdown(body);
-    const filePath = `../${doc.file}`;
+    // Starlight puts a page in the sidebar by its path in the docs collection,
+    // so the path is the one that the page would have there. The edit link
+    // above points at the real file in `spec/`.
+    const filePath = `src/content/docs/${id}.md`;
     context.store.set({ id, data, body, rendered, filePath, digest: context.generateDigest(text) });
   }
 }
