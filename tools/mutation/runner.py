@@ -1,10 +1,10 @@
 """Apply one mutant to a private copy of the project, run its tests, and read the outcome.
 
-The harness never changes the `src/` of the project itself. The project
-is not a git repository, so a run that stops halfway through a patch
-leaves no clean copy to go back to. Each worker owns a copy of the
-project instead. It patches one file of its copy, runs the tests, and
-puts the file back.
+The harness never changes the `src/` of the project itself. Several
+workers run at the same time, and each one needs a source that holds
+only its own mutant. A run that stops halfway through a patch must also
+leave the project as it was. So each worker owns a copy of the project.
+It patches one file of its copy, runs the tests, and puts the file back.
 """
 
 from __future__ import annotations
